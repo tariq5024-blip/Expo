@@ -26,6 +26,31 @@ const Assets = () => {
   const [bulkForm, setBulkForm] = useState({ status: '', condition: '', manufacturer: '', locationId: '' });
   const [bulkLoading, setBulkLoading] = useState(false);
   
+  // Custom Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirm',
+    type: 'danger', // danger | warning | info
+    onConfirm: null
+  });
+
+  const openConfirm = (title, message, onConfirm, type = 'danger', confirmText = 'Confirm') => {
+    setConfirmModal({ isOpen: true, title, message, onConfirm, type, confirmText });
+  };
+
+  const closeConfirm = () => {
+    setConfirmModal(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const handleConfirmAction = async () => {
+    if (confirmModal.onConfirm) {
+      await confirmModal.onConfirm();
+    }
+    closeConfirm();
+  };
+
   // Assign State
   const [assigningAsset, setAssigningAsset] = useState(null);
   const [assignForm, setAssignForm] = useState({
@@ -249,7 +274,6 @@ const Assets = () => {
   const handleForceAdd = async () => {
     if (!importInfo?.skipped_duplicates?.length) return;
     
-    // Extract asset objects from the skipped duplicates list
     const assetsToAdd = importInfo.skipped_duplicates
       .filter(d => d.asset)
       .map(d => d.asset);
@@ -259,20 +283,26 @@ const Assets = () => {
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to add ${assetsToAdd.length} duplicate assets?`)) return;
-
-    try {
-      setForceLoading(true);
-      const res = await api.post('/assets/bulk', { assets: assetsToAdd });
-      alert(res.data.message);
-      setImportInfo(null);
-      fetchAssets(undefined, { silent: true });
-    } catch (error) {
-      console.error('Force add error:', error);
-      alert(error.response?.data?.message || 'Failed to force add assets');
-    } finally {
-      setForceLoading(false);
-    }
+    openConfirm(
+      'Force Import Duplicates',
+      `Are you sure you want to add ${assetsToAdd.length} duplicate assets?`,
+      async () => {
+        try {
+          setForceLoading(true);
+          const res = await api.post('/assets/bulk', { assets: assetsToAdd });
+          alert(res.data.message);
+          setImportInfo(null);
+          fetchAssets(undefined, { silent: true });
+        } catch (error) {
+          console.error('Force add error:', error);
+          alert(error.response?.data?.message || 'Failed to force add assets');
+        } finally {
+          setForceLoading(false);
+        }
+      },
+      'warning',
+      'Add Duplicates'
+    );
   };
 
   const handleExport = async () => {
@@ -311,20 +341,37 @@ const Assets = () => {
     const isAssigned = asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name);
 
     if (isAssigned) {
-      if (window.confirm("This asset is currently assigned. Do you want to unassign it before editing?")) {
-        try {
-          const res = await api.post('/assets/unassign', { assetId: asset._id });
-          assetToEdit = res.data;
-          fetchAssets(); // Refresh background list
-          alert('Asset unassigned successfully. Opening edit form...');
-        } catch (error) {
-          console.error('Error unassigning asset:', error);
-          alert('Failed to unassign asset. Opening edit form with current state.');
-        }
-      }
+      openConfirm(
+        'Asset Assigned',
+        "This asset is currently assigned. Do you want to unassign it before editing?",
+        async () => {
+          try {
+            const res = await api.post('/assets/unassign', { assetId: asset._id });
+            const unassignedAsset = res.data;
+            alert('Asset unassigned successfully. Opening edit form...');
+            // Proceed to edit with unassigned asset
+            setEditingAsset(unassignedAsset);
+            setupEditForm(unassignedAsset);
+            fetchAssets(); 
+          } catch (error) {
+            console.error('Error unassigning asset:', error);
+            alert('Failed to unassign asset. Opening edit form with current state.');
+            // Proceed with original asset
+            setEditingAsset(asset);
+            setupEditForm(asset);
+          }
+        },
+        'warning',
+        'Unassign & Edit'
+      );
+      return; // Stop execution, wait for modal
     }
 
     setEditingAsset(assetToEdit);
+    setupEditForm(assetToEdit);
+  };
+
+  const setupEditForm = (assetToEdit) => {
     let initialStatus = assetToEdit.status;
     if ((assetToEdit.assigned_to || (assetToEdit.assigned_to_external && assetToEdit.assigned_to_external.name)) && (assetToEdit.status === 'New' || assetToEdit.status === 'Used')) {
       initialStatus = 'In Use';
@@ -553,16 +600,23 @@ const Assets = () => {
 
   const handleUnassign = async (asset) => {
     const assigneeName = asset.assigned_to?.name || asset.assigned_to_external?.name || 'External User';
-    if (!window.confirm(`Are you sure you want to unassign ${asset.name} from ${assigneeName}?`)) return;
-
-    try {
-      await api.post('/assets/unassign', { assetId: asset._id });
-      fetchAssets(undefined, { silent: true });
-      alert('Asset unassigned successfully');
-    } catch (error) {
-      console.error('Error unassigning asset:', error);
-      alert('Failed to unassign asset');
-    }
+    
+    openConfirm(
+      'Unassign Asset',
+      `Are you sure you want to unassign ${asset.name} from ${assigneeName}?`,
+      async () => {
+        try {
+          await api.post('/assets/unassign', { assetId: asset._id });
+          fetchAssets(undefined, { silent: true });
+          alert('Asset unassigned successfully');
+        } catch (error) {
+          console.error('Error unassigning asset:', error);
+          alert('Failed to unassign asset');
+        }
+      },
+      'warning',
+      'Unassign'
+    );
   };
 
   const toggleSelect = (id) => {
@@ -603,35 +657,49 @@ const Assets = () => {
   };
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Delete ${selectedIds.length} selected asset(s)? This cannot be undone.`)) return;
-    try {
-      setBulkLoading(true);
-      const res = await api.post('/assets/bulk-delete', { ids: selectedIds });
-      const deletedIds = res.data?.deletedIds || selectedIds;
-      setAssets(prev => prev.filter(a => !deletedIds.includes(a._id)));
-      setSelectedIds([]);
-      fetchAssets(undefined, { silent: true });
-      alert(res.data?.message || 'Bulk delete completed');
-    } catch (error) {
-      console.error('Bulk delete error:', error);
-      alert(error.response?.data?.message || 'Bulk delete failed');
-    } finally {
-      setBulkLoading(false);
-    }
+    
+    openConfirm(
+      'Bulk Delete',
+      `Delete ${selectedIds.length} selected asset(s)? This cannot be undone.`,
+      async () => {
+        try {
+          setBulkLoading(true);
+          const res = await api.post('/assets/bulk-delete', { ids: selectedIds });
+          const deletedIds = res.data?.deletedIds || selectedIds;
+          setAssets(prev => prev.filter(a => !deletedIds.includes(a._id)));
+          setSelectedIds([]);
+          fetchAssets(undefined, { silent: true });
+          alert(res.data?.message || 'Bulk delete completed');
+        } catch (error) {
+          console.error('Bulk delete error:', error);
+          alert(error.response?.data?.message || 'Bulk delete failed');
+        } finally {
+          setBulkLoading(false);
+        }
+      },
+      'danger',
+      'Delete All'
+    );
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this asset?')) {
-      try {
-        await api.delete(`/assets/${id}`);
-        setAssets(prev => prev.filter(a => a._id !== id));
-        fetchAssets(undefined, { silent: true });
-        alert('Asset deleted successfully');
-      } catch (error) {
-        console.error('Error deleting asset:', error);
-        alert('Failed to delete asset');
-      }
-    }
+    openConfirm(
+      'Delete Asset',
+      'Are you sure you want to delete this asset?',
+      async () => {
+        try {
+          await api.delete(`/assets/${id}`);
+          setAssets(prev => prev.filter(a => a._id !== id));
+          fetchAssets(undefined, { silent: true });
+          alert('Asset deleted successfully');
+        } catch (error) {
+          console.error('Error deleting asset:', error);
+          alert('Failed to delete asset');
+        }
+      },
+      'danger',
+      'Delete'
+    );
   };
 
   const getDerivedStatus = (asset) => {
@@ -2058,6 +2126,36 @@ const Assets = () => {
                 className={`text-white px-4 py-2 rounded ${bulkLoading ? 'bg-purple-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}
               >
                 {bulkLoading ? 'Updating…' : `Apply to ${selectedIds.length} asset(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[100]">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-sm mx-4">
+            <h2 className={`text-xl font-bold mb-2 ${confirmModal.type === 'danger' ? 'text-red-600' : 'text-gray-800'}`}>
+              {confirmModal.title}
+            </h2>
+            <p className="text-gray-600 mb-6">{confirmModal.message}</p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={closeConfirm}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAction}
+                className={`text-white px-4 py-2 rounded ${
+                  confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' : 
+                  confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' : 
+                  'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {confirmModal.confirmText}
               </button>
             </div>
           </div>

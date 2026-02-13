@@ -579,6 +579,9 @@ const Assets = () => {
       if (bulkForm.status) updates.status = bulkForm.status;
       if (bulkForm.condition) updates.condition = bulkForm.condition;
       if (bulkForm.manufacturer) updates.manufacturer = bulkForm.manufacturer;
+      if (bulkForm.category) updates.category = bulkForm.category;
+      if (bulkForm.product_type) updates.product_type = bulkForm.product_type;
+      if (bulkForm.product_name) updates.product_name = bulkForm.product_name;
       if (bulkForm.locationId) {
         const loc = stores.find(s => s._id === bulkForm.locationId);
         if (loc) updates.location = loc.name;
@@ -1938,6 +1941,53 @@ const Assets = () => {
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
             <h2 className="text-xl font-bold mb-4">Bulk Edit Assets</h2>
             <div className="space-y-4">
+              <div className="bg-purple-50 p-3 rounded text-sm text-purple-800 mb-2">
+                Select fields to update for all selected assets. Leave blank to keep existing values.
+              </div>
+
+              {/* Hierarchy Selectors for Bulk Edit */}
+              <div className="grid grid-cols-1 gap-3 border-b pb-4 mb-2">
+                 <div>
+                    <label className="block text-sm font-medium text-gray-700">Category (Optional)</label>
+                    <select
+                      value={bulkForm.category}
+                      onChange={(e) => setBulkForm({ ...bulkForm, category: e.target.value, product_type: '', product_name: '' })}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    >
+                      <option value="">No change</option>
+                      {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-sm font-medium text-gray-700">Product Type (Optional)</label>
+                    <select
+                      value={bulkForm.product_type}
+                      onChange={(e) => setBulkForm({ ...bulkForm, product_type: e.target.value, product_name: '' })}
+                      disabled={!bulkForm.category}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 disabled:bg-gray-100"
+                    >
+                      <option value="">No change</option>
+                      {bulkForm.category && getTypes(bulkForm.category).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-sm font-medium text-gray-700">Product (Optional)</label>
+                    <select
+                      value={bulkForm.product_name}
+                      onChange={(e) => setBulkForm({ ...bulkForm, product_name: e.target.value })}
+                      disabled={!bulkForm.product_type}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 disabled:bg-gray-100"
+                    >
+                      <option value="">No change</option>
+                      {bulkForm.category && bulkForm.product_type && getProducts(bulkForm.category, bulkForm.product_type).map(p => (
+                        <option key={p._id || p.name} value={p.name}>
+                          {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                        </option>
+                      ))}
+                    </select>
+                 </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700">Status (Optional)</label>
                 <select

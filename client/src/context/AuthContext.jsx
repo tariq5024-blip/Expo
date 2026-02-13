@@ -22,16 +22,33 @@ export const AuthProvider = ({ children }) => {
         // noop
       }
     })();
-    const storedUser = localStorage.getItem('user');
-    const storedActiveStore = localStorage.getItem('activeStore');
-    
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    if (storedActiveStore) {
-      setActiveStore(JSON.parse(storedActiveStore));
-    }
-    setLoading(false);
+
+    const verifySession = async () => {
+      const storedUser = localStorage.getItem('user');
+      const storedActiveStore = localStorage.getItem('activeStore');
+
+      if (storedUser) {
+        try {
+          // Verify session with server
+          const res = await api.get('/auth/me');
+          setUser(res.data); // Update with fresh data from server
+          
+          if (storedActiveStore) {
+            setActiveStore(JSON.parse(storedActiveStore));
+          }
+        } catch (error) {
+          // If 401/403, clear local storage (session expired/invalid)
+          console.error('Session verification failed:', error);
+          localStorage.removeItem('user');
+          localStorage.removeItem('activeStore');
+          setUser(null);
+          setActiveStore(null);
+        }
+      }
+      setLoading(false);
+    };
+
+    verifySession();
   }, []);
 
   const login = async (email, password) => {

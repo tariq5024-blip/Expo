@@ -18,6 +18,8 @@ const Assets = () => {
   const [file, setFile] = useState(null);
   const [allowDup, setAllowDup] = useState(false);
   const [importInfo, setImportInfo] = useState(null);
+  const [forceLoading, setForceLoading] = useState(false);
+  const [addLoading, setAddLoading] = useState(false);
   
   // Assign State
   const [assigningAsset, setAssigningAsset] = useState(null);
@@ -45,7 +47,9 @@ const Assets = () => {
     ticket_number: '',
     category: 'Other',
     store: '',
+    location: '',
     status: '',
+    condition: 'New / Excellent',
     rfid: '',
     qr_code: ''
   });
@@ -58,13 +62,16 @@ const Assets = () => {
     ticket_number: '',
     category: 'Other',
     store: '',
+    location: '',
     status: 'New',
+    condition: 'New / Excellent',
     rfid: '',
     qr_code: ''
   });
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterStore, setFilterStore] = useState('');
+  const [filterLocation, setFilterLocation] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterCondition, setFilterCondition] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   
   // Advanced Filters
@@ -142,16 +149,18 @@ const Assets = () => {
     return flatten(type.products);
   };
 
-  const fetchAssets = async (params) => {
+  const fetchAssets = async (params, options) => {
+    const silent = options?.silent === true;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const response = await api.get('/assets', {
         params: {
           page,
           limit,
           q: searchTerm || undefined,
           status: filterStatus || undefined,
-          store: filterStore || undefined,
+          store: filterLocation || undefined, // Send store ID correctly
+          condition: filterCondition || undefined, // Add condition filter
           category: filterCategory || undefined,
           manufacturer: filterManufacturer || undefined,
           model_number: filterModelNumber || undefined,
@@ -172,7 +181,7 @@ const Assets = () => {
     } catch (error) {
       console.error(error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -215,7 +224,7 @@ const Assets = () => {
       alert(res.data?.message || 'Upload completed');
       setShowImportModal(false); // Close modal on success
       setFile(null); // Reset file
-      fetchAssets();
+      fetchAssets(undefined, { silent: true });
     } catch (error) {
       const data = error.response?.data;
       if (data) {
@@ -244,13 +253,16 @@ const Assets = () => {
     if (!window.confirm(`Are you sure you want to add ${assetsToAdd.length} duplicate assets?`)) return;
 
     try {
+      setForceLoading(true);
       const res = await api.post('/assets/bulk', { assets: assetsToAdd });
       alert(res.data.message);
       setImportInfo(null);
-      fetchAssets();
+      fetchAssets(undefined, { silent: true });
     } catch (error) {
       console.error('Force add error:', error);
       alert(error.response?.data?.message || 'Failed to force add assets');
+    } finally {
+      setForceLoading(false);
     }
   };
 
@@ -283,26 +295,52 @@ const Assets = () => {
     }
   };
 
-  const handleEditClick = (asset) => {
-    setEditingAsset(asset);
-    let initialStatus = asset.status;
-    if ((asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) && (asset.status === 'New' || asset.status === 'Used')) {
+  const handleEditClick = async (asset) => {
+    let assetToEdit = asset;
+
+    // Check if assigned
+    const isAssigned = asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name);
+
+    if (isAssigned) {
+      if (window.confirm("This asset is currently assigned. Do you want to unassign it before editing?")) {
+        try {
+          const res = await api.post('/assets/unassign', { assetId: asset._id });
+          assetToEdit = res.data;
+          fetchAssets(); // Refresh background list
+          alert('Asset unassigned successfully. Opening edit form...');
+        } catch (error) {
+          console.error('Error unassigning asset:', error);
+          alert('Failed to unassign asset. Opening edit form with current state.');
+        }
+      }
+    }
+
+    setEditingAsset(assetToEdit);
+    let initialStatus = assetToEdit.status;
+    if ((assetToEdit.assigned_to || (assetToEdit.assigned_to_external && assetToEdit.assigned_to_external.name)) && (assetToEdit.status === 'New' || assetToEdit.status === 'Used')) {
       initialStatus = 'In Use';
     }
 
     setFormData({
-      name: asset.name,
-      model_number: asset.model_number,
-      serial_number: asset.serial_number,
-      mac_address: asset.mac_address || '',
-      manufacturer: asset.manufacturer || '',
-      ticket_number: asset.ticket_number || '',
-      rfid: asset.rfid || '',
-      qr_code: asset.qr_code || '',
-      category: asset.category || 'Other',
-      store: asset.store?._id || '',
-      status: initialStatus
+      name: assetToEdit.name,
+      model_number: assetToEdit.model_number,
+      serial_number: assetToEdit.serial_number,
+      mac_address: assetToEdit.mac_address || '',
+      manufacturer: assetToEdit.manufacturer || '',
+      ticket_number: assetToEdit.ticket_number || '',
+      rfid: assetToEdit.rfid || '',
+      qr_code: assetToEdit.qr_code || '',
+      category: assetToEdit.category || 'Other',
+      store: assetToEdit.store?._id || assetToEdit.store || '',
+      location: assetToEdit.location || '',
+      status: initialStatus,
+      condition: assetToEdit.condition || 'New / Excellent'
     });
+
+    // Populate Hierarchy
+    setSelectedCategory(assetToEdit.category || '');
+    setSelectedType(assetToEdit.product_type || '');
+    setSelectedProduct(assetToEdit.product_name || '');
   };
 
   const handleInputChange = (e) => {
@@ -311,7 +349,12 @@ const Assets = () => {
 
   const handleSave = async () => {
     try {
-      const updateData = { ...formData };
+      const updateData = { 
+        ...formData,
+        category: selectedCategory || formData.category,
+        product_type: selectedType,
+        product_name: selectedProduct
+      };
       
       // Handle "In Use" virtual status
       if (updateData.status === 'In Use') {
@@ -332,9 +375,16 @@ const Assets = () => {
         updateData.assigned_to_external = null;
       }
 
-      await api.put(`/assets/${editingAsset._id}`, updateData);
+      // Remove empty store to prevent CastError
+      if (!updateData.store) {
+        delete updateData.store;
+      }
+
+      const res = await api.put(`/assets/${editingAsset._id}`, updateData);
+      const updated = res.data;
       setEditingAsset(null);
-      fetchAssets();
+      setAssets(prev => prev.map(a => a._id === updated._id ? { ...a, ...updated } : a));
+      fetchAssets(undefined, { silent: true });
       alert('Asset updated successfully');
     } catch (error) {
       console.error('Error updating asset:', error);
@@ -410,6 +460,7 @@ const Assets = () => {
       return;
     }
     try {
+      setAddLoading(true);
       const payload = {
         ...addForm,
         category: selectedCategory || addForm.category,
@@ -422,7 +473,8 @@ const Assets = () => {
         delete payload.store;
       }
 
-      await api.post('/assets', payload);
+      const res = await api.post('/assets', payload);
+      const created = res.data;
       setAddForm({
         name: '',
         model_number: '',
@@ -432,17 +484,21 @@ const Assets = () => {
         ticket_number: '',
         category: 'Other',
         store: '',
+        location: '',
         status: 'New'
       });
       setSelectedCategory('');
       setSelectedType('');
       setSelectedProduct('');
-      fetchAssets();
+      setAssets(prev => [created, ...prev]);
+      fetchAssets(undefined, { silent: true });
       setShowAddModal(false);
-      alert('Asset added successfully');
+      // Optional: toast style message if desired
     } catch (error) {
       console.error('Error adding asset:', error);
       alert('Failed to add asset');
+    } finally {
+      setAddLoading(false);
     }
   };
 
@@ -478,7 +534,7 @@ const Assets = () => {
       }
       await api.post(`/assets/assign`, payload);
       setAssigningAsset(null);
-      fetchAssets();
+      fetchAssets(undefined, { silent: true });
       alert('Asset assigned successfully');
     } catch (error) {
       console.error('Error assigning asset:', error);
@@ -492,7 +548,7 @@ const Assets = () => {
 
     try {
       await api.post('/assets/unassign', { assetId: asset._id });
-      fetchAssets();
+      fetchAssets(undefined, { silent: true });
       alert('Asset unassigned successfully');
     } catch (error) {
       console.error('Error unassigning asset:', error);
@@ -504,7 +560,8 @@ const Assets = () => {
     if (window.confirm('Are you sure you want to delete this asset?')) {
       try {
         await api.delete(`/assets/${id}`);
-        fetchAssets();
+        setAssets(prev => prev.filter(a => a._id !== id));
+        fetchAssets(undefined, { silent: true });
         alert('Asset deleted successfully');
       } catch (error) {
         console.error('Error deleting asset:', error);
@@ -536,7 +593,12 @@ const Assets = () => {
       return { label: 'Spare', color: 'bg-green-100 text-green-800' };
     }
 
-    // 4. Fallback
+    // 4. Fallback (For Testing and other custom statuses)
+    // If status is 'Testing', we just show 'Testing' in gray or purple?
+    if (asset.status === 'Testing') {
+       return { label: 'Testing', color: 'bg-purple-100 text-purple-800' };
+    }
+
     return { label: asset.status, color: 'bg-gray-100 text-gray-800' };
   };
 
@@ -552,7 +614,7 @@ const Assets = () => {
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, filterStore, filterStatus, filterCategory, filterManufacturer, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductType, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
+  }, [searchTerm, filterLocation, filterStatus, filterCondition, filterCategory, filterManufacturer, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductType, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
 
   // Page/Limit change effect
   useEffect(() => {
@@ -616,9 +678,10 @@ const Assets = () => {
               <div className="mt-2">
                 <button 
                   onClick={handleForceAdd}
-                  className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 shadow-sm"
+                  disabled={forceLoading}
+                  className={`px-3 py-1 rounded text-sm shadow-sm text-white ${forceLoading ? 'bg-yellow-400 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-700'}`}
                 >
-                  Add These Duplicates Anyway
+                  {forceLoading ? 'Adding duplicates…' : 'Add These Duplicates Anyway'}
                 </button>
               </div>
             </div>
@@ -639,7 +702,7 @@ const Assets = () => {
             </div>
           )}
           <div className="mt-2 text-sm text-gray-600">
-            Excel headers supported: asset type, Model number, Serial number, mac address, Manufacturer, Ticket number, RFID, QR Code, Store location, Status
+            Excel headers supported: Asset Type, Model, Serial, MAC, Manufacturer, Ticket, RFID, QR Code, Store, Location, Status
           </div>
         </div>
       )}
@@ -654,21 +717,40 @@ const Assets = () => {
             className="border p-2 rounded"
           />
           <select
-            value={filterStore}
-            onChange={(e) => setFilterStore(e.target.value)}
+            value={filterLocation}
+            onChange={(e) => setFilterLocation(e.target.value)}
             className="border p-2 rounded"
           >
-            <option value="">All Stores</option>
-            {stores.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+            <option value="">All Locations</option>
+            {stores
+              .filter(s => s.parentStore)
+              .map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+          </select>
+          <select
+            value={filterCondition}
+            onChange={(e) => setFilterCondition(e.target.value)}
+            className="border p-2 rounded"
+          >
+            <option value="">All Conditions</option>
+            <option value="New / Excellent">New / Excellent</option>
+            <option value="Good / Fair">Good / Fair</option>
+            <option value="Used / Substandard">Used / Substandard</option>
+            <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
+            <option value="Faulty / Defective">Faulty / Defective</option>
+            <option value="Poor / Near Failure">Poor / Near Failure</option>
+            <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+            <option value="Disposed">Disposed</option>
           </select>
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
             className="border p-2 rounded"
           >
-            <option value="">All Conditions</option>
-            <option value="New">New</option>
-            <option value="Used">Used</option>
+            <option value="">All Statuses</option>
+            <option value="New">Spare (New)</option>
+            <option value="Used">Spare (Used)</option>
+            <option value="In Use">In Use</option>
+            <option value="Testing">Testing</option>
             <option value="Faulty">Faulty</option>
             <option value="Under Repair">Under Repair</option>
             <option value="Disposed">Disposed</option>
@@ -682,7 +764,7 @@ const Assets = () => {
             </button>
             <button
               onClick={() => {
-                setSearchTerm(''); setFilterStore(''); setFilterStatus('');
+                setSearchTerm(''); setFilterLocation(''); setFilterStatus(''); setFilterCondition('');
                 setFilterManufacturer(''); setFilterProductType(''); setFilterProductName('');
                 setFilterModelNumber(''); setFilterSerialNumber(''); setFilterMacAddress('');
                 setFilterTicket(''); setFilterRfid(''); setFilterQr('');
@@ -810,9 +892,10 @@ const Assets = () => {
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Ticket</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">MAC Address</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Manufacturer</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Condition of Asset</th>
+              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Condition</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Store</th>
+              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Location</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Assigned To</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Date & Time</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
@@ -829,26 +912,22 @@ const Assets = () => {
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.ticket_number || '-'}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.mac_address || '-'}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">{asset.manufacturer || '-'}</td>
+                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.condition || 'New / Excellent'}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm font-medium text-gray-700">
                   {asset.status === 'New' ? 'Spare (New)' : 
                    asset.status === 'Used' ? 'Spare (Used)' : 
                    asset.status === 'Faulty' ? 'Faulty' : 
                    asset.status === 'Disposed' ? 'Disposed' : asset.status}
                 </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center">
-                  {(() => {
-                    const { label, color } = getDerivedStatus(asset);
-                    return (
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${color}`}>
-                        {label}
-                      </span>
-                    );
-                  })()}
+                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">
+                  {asset.store?.name || '-'}
                 </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">{asset.store?.name}</td>
+                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">
+                  {asset.location || '-'}
+                </td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.assigned_to?.name || asset.assigned_to_external?.name || '-'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-sm text-gray-500 text-center hidden xl:table-cell">
-                  {new Date(asset.updatedAt).toLocaleString()}
+                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">
+                  {asset.updatedAt ? new Date(asset.updatedAt).toLocaleString() : '-'}
                 </td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">
                   <div className="flex flex-col gap-1 sm:flex-row justify-center">
@@ -916,6 +995,10 @@ const Assets = () => {
               </div>
               <div className="col-span-2">
                 <span className="text-xs text-gray-500 block">Condition</span>
+                <span className="font-medium">{asset.condition || 'New / Excellent'}</span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-xs text-gray-500 block">Status</span>
                 <span className="font-medium">
                   {asset.status === 'New' ? 'Spare (New)' : 
                    asset.status === 'Used' ? 'Spare (Used)' : 
@@ -930,6 +1013,10 @@ const Assets = () => {
               <div>
                 <span className="text-xs text-gray-500 block">Store</span>
                 <span className="font-medium">{asset.store?.name || '-'}</span>
+              </div>
+              <div>
+                <span className="text-xs text-gray-500 block">Location</span>
+                <span className="font-medium">{asset.location || '-'}</span>
               </div>
                <div>
                 <span className="text-xs text-gray-500 block">Ticket</span>
@@ -1159,11 +1246,69 @@ const Assets = () => {
       {/* Edit Modal */}
       {editingAsset && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Edit Asset</h2>
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              
+              {/* Hierarchy Selectors - Adapted for Edit */}
+              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-3 rounded mb-2 border">
+                 <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase">Category</label>
+                    <select
+                      value={selectedCategory}
+                      onChange={(e) => {
+                        setSelectedCategory(e.target.value);
+                        setSelectedType('');
+                        setSelectedProduct('');
+                        setFormData(prev => ({ ...prev, category: e.target.value }));
+                      }}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                    >
+                      <option value="">Select Category</option>
+                      {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase">Product Type</label>
+                    <select
+                      value={selectedType}
+                      onChange={(e) => {
+                        setSelectedType(e.target.value);
+                        setSelectedProduct('');
+                      }}
+                      disabled={!selectedCategory}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
+                    >
+                      <option value="">Select Type</option>
+                      {getTypes(selectedCategory).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                    </select>
+                 </div>
+                 <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase">Product</label>
+                    <select
+                      value={selectedProduct}
+                      onChange={(e) => {
+                         const val = e.target.value;
+                         setSelectedProduct(val);
+                         if (val) {
+                            setFormData(prev => ({ ...prev, name: val, model_number: val }));
+                         }
+                      }}
+                      disabled={!selectedType}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
+                    >
+                      <option value="">Select Product</option>
+                      {getProducts(selectedCategory, selectedType).map(p => (
+                        <option key={p._id || p.name} value={p.name}>
+                          {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                        </option>
+                      ))}
+                    </select>
+                 </div>
+              </div>
+
               <div>
-                <label className="block text-sm font-medium text-gray-700">Name</label>
+                <label className="block text-sm font-medium text-gray-700">Name / Asset Type</label>
                 <input
                   type="text"
                   name="name"
@@ -1171,17 +1316,6 @@ const Assets = () => {
                   onChange={handleInputChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Category</label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleInputChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                >
-                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Model</label>
@@ -1254,17 +1388,52 @@ const Assets = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Store</label>
+                <label className="block text-sm font-medium text-gray-700">Location</label>
+                <select
+                  name="location"
+                  value={formData.location || ''}
+                  onChange={handleInputChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                >
+                  <option value="">Select Location</option>
+                  {stores
+                    .filter(s => s.parentStore) // Only show sub-locations (child stores)
+                    .map(s => (
+                      <option key={s._id} value={s.name}>{s.name}</option>
+                    ))
+                  }
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Store (Fixed)</label>
                 <select
                   name="store"
                   value={formData.store}
                   onChange={handleInputChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                  disabled={true}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 bg-gray-100"
                 >
-                  <option value="">Select Store</option>
-                  {stores.map(store => (
+                  {stores.filter(s => !s.parentStore).map(store => (
                     <option key={store._id} value={store._id}>{store.name}</option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Condition</label>
+                <select
+                  name="condition"
+                  value={formData.condition}
+                  onChange={handleInputChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                >
+                  <option value="New / Excellent">New / Excellent</option>
+                  <option value="Good / Fair">Good / Fair</option>
+                  <option value="Used / Substandard">Used / Substandard</option>
+                  <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
+                  <option value="Faulty / Defective">Faulty / Defective</option>
+                  <option value="Poor / Near Failure">Poor / Near Failure</option>
+                  <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+                  <option value="Disposed">Disposed</option>
                 </select>
               </div>
               <div>
@@ -1275,8 +1444,8 @@ const Assets = () => {
                   onChange={handleInputChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
-                  <option value="New">In Store (New)</option>
-                  <option value="Used">In Store (Used)</option>
+                  <option value="New">Spare (New)</option>
+                  <option value="Used">Spare (Used)</option>
                   <option value="In Use">In Use</option>
                   <option value="Testing">Testing</option>
                   <option value="Faulty">Faulty</option>
@@ -1473,17 +1642,52 @@ const Assets = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Store (Optional)</label>
+                <label className="block text-sm font-medium text-gray-700">Location</label>
+                <select
+                  name="location"
+                  value={addForm.location || ''}
+                  onChange={handleAddChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                >
+                  <option value="">Select Location</option>
+                  {stores
+                    .filter(s => s.parentStore) // Only show sub-locations (child stores)
+                    .map(s => (
+                      <option key={s._id} value={s.name}>{s.name}</option>
+                    ))
+                  }
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Store (Fixed)</label>
                 <select
                   name="store"
                   value={addForm.store}
                   onChange={handleAddChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                  disabled={true}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 bg-gray-100"
                 >
-                  <option value="">Select Store</option>
-                  {stores.map(store => (
+                  {stores.filter(s => !s.parentStore).map(store => (
                     <option key={store._id} value={store._id}>{store.name}</option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Condition</label>
+                <select
+                  name="condition"
+                  value={addForm.condition}
+                  onChange={handleAddChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                >
+                  <option value="New / Excellent">New / Excellent</option>
+                  <option value="Good / Fair">Good / Fair</option>
+                  <option value="Used / Substandard">Used / Substandard</option>
+                  <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
+                  <option value="Faulty / Defective">Faulty / Defective</option>
+                  <option value="Poor / Near Failure">Poor / Near Failure</option>
+                  <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+                  <option value="Disposed">Disposed</option>
                 </select>
               </div>
               <div>
@@ -1494,8 +1698,8 @@ const Assets = () => {
                   onChange={handleAddChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
-                  <option value="New">In Store (New)</option>
-                  <option value="Used">In Store (Used)</option>
+                  <option value="New">Spare (New)</option>
+                  <option value="Used">Spare (Used)</option>
                   <option value="In Use">In Use</option>
                   <option value="Testing">Testing</option>
                   <option value="Faulty">Faulty</option>
@@ -1513,9 +1717,10 @@ const Assets = () => {
               </button>
               <button
                 onClick={handleAddSubmit}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded"
+                disabled={addLoading}
+                className={`text-white px-4 py-2 rounded ${addLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
               >
-                Add Asset
+                {addLoading ? 'Adding…' : 'Add Asset'}
               </button>
             </div>
           </div>
@@ -1602,23 +1807,31 @@ const Assets = () => {
               </div>
 
             </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                   setShowImportModal(false);
-                   setFile(null);
-                }}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+            <div className="mt-6 flex justify-between space-x-3">
+              <button 
+                 onClick={handleDownloadTemplate} 
+                 className="text-blue-600 hover:text-blue-800 text-sm font-medium underline"
               >
-                Cancel
+                 Download Template
               </button>
-              <button
-                onClick={handleUpload}
-                disabled={!file}
-                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
-              >
-                Upload
-              </button>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                     setShowImportModal(false);
+                     setFile(null);
+                  }}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpload}
+                  disabled={!file}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
+                >
+                  Upload
+                </button>
+              </div>
             </div>
           </div>
         </div>

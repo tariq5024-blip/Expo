@@ -1,12 +1,22 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const AssetCategory = require('../models/AssetCategory');
 const Asset = require('../models/Asset');
+const Store = require('../models/Store');
 const { protect, admin } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 const sharp = require('sharp');
 const fs = require('fs');
+
+// Helper to get store and its children IDs
+async function getStoreIds(storeId) {
+  if (!storeId) return [];
+  const children = await Store.find({ parentStore: storeId }).select('_id');
+  // Ensure all IDs are ObjectIds for aggregation matching
+  return [storeId, ...children.map(c => c._id)].map(id => new mongoose.Types.ObjectId(id));
+}
 
 // Helper to resize image
 const resizeImage = async (filePath) => {
@@ -66,7 +76,11 @@ const findInTree = (list, id) => {
 const findCategoryAndProduct = async (productId, activeStoreId) => {
   const filter = {};
   if (activeStoreId) {
-    filter.store = activeStoreId;
+    filter.$or = [
+      { store: activeStoreId },
+      { store: null },
+      { store: { $exists: false } }
+    ];
   }
   const categories = await AssetCategory.find(filter).lean();
   for (const cat of categories) {
@@ -91,7 +105,11 @@ router.get('/', protect, async (req, res) => {
   try {
     const filter = {};
     if (req.activeStore) {
-      filter.store = req.activeStore;
+      filter.$or = [
+        { store: req.activeStore },
+        { store: null },
+        { store: { $exists: false } }
+      ];
     }
     const categories = await AssetCategory.find(filter).sort({ name: 1 }).lean();
     res.json(categories);
@@ -106,10 +124,29 @@ router.get('/', protect, async (req, res) => {
 router.get('/stats', protect, async (req, res) => {
   try {
     const filter = {};
+    let targetStoreId = null;
+
     if (req.activeStore) {
-      filter.store = req.activeStore;
+      targetStoreId = req.activeStore;
     }
+    
+    // For categories, we might only want the main store ones?
+    // But assets can be in child stores.
+    // The previous code filtered categories by `req.activeStore`.
+    // Let's assume categories are managed at the Parent Store level.
+    if (targetStoreId) {
+      filter.$or = [
+        { store: targetStoreId },
+        { store: null },
+        { store: { $exists: false } }
+      ];
+    }
+
+    console.log('STATS DEBUG: ActiveStore:', req.activeStore);
+    console.log('STATS DEBUG: Filter:', JSON.stringify(filter));
+
     const categories = await AssetCategory.find(filter).sort({ name: 1 }).lean();
+    console.log('STATS DEBUG: Categories found:', categories.length);
     
     // Flatten hierarchy to get all products (Level 3+)
     let allProducts = [];
@@ -136,18 +173,39 @@ router.get('/stats', protect, async (req, res) => {
       });
     };
 
-    categories.forEach(cat => {
-      if (cat.types && cat.types.length > 0) {
-        cat.types.forEach(type => {
-          if (type.products && type.products.length > 0) {
-            traverse(type.products, cat.name, type.name, cat._id, type._id, `${cat.name} > ${type.name}`);
-          }
-        });
-      }
-    });
+    try {
+      categories.forEach(cat => {
+        if (cat.types && cat.types.length > 0) {
+          cat.types.forEach(type => {
+            if (type.products && type.products.length > 0) {
+              traverse(type.products, cat.name, type.name, cat._id, type._id, `${cat.name} > ${type.name}`);
+            }
+          });
+        }
+      });
+      console.log('STATS DEBUG: Products generated count:', allProducts.length);
+    } catch (err) {
+      console.error('STATS DEBUG: Traversal failed:', err);
+    }
 
+    // Asset Aggregation Filter (Include Child Stores)
+    const assetMatch = {};
+    if (targetStoreId) {
+      console.log('STATS DEBUG: Getting store IDs for', targetStoreId);
+      try {
+        const storeIds = await getStoreIds(targetStoreId);
+        console.log('STATS DEBUG: Store IDs count:', storeIds.length);
+        assetMatch.store = { $in: storeIds };
+      } catch (e) {
+        console.error('STATS DEBUG: getStoreIds failed:', e);
+        throw e;
+      }
+    }
+
+    console.log('STATS DEBUG: Starting Aggregation');
     // Aggregation to get counts per product_name
     const stats = await Asset.aggregate([
+      { $match: assetMatch },
       {
         $group: {
           _id: '$product_name',
@@ -163,7 +221,18 @@ router.get('/stats', protect, async (req, res) => {
                     { $ne: ['$status', 'Disposed'] },
                     { $ne: ['$status', 'Faulty'] },
                     { $ne: ['$status', 'Under Repair'] },
-                    { $ifNull: ['$assigned_to', false] }
+                    { 
+                      $or: [
+                        { $ifNull: ['$assigned_to', false] }, 
+                        { 
+                          $and: [
+                            { $ifNull: ['$assigned_to_external.name', false] },
+                            { $ne: ['$assigned_to_external.name', ''] }
+                          ]
+                        },
+                        { $eq: ['$status', 'In Use'] }
+                      ]
+                    }
                   ]
                 }, 
                 1, 
@@ -209,8 +278,19 @@ router.get('/stats', protect, async (req, res) => {
       };
     });
 
-    res.json(result);
+    console.log('STATS DEBUG: Products returned:', result.length);
+    const seen = new Set();
+    const deduped = [];
+    for (const item of result) {
+      const key = String(item.name || '').trim().toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(item);
+      }
+    }
+    res.json(deduped);
   } catch (err) {
+    console.error('STATS DEBUG: Error in /stats:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -232,7 +312,13 @@ router.put('/products/:id', protect, admin, upload.single('image'), async (req, 
     const { category, type, product } = found;
     const oldName = product.name;
 
-    if (name) product.name = name;
+    if (name) {
+      const conflict = type.products.some(p => p._id.toString() !== product._id.toString() && String(p.name).toLowerCase() === String(name).toLowerCase());
+      if (conflict) {
+        return res.status(400).json({ message: 'Product already exists in this type' });
+      }
+      product.name = name;
+    }
     if (req.file) {
       await resizeImage(req.file.path);
       product.image = `/uploads/${req.file.filename}`;
@@ -314,7 +400,7 @@ router.post('/products/:id/children', protect, admin, upload.single('image'), as
     const { category, product } = found;
     
     // Check if child with same name exists
-    if (product.children && product.children.some(c => c.name === name)) {
+    if (product.children && product.children.some(c => String(c.name).toLowerCase() === String(name).toLowerCase())) {
       return res.status(400).json({ message: 'Child product already exists' });
     }
 
@@ -345,10 +431,11 @@ router.post('/', protect, admin, upload.single('image'), async (req, res) => {
   const image = req.file ? `/uploads/${req.file.filename}` : '';
 
   try {
-    const query = { name };
+    const query = {};
     if (req.activeStore) {
       query.store = req.activeStore;
     }
+    query.name = new RegExp(`^${name}$`, 'i');
     const exists = await AssetCategory.findOne(query);
     if (exists) {
       return res.status(400).json({ message: 'Category already exists in this store' });
@@ -456,7 +543,7 @@ router.post('/:id/types', protect, admin, async (req, res) => {
       return res.status(404).json({ message: 'Category not found' });
     }
 
-    if (category.types.some(t => t.name === name)) {
+    if (category.types.some(t => String(t.name).toLowerCase() === String(name).toLowerCase())) {
       return res.status(400).json({ message: 'Type already exists in this category' });
     }
     
@@ -484,7 +571,7 @@ router.post('/:id/types/:typeName/products', protect, admin, async (req, res) =>
     const type = category.types.find(t => t.name === req.params.typeName);
     if (!type) return res.status(404).json({ message: 'Type not found' });
     
-    if (type.products.some(p => p.name === name)) {
+    if (type.products.some(p => String(p.name).toLowerCase() === String(name).toLowerCase())) {
       return res.status(400).json({ message: 'Product already exists in this type' });
     }
     

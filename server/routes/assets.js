@@ -15,6 +15,10 @@ const sendEmail = require('../utils/sendEmail');
 // Multer setup for memory storage
 const upload = multer({ storage: multer.memoryStorage() });
 
+function capitalizeWords(s) {
+  if (!s) return s;
+  return String(s).toUpperCase();
+}
 // Helper to generate Unique ID
 async function generateUniqueId(assetType) {
   let prefix = 'AST';
@@ -64,6 +68,13 @@ router.get('/recent-activity', protect, async (req, res) => {
   }
 });
 
+// Helper to get store and its children IDs
+async function getStoreIds(storeId) {
+  if (!storeId) return [];
+  const children = await Store.find({ parentStore: storeId }).select('_id');
+  return [storeId, ...children.map(c => c._id)];
+}
+
 // @desc    Get assets (paginated, optional filters)
 // @route   GET /api/assets
 // @access  Private
@@ -87,6 +98,8 @@ router.get('/', protect, async (req, res) => {
     const dateFrom = String(req.query.date_from || '').trim();
     const dateTo = String(req.query.date_to || '').trim();
     const source = String(req.query.source || '').trim();
+    const condition = String(req.query.condition || '').trim();
+    const location = String(req.query.location || '').trim();
 
     const filter = {};
     if (q) {
@@ -103,21 +116,80 @@ router.get('/', protect, async (req, res) => {
       ];
     }
     if (status) {
-      if (status.includes(',')) {
+      if (status === 'In Use') {
+        // Filter for assigned assets (Technician OR External)
+        filter.$or = [
+          { assigned_to: { $ne: null } },
+          { 'assigned_to_external.name': { $exists: true, $ne: '' } }
+        ];
+      } else if (status === 'New' || status === 'Used') {
+        // Filter for Spare (Unassigned) assets of specific status
+        filter.status = status;
+        filter.assigned_to = null;
+        filter.assigned_to_external = null;
+      } else if (status.includes(',')) {
         filter.status = { $in: status.split(',').map(s => s.trim()) };
       } else {
         filter.status = status;
       }
     }
 
-    // RBAC: Store Access Control
-    if (req.activeStore) {
-      filter.store = req.activeStore;
-    } else if (req.user.role !== 'Super Admin' && req.user.assignedStore) {
-      filter.store = req.user.assignedStore;
-    } else if (storeId) {
-      filter.store = storeId;
+    // RBAC: Store Access Control (Include Child Stores)
+    let contextStoreId = req.activeStore || (req.user.role !== 'Super Admin' ? req.user.assignedStore : null);
+    
+    if (contextStoreId) {
+      const allowedIds = await getStoreIds(contextStoreId);
+      
+      if (storeId) {
+         // Check if requested storeId is allowed
+         if (allowedIds.some(id => id.toString() === storeId)) {
+            // Valid filter.
+            // 1. Get specific IDs (selected store + its children)
+            const specificIds = await getStoreIds(storeId);
+            
+            // 2. Get Store Name for legacy/string-based matching
+            const selectedStore = await Store.findById(storeId);
+            
+            // 3. Construct Filter:
+            //    - Match assets explicitly assigned to these IDs
+            //    - OR Match assets assigned to any allowed store (e.g. Parent) BUT with matching location string
+            filter.$or = [
+               ...(filter.$or || []), // Preserve existing $or (e.g. search query)
+               {
+                 $or: [
+                   { store: { $in: specificIds } },
+                   { store: { $in: allowedIds }, location: selectedStore ? selectedStore.name : '___' }
+                 ]
+               }
+            ];
+            // Note: We don't set filter.store directly here to allow the $or logic to work
+         } else {
+            // Invalid filter (out of scope). Return nothing.
+            filter.store = { $in: [] };
+         }
+      } else {
+         // No specific filter. Show all allowed.
+         filter.store = { $in: allowedIds };
+      }
+    } else {
+      // No restricted context (Super Admin global)
+      if (storeId) {
+         const ids = await getStoreIds(storeId);
+         const selectedStore = await Store.findById(storeId);
+         
+         // Same hybrid logic for Super Admin
+         filter.$or = [
+            ...(filter.$or || []),
+            {
+              $or: [
+                { store: { $in: ids } },
+                { location: selectedStore ? selectedStore.name : '___' }
+              ]
+            }
+         ];
+      }
     }
+
     if (category) filter.category = category;
     if (manufacturer) filter.manufacturer = new RegExp(manufacturer, 'i');
     if (modelNumber) filter.model_number = new RegExp(modelNumber, 'i');
@@ -129,6 +201,8 @@ router.get('/', protect, async (req, res) => {
     if (rfid) filter.rfid = new RegExp(rfid, 'i');
     if (qrCode) filter.qr_code = new RegExp(qrCode, 'i');
     if (source) filter.source = source;
+    if (condition) filter.condition = condition;
+    if (location) filter.location = location;
     
     if (dateFrom || dateTo) {
       filter.createdAt = {};
@@ -146,7 +220,14 @@ router.get('/', protect, async (req, res) => {
         .sort({ updatedAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .populate('store', 'name')
+        .populate({
+          path: 'store',
+          select: 'name parentStore',
+          populate: {
+            path: 'parentStore',
+            select: 'name'
+          }
+        })
         .populate('assigned_to', 'name email')
         .lean()
     ]);
@@ -155,7 +236,7 @@ router.get('/', protect, async (req, res) => {
     const serials = items.map(i => i.serial_number);
     if (serials.length > 0) {
       const counts = await Asset.aggregate([
-        { $match: { serial_number: { $in: serials }, store: filter.store } }, // Scope duplicate check to store
+        { $match: { serial_number: { $in: serials }, store: filter.store } }, // Scope duplicate check to store(s)
         { $group: { _id: '$serial_number', count: { $sum: 1 } } }
       ]);
       const countMap = {};
@@ -192,7 +273,8 @@ router.get('/search-serial', protect, async (req, res) => {
 
     const query = {};
     if (req.activeStore) {
-      query.store = req.activeStore;
+      const storeIds = await getStoreIds(req.activeStore);
+      query.store = { $in: storeIds };
     }
 
     // Optimization: If exactly 4 chars, try exact match on serial_last_4 first (extremely fast)
@@ -223,17 +305,26 @@ router.get('/search-serial', protect, async (req, res) => {
 router.get('/stats', protect, async (req, res) => {
   try {
     const filter = {};
+    let targetStoreId = null;
+
     if (req.activeStore && mongoose.isValidObjectId(req.activeStore)) {
-      filter.store = new mongoose.Types.ObjectId(req.activeStore);
+      targetStoreId = req.activeStore;
     } else if (req.user.role !== 'Super Admin' && req.user.assignedStore) {
-      filter.store = req.user.assignedStore;
+      targetStoreId = req.user.assignedStore;
+    }
+
+    if (targetStoreId) {
+      const storeIds = await getStoreIds(targetStoreId);
+      filter.store = { $in: storeIds };
     }
 
     const requestFilter = { status: 'Pending' };
-    if (req.activeStore && mongoose.isValidObjectId(req.activeStore)) {
-      requestFilter.store = new mongoose.Types.ObjectId(req.activeStore);
-    } else if (req.user.role !== 'Super Admin' && req.user.assignedStore) {
-      requestFilter.store = req.user.assignedStore;
+    if (targetStoreId) {
+       // Also apply hierarchy to requests? Maybe.
+       // Requests usually have a specific store.
+       // But if we are viewing parent store, we might want to see requests from children.
+       const storeIds = await getStoreIds(targetStoreId);
+       requestFilter.store = { $in: storeIds };
     }
 
     // Parallel execution for 5x faster stats loading
@@ -333,7 +424,7 @@ router.get('/search', protect, async (req, res) => {
 
   try {
     // Search using 'contains' logic (covers full serial, last 4 digits, middle, etc.)
-    const query = {
+    const qObj = {
       $or: [
         { serial_number: { $regex: new RegExp(escapedQuery, 'i') } },
         { uniqueId: { $regex: new RegExp(escapedQuery, 'i') } }
@@ -341,10 +432,11 @@ router.get('/search', protect, async (req, res) => {
     };
     
     if (req.activeStore) {
-      query.store = req.activeStore;
+      const storeIds = await getStoreIds(req.activeStore);
+      qObj.store = { $in: storeIds };
     }
 
-    const assets = await Asset.find(query)
+    const assets = await Asset.find(qObj)
       .populate('store')
       .populate('assigned_to')
       .lean();
@@ -378,12 +470,15 @@ router.get('/my', protect, async (req, res) => {
 });
 
 // Download Excel Template
-router.get('/template', (req, res) => {
+router.get('/template', async (req, res) => {
   try {
+    const wb = xlsx.utils.book_new();
+
     const headers = [
       'Category',
-      'Asset Type',
+      'Product Type',
       'Product Name',
+      'Name',
       'Model Number',
       'Serial Number',
       'MAC Address',
@@ -391,38 +486,19 @@ router.get('/template', (req, res) => {
       'Ticket Number',
       'RFID',
       'QR Code',
-      'Store Location',
-      'Status'
+      'Store',
+      'Location',
+      'Status',
+      'Condition'
     ];
 
-    const data = [
-      headers,
-      [
-        'Electronics',
-        'Computer',
-        'Laptop X1',
-        'M-12345',
-        'SN-54321',
-        '00:11:22:33:44:55',
-        'Dell',
-        'T-1001',
-        'RF-999',
-        'QR-888',
-        'Main Store',
-        'New'
-      ]
-    ];
+    const rows = [headers];
 
-    const wb = xlsx.utils.book_new();
-    const ws = xlsx.utils.aoa_to_sheet(data);
-    
-    // Set column widths
-    ws['!cols'] = headers.map(() => ({ wch: 20 }));
-
+    const ws = xlsx.utils.aoa_to_sheet(rows);
+    ws['!cols'] = headers.map((_, idx) => ({ wch: idx <= 2 ? 28 : 20 }));
     xlsx.utils.book_append_sheet(wb, ws, 'Template');
-    
+
     const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    
     res.setHeader('Content-Disposition', 'attachment; filename="Asset_Import_Template.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
@@ -438,8 +514,14 @@ router.get('/template', (req, res) => {
 // @route   POST /api/assets
 // @access  Private (Admin or Technician)
 router.post('/', protect, async (req, res) => {
-  const { name, model_number, serial_number, mac_address, manufacturer, store, status, ticket_number, category, product_type, product_name, rfid, qr_code } = req.body;
+  const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, category, product_type, product_name, rfid, qr_code } = req.body;
   try {
+    const normName = capitalizeWords(name);
+    const normCategory = capitalizeWords(category || 'Other');
+    const normType = capitalizeWords(product_type || '');
+    const normProduct = capitalizeWords(product_name || '');
+    const normManufacturer = capitalizeWords(manufacturer || '');
+    const normLocation = capitalizeWords(location || '');
     // Check for duplicate serial number within the same store
     const duplicateQuery = { serial_number };
     if (req.activeStore) {
@@ -455,10 +537,11 @@ router.post('/', protect, async (req, res) => {
 
     // --- AUTO-CREATE HIERARCHY LOGIC ---
     if (category && product_type && product_name) {
-      let catQuery = { name: category };
+      let catQuery = {};
       if (req.activeStore) {
         catQuery.store = req.activeStore;
       }
+      catQuery.name = new RegExp(`^${category}$`, 'i');
       let catDoc = await AssetCategory.findOne(catQuery);
       
       if (!catDoc) {
@@ -473,7 +556,7 @@ router.post('/', protect, async (req, res) => {
         });
       } else {
         // Check Type
-        let typeDoc = catDoc.types.find(t => t.name === product_type);
+        let typeDoc = catDoc.types.find(t => String(t.name).toLowerCase() === String(product_type).toLowerCase());
         
         if (!typeDoc) {
           // Add Type and Product
@@ -488,15 +571,13 @@ router.post('/', protect, async (req, res) => {
           // or we can implement recursive check if needed. 
           // Requirement: "add product in Products Management"
           
-          const productExists = typeDoc.products.some(p => p.name === product_name);
+          const productExists = typeDoc.products.some(p => String(p.name).toLowerCase() === String(product_name).toLowerCase());
           // Also check deep children if we want to avoid duplicates? 
           // For now, let's just add to root of type if not found at root.
           // Or better: Use the findInTree logic?
           
           // Simple implementation: Only add if not found in immediate list
           if (!productExists) {
-             // We should double check if it's a child of another product?
-             // But usually new products are top level unless specified.
              typeDoc.products.push({ name: product_name, children: [] });
              await catDoc.save();
           }
@@ -507,21 +588,23 @@ router.post('/', protect, async (req, res) => {
 
     const uniqueId = await generateUniqueId(name);
     const asset = await Asset.create({
-      name,
+      name: normName,
       model_number,
       serial_number,
-      serial_last_4: serial_number.slice(-4),
+      serial_last_4: (serial_number || '').slice(-4),
       mac_address,
-      manufacturer: manufacturer || '',
+      manufacturer: normManufacturer || '',
       ticket_number: ticket_number || '',
-      category: category || 'Other',
-      product_type: product_type || '',
-      product_name: product_name || '',
+      category: normCategory || 'Other',
+      product_type: normType || '',
+      product_name: normProduct || '',
       rfid: rfid || '',
       qr_code: qr_code || '',
       uniqueId,
       store: req.activeStore || store,
-      status: status || 'New'
+      status: status || 'New',
+      condition: condition || 'New / Excellent',
+      location: normLocation || ''
     });
 
     // Log Activity
@@ -554,7 +637,13 @@ router.post('/bulk', protect, admin, async (req, res) => {
     // Inject active store if present and ensure serial_last_4
     const assetsWithStore = assets.map(asset => ({
       ...asset,
-      store: req.activeStore || asset.store, // Prefer activeStore, fallback to asset.store
+      name: capitalizeWords(asset.name || ''),
+      category: capitalizeWords(asset.category || 'Other'),
+      product_type: capitalizeWords(asset.product_type || ''),
+      product_name: capitalizeWords(asset.product_name || ''),
+      manufacturer: capitalizeWords(asset.manufacturer || ''),
+      location: capitalizeWords(asset.location || ''),
+      store: req.activeStore || asset.store,
       serial_last_4: asset.serial_last_4 || (asset.serial_number ? String(asset.serial_number).slice(-4) : '')
     }));
 
@@ -562,19 +651,30 @@ router.post('/bulk', protect, admin, async (req, res) => {
     // If not set (Super Admin without context?), maybe allow manual store?
     // But Super Admin usually selects store in Portal.
     
-    const created = await Asset.insertMany(assetsWithStore, { ordered: false });
-    
-    // Log Activity
+    const created = [];
+    const warnings = [];
+    for (const a of assetsWithStore) {
+      try {
+        if (a.serial_number) {
+          const exists = await Asset.findOne({ serial_number: a.serial_number, store: a.store }).lean();
+          if (exists) warnings.push({ serial: a.serial_number, message: 'Duplicate accepted (Admin)' });
+        }
+        const item = await Asset.create({
+          ...a,
+          serial_last_4: a.serial_last_4 || (a.serial_number ? String(a.serial_number).slice(-4) : '')
+        });
+        created.push(item);
+      } catch {}
+    }
     await ActivityLog.create({
       user: req.user.name,
       email: req.user.email,
       role: req.user.role,
       action: 'Bulk Force Import',
-      details: `Force imported ${created.length} duplicate assets`,
+      details: `Imported ${created.length} assets${warnings.length ? ` with ${warnings.length} duplicate warnings` : ''}`,
       store: req.activeStore || (created.length > 0 ? created[0].store : undefined)
     });
-
-    res.status(201).json({ message: `Successfully added ${created.length} assets`, assets: created });
+    res.status(201).json({ message: `Successfully added ${created.length} assets`, warnings });
   } catch (error) {
     console.error('Bulk create error:', error);
     res.status(500).json({ message: 'Error adding assets', error: error.message });
@@ -687,11 +787,17 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
       const storeNameRaw = norm['store location'] || norm['storename'] || norm['store'] || '';
       const storeName = String(storeNameRaw || '').trim();
       
+      // Location (Physical Location within the store)
+      const location = norm['location'] || norm['physical location'] || norm['room'] || norm['area'] || '';
+      
       const statusRaw = norm['status'];
       const statusNorm = String(statusRaw || '').trim().toLowerCase();
       const statusMap = {
         'available/new': 'New',
         'new': 'New',
+        'spare': 'New',
+        'spare (new)': 'New',
+        'spare (used)': 'Used',
         'available/used': 'Used',
         'used': 'Used',
         'available faulty': 'Faulty',
@@ -700,6 +806,21 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
         'under repair': 'Under Repair'
       };
       const status = statusMap[statusNorm] || 'New';
+      
+      // Condition Logic
+      const conditionRaw = norm['condition'];
+      let condition = 'New / Excellent';
+      if (conditionRaw) {
+         const cNorm = String(conditionRaw).trim().toLowerCase();
+         if (cNorm.includes('excellent') || cNorm === 'new') condition = 'New / Excellent';
+         else if (cNorm.includes('good') || cNorm.includes('fair')) condition = 'Good / Fair';
+         else if (cNorm.includes('substandard') || cNorm === 'used') condition = 'Used / Substandard';
+         else if (cNorm.includes('repaired') || cNorm.includes('reconditioned')) condition = 'Repaired / Reconditioned';
+         else if (cNorm.includes('defective') || cNorm.includes('faulty')) condition = 'Faulty / Defective';
+         else if (cNorm.includes('poor') || cNorm.includes('failure')) condition = 'Poor / Near Failure';
+         else if (cNorm.includes('failed') || cNorm.includes('unserviceable')) condition = 'Failed / Unserviceable';
+      }
+
       let storeId = storeMap[storeName] || storeMapLower[storeName.toLowerCase()];
       
       // Enforce active store context if present
@@ -756,19 +877,18 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
         }
       }
 
-      // Validation
-      // User requested to ACCEPT if N/A is written.
-      // So if name/serial are N/A, we still accept them.
-      // We only fail if they are completely missing (empty string) AND not N/A.
-      const isValid = (name && serial); 
+      const reqMissing = [];
+      if (!name) reqMissing.push('Name');
+      if (!category) reqMissing.push('Category');
+      if (!productType) reqMissing.push('Product Type');
+      if (!productName) reqMissing.push('Product Name');
+      const isValid = reqMissing.length === 0;
       
       if (isValid) {
         const serialStr = String(serial).trim();
         const uniqueId = await generateUniqueId(name);
         
-        // Duplicate Check
-        // If Serial is N/A, we SKIP duplicate check (allow multiple N/A assets)
-        if (!isNA(serialStr) && !allowDuplicates) {
+        if (serialStr && !allowDuplicates) {
           if (fileSeenSerials.has(serialStr)) {
             duplicates.push({ 
               serial: serialStr, 
@@ -781,28 +901,27 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
         }
 
         assetsToInsert.push({
-          name,
+          name: capitalizeWords(name),
           model_number: model,
           serial_number: serialStr,
           serial_last_4: serialStr.slice(-4),
           mac_address: mac,
-          manufacturer,
+          manufacturer: capitalizeWords(manufacturer),
           ticket_number: ticketNumber,
           rfid,
           qr_code: qrCode,
           uniqueId,
           store: storeId,
           status,
-          category,
-          product_type: productType,
-          product_name: productName,
-          source: reqSource
+          condition,
+          category: capitalizeWords(category),
+          product_type: capitalizeWords(productType),
+          product_name: capitalizeWords(productName),
+          source: reqSource,
+          location: capitalizeWords(location)
         });
       } else {
-        let reason = 'Unknown error';
-        if (!name) reason = 'Missing asset name/type';
-        else if (!serial) reason = 'Missing serial number';
-
+        const reason = `Missing required: ${reqMissing.join(', ')}`;
         invalidRows.push({
           name, model, serial: String(serial || ''), store: storeName || '',
           reason
@@ -816,7 +935,7 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
       // Only check serials that are NOT N/A
       const serialsToCheck = assetsToInsert
         .map(a => a.serial_number)
-        .filter(s => !isNA(s));
+        .filter(s => s);
       
       if (serialsToCheck.length > 0) {
         // Find assets with these serials
@@ -855,22 +974,31 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
 
     if (toInsert.length > 0) {
       try {
-        await Asset.insertMany(toInsert, { ordered: false });
-        
+        const created = [];
+        const warnings = [];
+        for (const a of toInsert) {
+          try {
+            if (a.serial_number) {
+              const exists = await Asset.findOne({ serial_number: a.serial_number, store: a.store }).lean();
+              if (exists) warnings.push({ serial: a.serial_number, message: 'Duplicate accepted (Admin)' });
+            }
+            const item = await Asset.create(a);
+            created.push(item);
+          } catch {}
+        }
         await ActivityLog.create({
           user: req.user.name,
           email: req.user.email,
           role: req.user.role,
           action: 'Bulk Import',
-          details: `Imported ${toInsert.length} assets`,
+          details: `Imported ${created.length} assets${warnings.length ? ` with ${warnings.length} duplicate warnings` : ''}`,
           store: req.activeStore || (toInsert.length > 0 ? toInsert[0].store : undefined),
           source: reqSource
         });
-
       } catch (e) {
         console.error('Bulk insert error:', e?.message || e);
       }
-      res.json({ message: `${toInsert.length} assets imported successfully`, skipped_duplicates: duplicates, invalid_rows: invalidRows });
+      res.json({ message: `${toInsert.length} assets processed`, skipped_duplicates: duplicates, invalid_rows: invalidRows });
     } else {
       res.status(400).json({ message: 'No valid assets found to import', skipped_duplicates: duplicates, invalid_rows: invalidRows });
     }
@@ -891,56 +1019,64 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
 router.get('/export', protect, admin, async (req, res) => {
   try {
     const assets = await Asset.find().populate('store').populate('assigned_to');
-    
-    const data = [];
-    assets.forEach(asset => {
-      const baseData = {
-        'Unique ID': asset.uniqueId || '',
-        Name: asset.name,
-        Model: asset.model_number,
-        Serial: asset.serial_number,
-        MAC: asset.mac_address || '',
-        Manufacturer: asset.manufacturer || '',
-        Ticket: asset.ticket_number || '',
-        RFID: asset.rfid || '',
-        QRCode: asset.qr_code || '',
-        Status: asset.status,
-        Store: asset.store ? asset.store.name : 'N/A',
-        AssignedTo: asset.assigned_to ? asset.assigned_to.name : 'N/A',
-        UpdatedAt: asset.updatedAt
-      };
 
-      if (!asset.history || asset.history.length === 0) {
-        data.push({
-          ...baseData,
-          'Log Date': '',
-          'Log Action': 'No History',
-          'Log User': '',
-          'Log Ticket/Details': ''
-        });
+    const headerMain = [
+      'CATEGORY','PRODUCT TYPE','PRODUCT NAME','NAME','MODEL NUMBER','SERIAL NUMBER',
+      'MAC ADDRESS','MANUFACTURER','TICKET NUMBER','RFID','QR CODE','STORE','LOCATION',
+      'STATUS','CONDITION','UNIQUE ID','ASSIGNED TO','UPDATED AT'
+    ];
+    const rowsMain = assets.map(a => ([
+      a.category || '',
+      a.product_type || '',
+      a.product_name || '',
+      a.name || '',
+      a.model_number || '',
+      a.serial_number || '',
+      a.mac_address || '',
+      a.manufacturer || '',
+      a.ticket_number || '',
+      a.rfid || '',
+      a.qr_code || '',
+      a.store ? a.store.name : 'N/A',
+      a.location || '',
+      a.status || '',
+      a.condition || 'New / Excellent',
+      a.uniqueId || '',
+      a.assigned_to ? a.assigned_to.name : '',
+      a.updatedAt || ''
+    ]));
+
+    const headerHistory = ['UNIQUE ID','NAME','ACTION','TICKET/DETAILS','USER','DATE'];
+    const rowsHistory = [];
+    assets.forEach(a => {
+      const hist = Array.isArray(a.history) ? [...a.history].sort((x,y) => new Date(y.date) - new Date(x.date)) : [];
+      if (hist.length === 0) {
+        rowsHistory.push([a.uniqueId || '', a.name || '', 'NO HISTORY', '', '', '']);
       } else {
-        // Show history (newest first for readability, or oldest first? Let's do newest first)
-        const sortedHistory = [...asset.history].sort((a, b) => new Date(b.date) - new Date(a.date));
-        
-        sortedHistory.forEach(log => {
-          data.push({
-            ...baseData,
-            'Log Date': log.date,
-            'Log Action': log.action,
-            'Log User': log.user || '',
-            'Log Ticket/Details': log.ticket_number || ''
-          });
+        hist.forEach(h => {
+          rowsHistory.push([a.uniqueId || '', a.name || '', h.action || '', h.ticket_number || '', h.user || '', h.date || '']);
         });
       }
     });
 
-    const workbook = xlsx.utils.book_new();
-    const worksheet = xlsx.utils.json_to_sheet(data);
-    xlsx.utils.book_append_sheet(workbook, worksheet, 'Assets');
+    const wb = xlsx.utils.book_new();
+    const wsMain = xlsx.utils.aoa_to_sheet([headerMain, ...rowsMain]);
+    wsMain['!cols'] = [
+      { wch: 24 },{ wch: 22 },{ wch: 24 },{ wch: 22 },{ wch: 16 },{ wch: 16 },
+      { wch: 18 },{ wch: 18 },{ wch: 16 },{ wch: 12 },{ wch: 12 },{ wch: 16 },{ wch: 24 },
+      { wch: 12 },{ wch: 20 },{ wch: 14 },{ wch: 18 },{ wch: 22 }
+    ];
+    wsMain['!autofilter'] = { ref: 'A1:R1' };
+    xlsx.utils.book_append_sheet(wb, wsMain, 'ASSETS');
 
-    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const wsHist = xlsx.utils.aoa_to_sheet([headerHistory, ...rowsHistory]);
+    wsHist['!cols'] = [{ wch: 14 },{ wch: 22 },{ wch: 24 },{ wch: 22 },{ wch: 16 },{ wch: 22 }];
+    wsHist['!autofilter'] = { ref: 'A1:F1' };
+    xlsx.utils.book_append_sheet(wb, wsHist, 'HISTORY');
 
-    res.setHeader('Content-Disposition', 'attachment; filename=assets.xlsx');
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename=ASSETS_EXPORT.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
 
@@ -964,7 +1100,9 @@ router.get('/import-template', protect, admin, async (req, res) => {
         'Ticket Number': '',
         'RFID': '',
         'QR Code': '',
-        'Store Location': '',
+        'Condition': '',
+        'Store': '',
+        'Location': '',
         'Status': ''
       }
     ];
@@ -1051,8 +1189,12 @@ router.post('/assign', protect, admin, async (req, res) => {
       if (!technician) {
         return res.status(404).json({ message: 'Technician not found' });
       }
+      // Save previous status before assignment
+      asset.previous_status = asset.status;
+      
       asset.assigned_to = technicianId;
       if (asset.status === 'New') asset.status = 'Used';
+      if (ticketNumber) asset.ticket_number = ticketNumber;
       asset.history.push({
         action: 'Assigned (Admin)',
         ticket_number: ticketNumber || 'N/A',
@@ -1070,6 +1212,9 @@ router.post('/assign', protect, admin, async (req, res) => {
       return res.json(asset);
     } else if (otherRecipient && otherRecipient.name) {
       // Assign to external person without linking to a User
+      // Save previous status before assignment
+      asset.previous_status = asset.status;
+
       if (asset.status === 'New') asset.status = 'Used';
       
       asset.assigned_to_external = {
@@ -1078,6 +1223,7 @@ router.post('/assign', protect, admin, async (req, res) => {
         note: otherRecipient.note
       };
       asset.assigned_to = null;
+      if (ticketNumber) asset.ticket_number = ticketNumber;
 
       const otherInfo = `Name: ${otherRecipient.name}${otherRecipient.phone ? `, Phone: ${otherRecipient.phone}` : ''}${otherRecipient.note ? `, Note: ${otherRecipient.note}` : ''}`;
       asset.history.push({
@@ -1125,6 +1271,12 @@ router.post('/unassign', protect, admin, async (req, res) => {
     } else if (asset.assigned_to_external && asset.assigned_to_external.name) {
       previousUser = `${asset.assigned_to_external.name} (External)`;
       asset.assigned_to_external = null;
+    }
+    
+    // Restore previous status if exists
+    if (asset.previous_status) {
+      asset.status = asset.previous_status;
+      asset.previous_status = null; // Clear it
     }
     
     asset.history.push({
@@ -1483,25 +1635,27 @@ router.post('/return-reject', protect, admin, async (req, res) => {
 // @route   PUT /api/assets/:id
 // @access  Private/Admin
 router.put('/:id', protect, admin, async (req, res) => {
-  const { name, model_number, serial_number, mac_address, manufacturer, store, status, ticket_number, category, product_type, product_name, rfid, qr_code } = req.body;
+  const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, category, product_type, product_name, rfid, qr_code } = req.body;
   try {
     const asset = await Asset.findById(req.params.id);
     if (asset) {
       const oldSerial = asset.serial_number;
-      asset.name = name || asset.name;
+      asset.name = name ? capitalizeWords(name) : asset.name;
       asset.model_number = model_number || asset.model_number;
       asset.serial_number = serial_number || asset.serial_number;
       asset.serial_last_4 = asset.serial_number.slice(-4);
       asset.mac_address = mac_address || asset.mac_address;
-      asset.manufacturer = manufacturer || asset.manufacturer || '';
+      asset.manufacturer = manufacturer ? capitalizeWords(manufacturer) : (asset.manufacturer || '');
       asset.ticket_number = ticket_number || asset.ticket_number || '';
-      asset.category = category || asset.category || 'Other';
-      asset.product_type = product_type || asset.product_type || '';
-      asset.product_name = product_name || asset.product_name || '';
+      asset.category = category ? capitalizeWords(category) : (asset.category || 'Other');
+      asset.product_type = product_type ? capitalizeWords(product_type) : (asset.product_type || '');
+      asset.product_name = product_name ? capitalizeWords(product_name) : (asset.product_name || '');
       asset.rfid = rfid || asset.rfid || '';
       asset.qr_code = qr_code || asset.qr_code || '';
       asset.store = store || asset.store;
+      if (location !== undefined) asset.location = capitalizeWords(location);
       asset.status = status || asset.status;
+      asset.condition = condition || asset.condition;
 
       const updatedAsset = await asset.save();
 

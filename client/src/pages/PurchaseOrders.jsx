@@ -224,23 +224,32 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
     setSelectedVendorDetails(null);
   };
 
-  const exportPOs = () => {
-    const dataToExport = pos.map(po => ({
-      'PO Number': po.poNumber,
-      'Vendor': po.vendor?.name || 'Unknown',
-      'Order Date': new Date(po.orderDate).toLocaleDateString(),
-      'Delivery Date': po.deliveryDate ? new Date(po.deliveryDate).toLocaleDateString() : '',
-      'Subtotal': po.subtotal,
-      'Tax Total': po.taxTotal,
-      'Grand Total': po.grandTotal,
-      'Status': po.status,
-      'Notes': po.notes || ''
-    }));
+  const exportPOs = async () => {
+    try {
+      const response = await api.get('/purchase-orders/export', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'purchase_orders.xlsx');
+      document.body.appendChild(link);
+      link.click();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to export POs');
+    }
+  };
 
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Purchase Orders");
-    XLSX.writeFile(wb, "purchase_orders_export.xlsx");
+  const downloadPOTemplate = async () => {
+    try {
+      const response = await api.get('/purchase-orders/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'purchase_orders_template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to download PO template');
+    }
   };
 
   const passwordModal = passwordPrompt.show && (
@@ -274,7 +283,6 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
           </div>
         </form>
       </div>
-      {passwordModal}
     </div>
   );
 
@@ -453,7 +461,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                     {existingAttachments.map((file, idx) => (
                       <li key={idx} className="flex items-center gap-2 text-sm text-blue-600">
                         <Paperclip size={16} />
-                        <a href={`http://localhost:5000${file}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                        <a href={`${file}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
                           View File {idx + 1}
                         </a>
                       </li>
@@ -548,6 +556,12 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
             className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-green-700 shadow-sm transition-all"
           >
             <Download size={20} /> Export POs
+          </button>
+          <button
+            onClick={downloadPOTemplate}
+            className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded flex items-center gap-2 shadow-sm transition-all"
+          >
+            <FileSpreadsheet size={20} /> PO Template
           </button>
           <button
             onClick={() => { resetForm(); setView('form'); }}

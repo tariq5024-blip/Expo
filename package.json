@@ -6,6 +6,7 @@
   "scripts": {
     "build": "cd server && npm install && cd ../client && npm install && npm run build",
     "start": "cd server && node server.js",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "check:cycles": "madge --circular --extensions js,jsx,ts,tsx client/src && madge --circular --extensions js,jsx,ts,tsx server",
     "install:all": "npm install && cd server && npm install && cd ../client && npm install",
     "build:prod": "npm ci --omit=dev && cd client && npm ci --omit=dev && npm run build",
@@ -15,6 +16,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "madge": "^8.0.0"
   }
 }

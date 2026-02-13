@@ -16,32 +16,18 @@ const ImportAssetsModal = ({ isOpen, onClose, onSuccess, source }) => {
     setError('');
   };
 
-  const handleDownloadTemplate = () => {
-    const headers = [
-      'Product Name', 'Category', 'Product Type', 'Model Number', 'Serial Number', 
-      'Manufacturer', 'Status', 'Store Location', 'Ticket Number', 'MAC Address', 
-      'RFID', 'QR Code'
-    ];
-    const data = [
-      {
-        'Product Name': 'Dell Latitude 5420',
-        'Category': 'IT Equipment',
-        'Product Type': 'Laptop',
-        'Model Number': 'L5420',
-        'Serial Number': 'SN123456',
-        'Manufacturer': 'Dell',
-        'Status': 'New',
-        'Store Location': 'Main Store',
-        'Ticket Number': '',
-        'MAC Address': '',
-        'RFID': '',
-        'QR Code': ''
-      }
-    ];
-    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.writeFile(wb, 'Asset_Import_Template.xlsx');
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await api.get('/assets/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'Asset_Import_Template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to download template');
+    }
   };
 
   const handleSubmit = async (e) => {

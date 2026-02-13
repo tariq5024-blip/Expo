@@ -8,17 +8,17 @@ const assetSchema = new mongoose.Schema({
   },
   model_number: {
     type: String,
-    required: true,
+    required: false,
     index: true
   },
   serial_number: {
     type: String,
-    required: true,
+    required: false,
     index: true
   },
   serial_last_4: {
     type: String,
-    required: true,
+    required: false,
     index: true // Indexed for fast search
   },
   mac_address: {
@@ -80,6 +80,17 @@ const assetSchema = new mongoose.Schema({
     type: String,
     enum: ['New', 'Used', 'Faulty', 'Disposed', 'Under Repair', 'In Use', 'Testing'],
     default: 'New',
+    index: true
+  },
+  previous_status: {
+    type: String,
+    enum: ['New', 'Used', 'Faulty', 'Disposed', 'Under Repair', 'In Use', 'Testing'],
+    default: null
+  },
+  condition: {
+    type: String,
+    enum: ['New / Excellent', 'Good / Fair', 'Used / Substandard', 'Repaired / Reconditioned', 'Faulty / Defective', 'Poor / Near Failure', 'Failed / Unserviceable', 'Disposed'],
+    default: 'New / Excellent',
     index: true
   },
   assigned_to: {

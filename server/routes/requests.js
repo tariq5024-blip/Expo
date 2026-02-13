@@ -135,24 +135,27 @@ router.get('/export', protect, admin, async (req, res) => {
         rx.test(r.requester?.username || '')
       );
     }
-    const data = requests.map(r => ({
-      Item: r.item_name,
-      Quantity: r.quantity,
-      Description: r.description || '',
-      Status: r.status,
-      Store: r.store ? r.store.name : '',
-      TechnicianName: r.requester ? r.requester.name : '',
-      TechnicianEmail: r.requester ? r.requester.email : '',
-      TechnicianPhone: r.requester ? (r.requester.phone || '') : '',
-      TechnicianUsername: r.requester ? (r.requester.username || '') : '',
-      CreatedAt: r.createdAt,
-      UpdatedAt: r.updatedAt,
-    }));
-    const workbook = xlsx.utils.book_new();
-    const worksheet = xlsx.utils.json_to_sheet(data);
-    xlsx.utils.book_append_sheet(workbook, worksheet, 'Requests');
-    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-    res.setHeader('Content-Disposition', 'attachment; filename=requests.xlsx');
+    const header = ['ITEM','QUANTITY','DESCRIPTION','STATUS','STORE','TECHNICIAN NAME','TECHNICIAN EMAIL','TECHNICIAN PHONE','TECHNICIAN USERNAME','CREATED AT','UPDATED AT'];
+    const rows = requests.map(r => ([
+      r.item_name,
+      r.quantity,
+      r.description || '',
+      r.status,
+      r.store ? r.store.name : '',
+      r.requester ? r.requester.name : '',
+      r.requester ? r.requester.email : '',
+      r.requester ? (r.requester.phone || '') : '',
+      r.requester ? (r.requester.username || '') : '',
+      r.createdAt,
+      r.updatedAt
+    ]));
+    const wb = xlsx.utils.book_new();
+    const ws = xlsx.utils.aoa_to_sheet([header, ...rows]);
+    ws['!cols'] = [{ wch: 24 },{ wch: 10 },{ wch: 32 },{ wch: 12 },{ wch: 16 },{ wch: 22 },{ wch: 26 },{ wch: 18 },{ wch: 18 },{ wch: 22 },{ wch: 22 }];
+    ws['!autofilter'] = { ref: 'A1:K1' };
+    xlsx.utils.book_append_sheet(wb, ws, 'REQUESTS');
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename=REQUESTS_EXPORT.xlsx');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
   } catch (error) {

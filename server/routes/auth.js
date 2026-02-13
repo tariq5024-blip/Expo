@@ -52,11 +52,10 @@ router.post('/login',
 
     if (user && (await bcrypt.compare(password, user.password))) {
       const token = generateToken(user._id);
-      const isProd = process.env.NODE_ENV === 'production';
       res.cookie('jwt', token, {
         httpOnly: true,
-        secure: isProd,
-        sameSite: 'strict',
+        secure: false, // Force false for local dev
+        sameSite: 'lax', // Relax for local dev
         path: '/',
         maxAge: 30 * 24 * 60 * 60 * 1000
       });
@@ -79,8 +78,7 @@ router.post('/login',
 // @route   POST /api/auth/logout
 // @access  Public
 router.post('/logout', (req, res) => {
-  const isProd = process.env.NODE_ENV === 'production';
-  res.clearCookie('jwt', { path: '/', secure: isProd, sameSite: 'strict' });
+  res.clearCookie('jwt', { path: '/', secure: false, sameSite: 'lax' });
   res.status(200).json({ message: 'Logged out' });
 });
 

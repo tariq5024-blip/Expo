@@ -4,6 +4,9 @@ const PurchaseOrder = require('../models/PurchaseOrder');
 const { protect, admin } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
+const xlsx = require('xlsx');
+const Vendor = require('../models/Vendor');
+const Store = require('../models/Store');
 
 // Multer Config
 const storage = multer.diskStorage({
@@ -173,3 +176,155 @@ router.delete('/:id', protect, admin, async (req, res) => {
 });
 
 module.exports = router;
+router.get('/export', protect, admin, async (req, res) => {
+  try {
+    const { vendor, status, startDate, endDate } = req.query;
+    const filter = {};
+    if (vendor) filter.vendor = vendor;
+    if (status) filter.status = status;
+    if (startDate && endDate) {
+      filter.orderDate = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    if (req.activeStore) filter.store = req.activeStore;
+
+    const pos = await PurchaseOrder.find(filter)
+      .populate('vendor', 'name')
+      .populate('store', 'name')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const header = [
+      'PO Number',
+      'Vendor',
+      'Order Date',
+      'Delivery Date',
+      'Status',
+      'Subtotal',
+      'Tax Total',
+      'Grand Total',
+      'Store',
+      'Created By',
+      'Notes',
+      'Attachments Count',
+      'Created At',
+      'Updated At'
+    ];
+    const rows = pos.map(po => [
+      po.poNumber,
+      po.vendor?.name || '',
+      po.orderDate || '',
+      po.deliveryDate || '',
+      po.status,
+      po.subtotal,
+      po.taxTotal,
+      po.grandTotal,
+      po.store?.name || '',
+      po.createdBy?.name || '',
+      po.notes || '',
+      Array.isArray(po.attachments) ? po.attachments.length : 0,
+      po.createdAt,
+      po.updatedAt
+    ]);
+
+    // Items sheet
+    const itemHeader = ['PO Number', 'Item Name', 'Quantity', 'Rate', 'Tax', 'Line Total'];
+    const itemRows = [];
+    pos.forEach(po => {
+      (po.items || []).forEach(it => {
+        itemRows.push([
+          po.poNumber,
+          it.itemName,
+          it.quantity,
+          it.rate,
+          it.tax || 0,
+          it.total
+        ]);
+      });
+    });
+
+    const wb = xlsx.utils.book_new();
+    const wsMain = xlsx.utils.aoa_to_sheet([header, ...rows]);
+    wsMain['!cols'] = header.map((_, idx) => ({ wch: [16, 24, 18, 18, 14, 12, 12, 14, 16, 18, 24, 18, 22, 22][idx] || 18 }));
+    wsMain['!autofilter'] = { ref: 'A1:N1' };
+    xlsx.utils.book_append_sheet(wb, wsMain, 'Purchase Orders');
+
+    const wsItems = xlsx.utils.aoa_to_sheet([itemHeader, ...itemRows]);
+    wsItems['!cols'] = itemHeader.map(() => ({ wch: 18 }));
+    wsItems['!autofilter'] = { ref: 'A1:F1' };
+    xlsx.utils.book_append_sheet(wb, wsItems, 'PO Items');
+
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename=PURCHASE_ORDERS_EXPORT.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/template', protect, admin, async (req, res) => {
+  try {
+    const wb = xlsx.utils.book_new();
+
+    // Lookups
+    const statuses = ['Draft', 'Submitted', 'Approved', 'Cancelled'];
+    const vendors = await Vendor.find(req.activeStore ? { store: req.activeStore } : {}).select('name').lean();
+    const vendorNames = vendors.map(v => v.name);
+    const stores = await Store.find().select('name isMainStore parentStore').lean();
+    const mainStores = stores.filter(s => s.isMainStore).map(s => s.name);
+
+    const lookupsData = [
+      ['Statuses', ...statuses],
+      ['Vendors', ...vendorNames],
+      ['Stores', ...mainStores]
+    ];
+    const wsLookups = xlsx.utils.aoa_to_sheet(lookupsData);
+    wsLookups['!cols'] = [{ wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 22 }];
+    xlsx.utils.book_append_sheet(wb, wsLookups, 'Lookups');
+
+    // PO header sheet
+    const poHeader = [
+      'PO Number',
+      'Vendor',
+      'Order Date',
+      'Delivery Date',
+      'Status',
+      'Notes',
+      'Store'
+    ];
+    const poRows = [poHeader];
+    const wsPO = xlsx.utils.aoa_to_sheet(poRows);
+    wsPO['!cols'] = poHeader.map((_, idx) => ({ wch: [16, 22, 14, 14, 14, 30, 18][idx] || 18 }));
+    xlsx.utils.book_append_sheet(wb, wsPO, 'POs');
+
+    // PO items sheet
+    const itemsHeader = ['PO Number', 'Item Name', 'Quantity', 'Rate', 'Tax'];
+    const itemsRows = [itemsHeader];
+    const wsItems = xlsx.utils.aoa_to_sheet(itemsRows);
+    wsItems['!cols'] = itemsHeader.map(() => ({ wch: 18 }));
+    xlsx.utils.book_append_sheet(wb, wsItems, 'PO Items');
+
+    // README
+    const readme = [
+      ['Purchase Orders Template — Guidelines'],
+      ['POs sheet: one row per PO header'],
+      ['PO Items sheet: lines linked by PO Number'],
+      ['Status values: use Lookups sheet'],
+      ['Vendor names: prefer those listed in Lookups; otherwise create in Vendors first'],
+      ['Store: optional; current store context will be applied if set'],
+      ['Dates: use YYYY-MM-DD'],
+      ['Totals are calculated server-side from items']
+    ];
+    const wsReadme = xlsx.utils.aoa_to_sheet(readme);
+    wsReadme['!cols'] = [{ wch: 80 }];
+    xlsx.utils.book_append_sheet(wb, wsReadme, 'README');
+
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename=purchase_orders_template.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});

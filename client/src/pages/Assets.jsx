@@ -123,8 +123,17 @@ const Assets = () => {
   const [total, setTotal] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [categories, setCategories] = useState([]);
   const [fullCategories, setFullCategories] = useState([]);
+  const [manualRows, setManualRows] = useState([]);
+  const [manualRowCount, setManualRowCount] = useState(50);
+  const [manualPaste, setManualPaste] = useState('');
+  const [manualCategory, setManualCategory] = useState('');
+  const [manualType, setManualType] = useState('');
+  const [manualProduct, setManualProduct] = useState('');
+  const [manualAllowDup, setManualAllowDup] = useState(false);
+  const [manualLoading, setManualLoading] = useState(false);
 
   // Sync category & status params from URL
   useEffect(() => {
@@ -445,6 +454,7 @@ const Assets = () => {
       setEditingAsset(null);
       setAssets(prev => prev.map(a => a._id === updated._id ? { ...a, ...updated } : a));
       fetchAssets(undefined, { silent: true });
+      fetchCategories();
       alert('Asset updated successfully');
     } catch (error) {
       console.error('Error updating asset:', error);
@@ -552,6 +562,7 @@ const Assets = () => {
       setSelectedProduct('');
       setAssets(prev => [created, ...prev]);
       fetchAssets(undefined, { silent: true });
+      fetchCategories();
       setShowAddModal(false);
       // Optional: toast style message if desired
     } catch (error) {
@@ -651,6 +662,7 @@ const Assets = () => {
       setShowBulkEditModal(false);
       setSelectedIds([]);
       fetchAssets(undefined, { silent: true });
+      fetchCategories();
       alert(res.data?.message || 'Bulk update completed');
     } catch (error) {
       console.error('Bulk update error:', error);
@@ -791,6 +803,29 @@ const Assets = () => {
              className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded flex items-center gap-2"
            >
              Import
+           </button>
+           <button 
+             onClick={() => {
+               setManualCategory('');
+               setManualType('');
+               setManualProduct('');
+               setManualRows(Array.from({ length: manualRowCount }, () => ({
+                 name: '',
+                 model_number: '',
+                 serial_number: '',
+                 mac_address: '',
+                 manufacturer: '',
+                 ticket_number: '',
+                 rfid: '',
+                 qr_code: '',
+                 location: ''
+               })));
+               setManualPaste('');
+               setShowManualAddModal(true);
+             }}
+             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded"
+           >
+             Manual Bulk Add
            </button>
            <button
              onClick={() => setShowBulkEditModal(true)}
@@ -2008,6 +2043,310 @@ const Assets = () => {
                   Upload
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showManualAddModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Manual Bulk Add</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-3 rounded mb-4 border">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase">Category</label>
+                <select
+                  value={manualCategory}
+                  onChange={(e) => {
+                    setManualCategory(e.target.value);
+                    setManualType('');
+                    setManualProduct('');
+                  }}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                >
+                  <option value="">Select Category</option>
+                  {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase">Product Type</label>
+                <select
+                  value={manualType}
+                  onChange={(e) => {
+                    setManualType(e.target.value);
+                    setManualProduct('');
+                  }}
+                  disabled={!manualCategory}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
+                >
+                  <option value="">Select Type</option>
+                  {getTypes(manualCategory).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase">Product</label>
+                <select
+                  value={manualProduct}
+                  onChange={(e) => setManualProduct(e.target.value)}
+                  disabled={!manualType}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
+                >
+                  <option value="">Select Product</option>
+                  {getProducts(manualCategory, manualType).map(p => (
+                    <option key={p._id || p.name} value={p.name}>
+                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-700">Rows</span>
+                <select
+                  value={manualRowCount}
+                  onChange={(e) => {
+                    const count = parseInt(e.target.value, 10);
+                    setManualRowCount(count);
+                    setManualRows(Array.from({ length: count }, (_, i) => manualRows[i] || {
+                      name: '',
+                      model_number: '',
+                      serial_number: '',
+                      mac_address: '',
+                      manufacturer: '',
+                      ticket_number: '',
+                      rfid: '',
+                      qr_code: '',
+                      location: ''
+                    }));
+                  }}
+                  className="border p-2 rounded text-sm"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="manualAllowDup" checked={manualAllowDup} onChange={(e) => setManualAllowDup(e.target.checked)} />
+                <label htmlFor="manualAllowDup" className="text-sm text-gray-700">Allow duplicate serials</label>
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700">Paste rows (tab-separated)</label>
+              <textarea
+                value={manualPaste}
+                onChange={(e) => setManualPaste(e.target.value)}
+                placeholder="Name\tModel\tSerial\tMAC\tManufacturer\tTicket\tRFID\tQR\tLocation"
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 h-28"
+              />
+              <div className="mt-2">
+                <button
+                  onClick={() => {
+                    const lines = manualPaste.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                    const next = [...manualRows];
+                    let idx = 0;
+                    for (const line of lines) {
+                      const cols = line.split('\t');
+                      if (idx >= next.length) break;
+                      next[idx] = {
+                        name: cols[0] || '',
+                        model_number: cols[1] || '',
+                        serial_number: cols[2] || '',
+                        mac_address: cols[3] || '',
+                        manufacturer: cols[4] || '',
+                        ticket_number: cols[5] || '',
+                        rfid: cols[6] || '',
+                        qr_code: cols[7] || '',
+                        location: cols[8] || ''
+                      };
+                      idx++;
+                    }
+                    setManualRows(next);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm"
+                >
+                  Parse
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full border">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="px-2 py-1 text-xs border">Name</th>
+                    <th className="px-2 py-1 text-xs border">Model</th>
+                    <th className="px-2 py-1 text-xs border">Serial</th>
+                    <th className="px-2 py-1 text-xs border">MAC</th>
+                    <th className="px-2 py-1 text-xs border">Manufacturer</th>
+                    <th className="px-2 py-1 text-xs border">Ticket</th>
+                    <th className="px-2 py-1 text-xs border">RFID</th>
+                    <th className="px-2 py-1 text-xs border">QR</th>
+                    <th className="px-2 py-1 text-xs border">Location</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {manualRows.map((row, i) => (
+                    <tr key={i}>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.name}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, name: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.model_number}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, model_number: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.serial_number}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, serial_number: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.mac_address}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, mac_address: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.manufacturer}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, manufacturer: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.ticket_number}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, ticket_number: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.rfid}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, rfid: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.qr_code}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, qr_code: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                      <td className="border px-1 py-1">
+                        <input
+                          value={row.location}
+                          onChange={(e) => {
+                            const next = [...manualRows];
+                            next[i] = { ...row, location: e.target.value };
+                            setManualRows(next);
+                          }}
+                          className="w-full border rounded p-1 text-xs"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-6 flex justify-between">
+              <button
+                onClick={() => {
+                  setShowManualAddModal(false);
+                  setManualRows([]);
+                  setManualPaste('');
+                }}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    setManualLoading(true);
+                    const assetsPayload = manualRows
+                      .filter(r => r.serial_number || r.name)
+                      .map(r => ({
+                        name: r.name || manualProduct || manualType || 'Unknown Asset',
+                        model_number: r.model_number || '',
+                        serial_number: r.serial_number || '',
+                        mac_address: r.mac_address || '',
+                        manufacturer: r.manufacturer || '',
+                        ticket_number: r.ticket_number || '',
+                        rfid: r.rfid || '',
+                        qr_code: r.qr_code || '',
+                        location: r.location || '',
+                        status: 'New',
+                        condition: 'New / Excellent',
+                        category: manualCategory || 'Other',
+                        product_type: manualType || 'General',
+                        product_name: manualProduct || ''
+                      }));
+                    if (assetsPayload.length === 0) {
+                      alert('No rows to add');
+                      setManualLoading(false);
+                      return;
+                    }
+                    await api.post('/assets/bulk', { assets: assetsPayload });
+                    setShowManualAddModal(false);
+                    setManualRows([]);
+                    setManualPaste('');
+                    fetchAssets(undefined, { silent: true });
+                    fetchCategories();
+                    alert(`Added ${assetsPayload.length} assets`);
+                  } catch (err) {
+                    alert(err.response?.data?.message || 'Bulk add failed');
+                  } finally {
+                    setManualLoading(false);
+                  }
+                }}
+                disabled={manualLoading}
+                className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {manualLoading ? 'Adding…' : 'Add All'}
+              </button>
             </div>
           </div>
         </div>

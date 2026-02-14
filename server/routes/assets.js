@@ -661,6 +661,35 @@ router.post('/bulk', protect, admin, async (req, res) => {
     const warnings = [];
     for (const a of assetsWithStore) {
       try {
+        if (a.category && a.product_name) {
+          if (!a.product_type) a.product_type = 'GENERAL';
+          let catQuery = { name: { $regex: new RegExp(`^${a.category}$`, 'i') } };
+          if (req.activeStore) catQuery.store = req.activeStore;
+          let catDoc = await AssetCategory.findOne(catQuery);
+          if (!catDoc) {
+            catDoc = await AssetCategory.create({
+              name: a.category,
+              types: [{ name: a.product_type, products: [{ name: a.product_name, children: [] }] }],
+              store: req.activeStore
+            });
+          } else {
+            let typeDoc = catDoc.types.find(t => String(t.name).toLowerCase() === String(a.product_type).toLowerCase());
+            if (!typeDoc) {
+              catDoc.types.push({ name: a.product_type, products: [{ name: a.product_name, children: [] }] });
+              await catDoc.save();
+            } else {
+              const existingProduct = typeDoc.products.find(p => String(p.name).toLowerCase() === String(a.product_name).toLowerCase());
+              if (!existingProduct) {
+                typeDoc.products.push({ name: a.product_name, children: [] });
+                await catDoc.save();
+              } else {
+                a.product_name = existingProduct.name;
+              }
+              a.product_type = typeDoc.name;
+            }
+            a.category = catDoc.name;
+          }
+        }
         if (a.serial_number) {
           const exists = await Asset.findOne({ serial_number: a.serial_number, store: a.store }).lean();
           if (exists) warnings.push({ serial: a.serial_number, message: 'Duplicate accepted (Admin)' });
@@ -705,9 +734,47 @@ router.post('/bulk-update', protect, admin, async (req, res) => {
     if (updates.condition) data.condition = updates.condition;
     if (updates.manufacturer) data.manufacturer = capitalizeWords(updates.manufacturer);
     if (updates.location) data.location = capitalizeWords(updates.location);
-    if (updates.category) data.category = capitalizeWords(updates.category);
-    if (updates.product_type) data.product_type = capitalizeWords(updates.product_type);
-    if (updates.product_name) data.product_name = capitalizeWords(updates.product_name);
+    let catName = updates.category ? String(updates.category) : '';
+    let typeName = updates.product_type ? String(updates.product_type) : '';
+    let prodName = updates.product_name ? String(updates.product_name) : '';
+    if (catName || typeName || prodName) {
+      try {
+        if (prodName && !typeName) typeName = 'General';
+        if (catName && prodName) {
+          let catQuery = { name: { $regex: new RegExp(`^${catName}$`, 'i') } };
+          if (req.activeStore) {
+            catQuery.store = req.activeStore;
+          }
+          let catDoc = await AssetCategory.findOne(catQuery);
+          if (!catDoc) {
+            catDoc = await AssetCategory.create({
+              name: catName,
+              types: [{ name: typeName || 'General', products: [{ name: prodName, children: [] }] }],
+              store: req.activeStore
+            });
+          } else {
+            let typeDoc = catDoc.types.find(t => String(t.name).toLowerCase() === String(typeName || 'General').toLowerCase());
+            if (!typeDoc) {
+              catDoc.types.push({ name: typeName || 'General', products: [{ name: prodName, children: [] }] });
+              await catDoc.save();
+            } else {
+              const existingProduct = typeDoc.products.find(p => String(p.name).toLowerCase() === String(prodName).toLowerCase());
+              if (!existingProduct) {
+                typeDoc.products.push({ name: prodName, children: [] });
+                await catDoc.save();
+              } else {
+                prodName = existingProduct.name;
+              }
+              typeName = typeDoc.name;
+            }
+            catName = catDoc.name;
+          }
+        }
+      } catch {}
+    }
+    if (catName) data.category = capitalizeWords(catName);
+    if (typeName) data.product_type = capitalizeWords(typeName);
+    if (prodName) data.product_name = capitalizeWords(prodName);
 
     const result = await Asset.updateMany({ _id: { $in: ids } }, { $set: data });
 
@@ -1719,6 +1786,44 @@ router.put('/:id', protect, admin, async (req, res) => {
     const asset = await Asset.findById(req.params.id);
     if (asset) {
       const oldSerial = asset.serial_number;
+      let catName = category ? String(category) : '';
+      let typeName = product_type ? String(product_type) : '';
+      let prodName = product_name ? String(product_name) : '';
+      if (catName || typeName || prodName) {
+        try {
+          if (prodName && !typeName) typeName = 'General';
+          if (catName && prodName) {
+            let catQuery = { name: { $regex: new RegExp(`^${catName}$`, 'i') } };
+            if (req.activeStore) {
+              catQuery.store = req.activeStore;
+            }
+            let catDoc = await AssetCategory.findOne(catQuery);
+            if (!catDoc) {
+              catDoc = await AssetCategory.create({
+                name: catName,
+                types: [{ name: typeName || 'General', products: [{ name: prodName, children: [] }] }],
+                store: req.activeStore
+              });
+            } else {
+              let typeDoc = catDoc.types.find(t => String(t.name).toLowerCase() === String(typeName || 'General').toLowerCase());
+              if (!typeDoc) {
+                catDoc.types.push({ name: typeName || 'General', products: [{ name: prodName, children: [] }] });
+                await catDoc.save();
+              } else {
+                const existingProduct = typeDoc.products.find(p => String(p.name).toLowerCase() === String(prodName).toLowerCase());
+                if (!existingProduct) {
+                  typeDoc.products.push({ name: prodName, children: [] });
+                  await catDoc.save();
+                } else {
+                  prodName = existingProduct.name;
+                }
+                typeName = typeDoc.name;
+              }
+              catName = catDoc.name;
+            }
+          }
+        } catch {}
+      }
       asset.name = name ? capitalizeWords(name) : asset.name;
       asset.model_number = model_number || asset.model_number;
       asset.serial_number = serial_number || asset.serial_number;
@@ -1726,9 +1831,9 @@ router.put('/:id', protect, admin, async (req, res) => {
       asset.mac_address = mac_address || asset.mac_address;
       asset.manufacturer = manufacturer ? capitalizeWords(manufacturer) : (asset.manufacturer || '');
       asset.ticket_number = ticket_number || asset.ticket_number || '';
-      asset.category = category ? capitalizeWords(category) : (asset.category || 'Other');
-      asset.product_type = product_type ? capitalizeWords(product_type) : (asset.product_type || '');
-      asset.product_name = product_name ? capitalizeWords(product_name) : (asset.product_name || '');
+      asset.category = catName ? capitalizeWords(catName) : (asset.category || 'Other');
+      asset.product_type = typeName ? capitalizeWords(typeName) : (asset.product_type || '');
+      asset.product_name = prodName ? capitalizeWords(prodName) : (asset.product_name || '');
       asset.rfid = rfid || asset.rfid || '';
       asset.qr_code = qr_code || asset.qr_code || '';
       asset.store = store || asset.store;

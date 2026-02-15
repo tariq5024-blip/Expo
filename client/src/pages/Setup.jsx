@@ -9,6 +9,7 @@ const Setup = () => {
   const [storage, setStorage] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [globalResetLoading, setGlobalResetLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
   const [deletionRequests, setDeletionRequests] = useState([]);
   const isMainAdmin = user?.role === 'Super Admin';
 
@@ -125,19 +126,7 @@ const Setup = () => {
           </div>
         </Link>
 
-        <Link to="/setup/asset-categories" className="block group">
-          <div className="bg-white p-6 rounded-lg shadow-md hover:shadow-xl transition-shadow border border-gray-100 h-full">
-            <div className="flex items-center justify-between mb-4">
-              <div className="bg-teal-100 p-3 rounded-full">
-                <Box className="text-teal-600" size={32} />
-              </div>
-            </div>
-            <h2 className="text-xl font-bold mb-2 text-gray-800 group-hover:text-teal-600">Asset Categories</h2>
-            <p className="text-gray-600">
-              Customize asset categories for the sidebar. Add or remove categories like Networking, Tools, etc.
-            </p>
-          </div>
-        </Link>
+        
 
         <Link to="/permits" className="block group">
           <div className="bg-white p-6 rounded-lg shadow-md hover:shadow-xl transition-shadow border border-gray-100 h-full">
@@ -247,8 +236,8 @@ const Setup = () => {
                <AlertTriangle className="w-5 h-5 mr-2" />
                <h3 className="text-lg font-bold">Danger Zone</h3>
             </div>
-            <div className="bg-red-50 border border-red-100 rounded-lg p-4">
-              <p className="text-red-700 mb-4 text-sm">
+            <div className="bg-red-50 border border-red-100 rounded-lg p-4 space-y-4">
+              <p className="text-red-700 text-sm">
                 Actions here are irreversible. Please proceed with caution.
               </p>
               <div className="flex flex-col md:flex-row gap-3">
@@ -285,6 +274,30 @@ const Setup = () => {
                   className={`px-6 py-2 rounded-lg transition-colors font-medium shadow-sm text-white ${globalResetLoading ? 'bg-red-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
                 >
                   {globalResetLoading ? 'Resetting…' : 'Reset Full System'}
+                </button>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={async () => {
+                    if (backupLoading) return;
+                    const ok = window.confirm('Run full system backup now? This may take a moment.');
+                    if (!ok) return;
+                    try {
+                      setBackupLoading(true);
+                      const res = await api.post('/system/backup');
+                      alert(res.data?.message || 'Backup completed successfully.');
+                    } catch (e) {
+                      console.error(e);
+                      alert('Backup failed: ' + (e.response?.data?.message || e.message));
+                    } finally {
+                      setBackupLoading(false);
+                    }
+                  }}
+                  className={`px-6 py-2 rounded-lg transition-colors font-medium shadow-sm ${
+                    backupLoading ? 'bg-gray-400 cursor-not-allowed text-white' : 'bg-gray-800 text-white hover:bg-black'
+                  }`}
+                >
+                  {backupLoading ? 'Backing up…' : 'Backup System Data'}
                 </button>
               </div>
             </div>

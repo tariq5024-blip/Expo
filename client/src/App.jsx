@@ -24,17 +24,25 @@ const DisposalProcess = lazy(() => import('./pages/DisposalProcess'));
 const Products = lazy(() => import('./pages/Products'));
 const ProductDetails = lazy(() => import('./pages/ProductDetails'));
 const Setup = lazy(() => import('./pages/Setup'));
-const AssetCategories = lazy(() => import('./pages/AssetCategories'));
 const Permits = lazy(() => import('./pages/Permits'));
 const Passes = lazy(() => import('./pages/Passes'));
 const RecentActivity = lazy(() => import('./pages/RecentActivity'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, loading, activeStore } = useAuth();
+  const { user, loading, activeStore, globalLoading } = useAuth();
   const location = useLocation();
 
-  if (loading) return <div>Loading...</div>;
+  if (loading || globalLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-gray-600 font-medium">Please wait, processing...</p>
+        </div>
+      </div>
+    );
+  }
   
   if (!user) {
     return <Navigate to="/login" />;
@@ -78,15 +86,15 @@ function App() {
   return (
     <AuthProvider>
       <ErrorBoundary>
-      <Suspense fallback={
-        <div className="flex items-center justify-center min-h-screen bg-gray-50">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-gray-600 font-medium">Loading Expo Stores...</p>
+        <Suspense fallback={
+          <div className="flex items-center justify-center min-h-screen bg-gray-50">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-gray-600 font-medium">Loading Expo Stores...</p>
+            </div>
           </div>
-        </div>
-      }>
-        <Routes>
+        }>
+          <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/portal" element={
             <ProtectedRoute allowedRoles={['Super Admin']}>
@@ -215,11 +223,7 @@ function App() {
             </ProtectedRoute>
           } />
 
-          <Route path="/setup/asset-categories" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
-              <AssetCategories />
-            </ProtectedRoute>
-          } />
+          
 
           <Route path="/permits" element={
             <ProtectedRoute allowedRoles={['Admin']}>

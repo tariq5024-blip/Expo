@@ -185,6 +185,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
 
   const handleEdit = (po) => {
     setFormData({
+      poNumber: po.poNumber || '',
       vendor: po.vendor._id,
       orderDate: po.orderDate.split('T')[0],
       deliveryDate: po.deliveryDate ? po.deliveryDate.split('T')[0] : '',

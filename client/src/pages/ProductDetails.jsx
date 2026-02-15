@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Search, Clock, User, Calendar, AlertCircle, CheckCircle, Activity } from 'lucide-react';
+import { ArrowLeft, Search, Clock, User, Calendar, AlertCircle, Activity } from 'lucide-react';
 import api from '../api/axios';
 
 const ProductDetails = () => {
@@ -22,13 +22,8 @@ const ProductDetails = () => {
     const fetchAssets = async () => {
       setLoading(true);
       try {
-        // Fetch assets for this product name
-        const res = await api.get('/assets', {
-          params: {
-            product_name: decodedProductName,
-            limit: 1000 // Fetch all for this view to calculate stats
-          }
-        });
+        const params = { limit: 1000, product_name: decodedProductName };
+        const res = await api.get('/assets', { params });
         setAssets(res.data.items || []);
       } catch (err) {
         console.error('Failed to fetch product assets:', err);
@@ -40,12 +35,10 @@ const ProductDetails = () => {
     fetchAssets();
   }, [decodedProductName]);
 
-  // Filter assets based on search term
+  // Filter assets: search by Serial Number or Unique ID only (as requested)
   const filteredAssets = assets.filter(asset => 
     asset.serial_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    asset.ticket_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    asset.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    asset.assigned_to?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    asset.uniqueId?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Pagination Logic
@@ -62,23 +55,33 @@ const ProductDetails = () => {
   // Calculate stats
   const stats = {
     total: assets.length,
-    inUse: assets.filter(a => !['Faulty', 'Disposed', 'Under Repair'].includes(a.status) && (a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name))).length,
-    inStore: assets.filter(a => !['Faulty', 'Disposed', 'Under Repair'].includes(a.status) && !a.assigned_to && (!a.assigned_to_external || !a.assigned_to_external.name)).length,
-    faulty: assets.filter(a => a.status === 'Faulty').length,
+    inUse: assets.filter(a => (a.status === 'In Use') || a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name)).length,
+    inStore: assets.filter(a => (
+      // Available in store
+      !['Disposed', 'Under Repair', 'In Use'].includes(a.status) &&
+      !a.assigned_to &&
+      (!(a.assigned_to_external && a.assigned_to_external.name))
+    ) || a.status === 'Faulty' // Faulty is considered in store
+    ).length,
+    faulty: assets.filter(a => a.status === 'Faulty' || String(a.condition || '').toLowerCase().includes('faulty')).length,
     disposed: assets.filter(a => a.status === 'Disposed').length,
     underRepair: assets.filter(a => a.status === 'Under Repair').length
   };
 
   const getDerivedStatus = (asset) => {
-    // 1. Condition-based statuses (Priority over Assignment)
-    if (asset.status === 'Faulty') {
+    // 1. Condition-based statuses (Priority)
+    const cond = String(asset.condition || '').toLowerCase();
+    if (cond.includes('faulty') || asset.status === 'Faulty') {
       return { label: 'Faulty', color: 'bg-red-100 text-red-800' };
     }
-    if (asset.status === 'Under Repair') {
+    if (cond.includes('repair') || asset.status === 'Under Repair') {
       return { label: 'Under Repair', color: 'bg-amber-100 text-amber-800' };
     }
-    if (asset.status === 'Disposed') {
+    if (cond.includes('disposed') || asset.status === 'Disposed') {
       return { label: 'Disposed', color: 'bg-gray-100 text-gray-800' };
+    }
+    if (cond.includes('scrap') || asset.status === 'Scrapped') {
+      return { label: 'Scrapped', color: 'bg-gray-100 text-gray-800' };
     }
 
     if (asset.status === 'Testing') {
@@ -100,25 +103,6 @@ const ProductDetails = () => {
 
     // 4. Fallback
     return { label: asset.status, color: 'bg-gray-100 text-gray-800' };
-  };
-
-  const getInstallationDate = (asset) => {
-    // Find the last "Collected" or "Assigned" event
-    if (!asset.history || asset.history.length === 0) return 'N/A';
-    
-    // Reverse history to find latest relevant event
-    const reversedHistory = [...asset.history].reverse();
-    const installEvent = reversedHistory.find(h => 
-      h.action.includes('Collected') || 
-      h.action.includes('Assigned') ||
-      h.action.includes('Used')
-    );
-    
-    if (installEvent) {
-      return new Date(installEvent.date || installEvent.createdAt || new Date()).toLocaleString();
-    }
-    
-    return 'Not Installed';
   };
 
   const openHistory = (asset) => {
@@ -230,30 +214,81 @@ const ProductDetails = () => {
               <span className="text-xl font-bold text-blue-700">{stats.inUse}</span>
             </div>
             <div className="bg-green-50 px-4 py-2 rounded-lg border border-green-100 shadow-sm">
-              <span className="text-xs font-bold text-green-400 uppercase tracking-wider block">Spare</span>
+              <span className="text-xs font-bold text-green-400 uppercase tracking-wider block">In Store</span>
               <span className="text-xl font-bold text-green-700">{stats.inStore}</span>
             </div>
             <div className="bg-red-50 px-4 py-2 rounded-lg border border-red-100 shadow-sm">
               <span className="text-xs font-bold text-red-400 uppercase tracking-wider block">Faulty</span>
               <span className="text-xl font-bold text-red-700">{stats.faulty}</span>
             </div>
+            <div className="bg-amber-50 px-4 py-2 rounded-lg border border-amber-100 shadow-sm">
+              <span className="text-xs font-bold text-amber-500 uppercase tracking-wider block">Under Repair</span>
+              <span className="text-xl font-bold text-amber-700">{stats.underRepair}</span>
+            </div>
+            <div className="bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block">Disposed</span>
+              <span className="text-xl font-bold text-gray-700">{stats.disposed}</span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Search Bar */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-800">Product History</h2>
+            <span className="text-xs text-gray-500">All events</span>
+          </div>
+          <div className="space-y-3 max-h-[320px] overflow-auto">
+            {assets
+              .flatMap(a => (a.history || []).map(h => ({
+                ...h,
+                serial: a.serial_number,
+                uniqueId: a.uniqueId
+              })))
+              .sort((x, y) => new Date(y.date || y.createdAt || 0) - new Date(x.date || x.createdAt || 0))
+              .slice(0, 50)
+              .map((ev, idx) => (
+                <div key={idx} className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-md bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+                    <Activity size={14} />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex justify-between">
+                      <span className="font-medium text-gray-900">{ev.action}</span>
+                      <span className="text-xs text-gray-400">{new Date(ev.date || ev.createdAt || Date.now()).toLocaleString()}</span>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <span className="mr-3">UID: {ev.uniqueId || 'N/A'}</span>
+                      <span>SN: {ev.serial || 'N/A'}</span>
+                    </div>
+                    {ev.user && <div className="text-xs text-gray-500 mt-1">By {ev.user}</div>}
+                    {ev.ticket_number && <div className="text-xs text-gray-500">Ticket {ev.ticket_number}</div>}
+                  </div>
+                </div>
+              ))
+            }
+            {assets.length === 0 && (
+              <div className="text-gray-500 text-sm">No history available.</div>
+            )}
+          </div>
+        </div>
+        <div className="lg:col-span-2"></div>
+      </div>
+
+      {/* Linked Assets Search */}
       <div className="mb-6 relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
         <input
           type="text"
-          placeholder="Search by Serial Number, Ticket, Status, or Assigned User..."
+          placeholder="Search linked assets by Serial Number or Unique ID..."
           className="w-full pl-12 pr-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm text-lg"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
       </div>
 
-      {/* Assets Table */}
+      {/* Linked Assets Table */}
       {loading ? (
         <div className="text-center py-12 text-gray-500">Loading assets...</div>
       ) : filteredAssets.length === 0 ? (
@@ -261,7 +296,7 @@ const ProductDetails = () => {
           <div className="text-gray-400 mb-2">
             <Search size={48} className="mx-auto opacity-20" />
           </div>
-          <p className="text-gray-500 text-lg">No assets found matching your search.</p>
+          <p className="text-gray-500 text-lg">No linked assets found matching your search.</p>
         </div>
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -269,10 +304,12 @@ const ProductDetails = () => {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asset Info</th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Status</th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned To / Location</th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Installation Date</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unique ID</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Serial Number</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Condition</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location / Store</th>
+                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned User</th>
                   <th className="px-6 py-4 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -280,9 +317,12 @@ const ProductDetails = () => {
                 {paginatedAssets.map((asset) => (
                   <tr key={asset._id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="font-bold text-gray-900">{asset.uniqueId || 'N/A'}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
-                        <span className="font-bold text-gray-900">{asset.serial_number}</span>
-                        <span className="text-xs text-gray-500">Last 4: {asset.serial_last_4}</span>
+                        <span className="font-bold text-gray-900">{asset.serial_number || 'N/A'}</span>
+                        {asset.serial_last_4 && <span className="text-xs text-gray-500">Last 4: {asset.serial_last_4}</span>}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -296,6 +336,17 @@ const ProductDetails = () => {
                       })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-900">{asset.condition || 'N/A'}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {asset.location || 'N/A'}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        Store: {asset.store?.name || asset.store?.name || 'N/A'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                       {asset.assigned_to ? (
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">
@@ -306,17 +357,6 @@ const ProductDetails = () => {
                       ) : (
                         <span className="text-sm text-gray-500 italic">Unassigned</span>
                       )}
-                      {asset.location && (
-                         <div className="text-xs text-gray-400 mt-1 flex items-center gap-1">
-                           <span className="uppercase tracking-wide">Loc:</span> {asset.location}
-                         </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <Calendar size={14} className="text-gray-400" />
-                        {getInstallationDate(asset)}
-                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button 

@@ -18,7 +18,11 @@ const Portal = () => {
   const [includeUsers, setIncludeUsers] = useState(false);
   const [resetPassword, setResetPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreFileName, setRestoreFileName] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [lastBackupTime, setLastBackupTime] = useState(null);
 
   useEffect(() => {
     if (user?.role !== 'Super Admin') {
@@ -42,6 +46,11 @@ const Portal = () => {
     };
 
     fetchStores();
+
+    const saved = window.localStorage.getItem('expo_last_backup_download');
+    if (saved) {
+      setLastBackupTime(saved);
+    }
   }, [user, navigate]);
 
   const handleSelectStore = (store) => {
@@ -92,6 +101,59 @@ const Portal = () => {
       alert(err.response?.data?.message || 'Reset failed');
     } finally {
       setResetLoading(false);
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    if (backupLoading) return;
+    if (!window.confirm('Download full system backup now? This may take a moment.')) return;
+    try {
+      setBackupLoading(true);
+      const response = await api.get('/system/backup-file', {
+        responseType: 'blob'
+      });
+      const blob = new Blob([response.data], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const now = new Date();
+      const iso = now.toISOString();
+      const timestamp = iso.replace(/[:.]/g, '-');
+      link.href = url;
+      link.download = `expo-backup-${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      window.localStorage.setItem('expo_last_backup_download', iso);
+      setLastBackupTime(iso);
+    } catch (error) {
+      console.error(error);
+      alert('Backup download failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreFromFile = async (file) => {
+    if (!file) return;
+    if (restoreLoading) return;
+    if (!window.confirm('Restoring will overwrite current data with the backup file. Continue?')) return;
+
+    const formData = new FormData();
+    formData.append('backup', file);
+
+    try {
+      setRestoreLoading(true);
+      await api.post('/system/restore-from-file', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      alert('Restore completed successfully. The system will reload.');
+      window.location.reload();
+    } catch (error) {
+      console.error(error);
+      alert('Restore failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setRestoreLoading(false);
     }
   };
 
@@ -403,6 +465,55 @@ const Portal = () => {
               </div>
 
               <div className="space-y-5">
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                    <Database size={16} className="text-slate-600" />
+                    Backup & Restore
+                  </h3>
+                  <div className="flex flex-col gap-1">
+                    <p className="text-xs text-slate-500">
+                      Download a full backup file to your computer, or restore from a previously saved backup file.
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Last backup downloaded:{' '}
+                      {lastBackupTime ? new Date(lastBackupTime).toLocaleString() : 'Not yet'}
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    <button
+                      onClick={handleDownloadBackup}
+                      disabled={backupLoading}
+                      className={`inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-medium shadow-sm ${
+                        backupLoading
+                          ? 'bg-slate-300 text-slate-600 cursor-not-allowed'
+                          : 'bg-slate-800 text-white hover:bg-black'
+                      }`}
+                    >
+                      {backupLoading ? 'Preparing backup…' : 'Download Backup File'}
+                    </button>
+                    <label className="flex flex-col gap-2 text-xs text-slate-600">
+                      <span className="font-semibold text-slate-800">Restore From Backup File</span>
+                      <input
+                        type="file"
+                        accept="application/json"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setRestoreFileName(file.name);
+                            handleRestoreFromFile(file);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="block w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
+                      />
+                      {restoreFileName && (
+                        <span className="text-[11px] text-slate-500">
+                          Selected: {restoreFileName} {restoreLoading ? '(restoring…) ' : ''}
+                        </span>
+                      )}
+                    </label>
+                  </div>
+                </div>
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">Select Target Scope</label>
                   <div className="relative">

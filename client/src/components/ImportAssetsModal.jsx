@@ -10,20 +10,33 @@ const ImportAssetsModal = ({ isOpen, onClose, onSuccess, source }) => {
   const [allowDuplicates, setAllowDuplicates] = useState(false);
   const [stores, setStores] = useState([]);
   const [locationId, setLocationId] = useState('');
-
-  if (!isOpen) return null;
+  const [vendorName, setVendorName] = useState('');
+  const [deliveredByName, setDeliveredByName] = useState('');
+  const [deliveredAt, setDeliveredAt] = useState(() => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const mm = pad(now.getMonth() + 1);
+    const dd = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const mi = pad(now.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  });
 
   useEffect(() => {
+    if (!isOpen) return;
     const loadStores = async () => {
       try {
         const res = await api.get('/stores');
         setStores(res.data || []);
-      } catch (err) {
-        // silent
+      } catch (error) {
+        console.error('Failed to load stores for import modal:', error);
       }
     };
     loadStores();
-  }, []);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
@@ -55,6 +68,9 @@ const ImportAssetsModal = ({ isOpen, onClose, onSuccess, source }) => {
     formData.append('file', file);
     formData.append('allowDuplicates', allowDuplicates);
     if (source) formData.append('source', source);
+    if (deliveredByName) formData.append('delivered_by_name', deliveredByName);
+    if (deliveredAt) formData.append('delivered_at', deliveredAt);
+    if (vendorName) formData.append('vendor_name', vendorName);
     if (locationId) {
       const loc = stores.find(s => s._id === locationId);
       if (loc) formData.append('location', loc.name);
@@ -116,6 +132,37 @@ const ImportAssetsModal = ({ isOpen, onClose, onSuccess, source }) => {
                   <option key={s._id} value={s._id}>{s.name}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Vendor / Contractor / Tech (Company, optional)
+              </label>
+              <input
+                type="text"
+                value={vendorName}
+                onChange={(e) => setVendorName(e.target.value)}
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                placeholder="Vendor company name"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Delivered By (Name)</label>
+              <input
+                type="text"
+                value={deliveredByName}
+                onChange={(e) => setDeliveredByName(e.target.value)}
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                placeholder="Person delivering the assets"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Delivered At</label>
+              <input
+                type="datetime-local"
+                value={deliveredAt}
+                onChange={(e) => setDeliveredAt(e.target.value)}
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+              />
             </div>
             <div className="flex justify-between items-center">
               <label className="block text-sm font-medium text-gray-700">Select File</label>

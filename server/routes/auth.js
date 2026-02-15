@@ -16,10 +16,10 @@ const generateToken = (id) => {
   });
 };
 
-// Login rate limiter (stricter)
+// Login rate limiter (relaxed for internal use)
 const loginLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max: 5,
+  windowMs: 5 * 60 * 1000,   // 5 minutes window
+  max: 50,                   // Allow up to 50 attempts per 5 minutes
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many login attempts, please try again later.' }

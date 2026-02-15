@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const path = require('path');
-const seedCategories = require('./utils/seedCategories'); // Import seeder
+// Removed built-in categories seeder
 const seedStoresAndUsers = require('./utils/seedStoresAndUsers');
 const compression = require('compression');
 const helmet = require('helmet');
@@ -22,16 +22,17 @@ const requestRoutes = require('./routes/requests');
 const passRoutes = require('./routes/passes');
 const vendorRoutes = require('./routes/vendors');
 const poRoutes = require('./routes/purchaseOrders');
-const assetCategoryRoutes = require('./routes/assetCategories');
+const productRoutes = require('./routes/products');
 const permitRoutes = require('./routes/permits');
 const systemRoutes = require('./routes/system');
+const { backupDatabase } = require('./backup_db');
 
 // Models for seeding
 const Store = require('./models/Store');
 
 const Asset = require('./models/Asset');
 const Request = require('./models/Request');
-const AssetCategory = require('./models/AssetCategory');
+// Removed AssetCategory usage
 
 dotenv.config();
 
@@ -141,7 +142,7 @@ app.use('/api/requests', requestRoutes);
 app.use('/api/passes', passRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/purchase-orders', poRoutes);
-app.use('/api/asset-categories', assetCategoryRoutes);
+app.use('/api/products', productRoutes);
 app.use('/api/permits', permitRoutes);
 app.use('/api/system', systemRoutes);
 
@@ -230,6 +231,8 @@ app.get('*', (req, res) => {
   `);
 });
 
+let backupJobStarted = false;
+
 // Connect to MongoDB
 const connectDB = async () => {
   try {
@@ -239,10 +242,27 @@ const connectDB = async () => {
     });
     console.log('MongoDB Connected');
     
-    // Run seeders after successful connection
-    await seedCategories();
     await seedStoresAndUsers();
     dropSerialUniqueIndex();
+
+    if (!backupJobStarted) {
+      backupJobStarted = true;
+      const oneDayMs = 24 * 60 * 60 * 1000;
+
+      const runBackup = async () => {
+        try {
+          const dir = await backupDatabase();
+          console.log('Automatic daily backup completed:', dir);
+        } catch (err) {
+          console.error('Automatic daily backup failed:', err.message || err);
+        }
+      };
+
+      setTimeout(() => {
+        runBackup();
+        setInterval(runBackup, oneDayMs);
+      }, 5 * 60 * 1000);
+    }
   } catch (err) {
     console.error('MongoDB Connection Error:', err);
     // Retry connection after 5 seconds
@@ -287,29 +307,7 @@ const seedStores = async () => {
   }
 };
 
-// Seed Default Asset Categories
-const seedAssetCategories = async () => {
-  const categories = [
-    'Access Control Systems',
-    'Surveillance System',
-    'Networking',
-    'Telephony',
-    'Structured Cabling',
-    'Tools',
-    'Wireless',
-    'Audio Visual'
-  ];
-
-  try {
-    const count = await AssetCategory.countDocuments();
-    if (count === 0) {
-      await AssetCategory.insertMany(categories.map(name => ({ name })));
-      console.log('Default asset categories seeded');
-    }
-  } catch (error) {
-    console.error('Error seeding asset categories:', error);
-  }
-};
+// Removed default Asset Categories
 
 const dropSerialUniqueIndex = async () => {
   try {

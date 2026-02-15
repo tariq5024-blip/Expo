@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+const multer = require('multer');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const Asset = require('../models/Asset');
@@ -15,6 +16,9 @@ const Pass = require('../models/Pass');
 const Permit = require('../models/Permit');
 const AssetCategory = require('../models/AssetCategory');
 const bcrypt = require('bcryptjs');
+const { backupDatabase } = require('../backup_db');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Simple in-process lock to prevent concurrent resets
 let RESET_LOCK = false;
@@ -60,6 +64,123 @@ router.get('/storage', protect, admin, async (req, res) => {
   } catch (error) {
     console.error('Error fetching storage stats:', error);
     res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Trigger database backup
+// @route   POST /api/system/backup
+// @access  Private/Admin
+router.post('/backup', protect, admin, async (req, res) => {
+  try {
+    const backupDir = await backupDatabase();
+    res.json({ message: 'Backup completed successfully', path: backupDir });
+  } catch (error) {
+    console.error('Error running backup:', error);
+    res.status(500).json({ message: error.message || 'Backup failed' });
+  }
+});
+
+// @desc    Download full backup as JSON file
+// @route   GET /api/system/backup-file
+// @access  Private/SuperAdmin
+router.get('/backup-file', protect, superAdmin, async (req, res) => {
+  try {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    const [
+      users,
+      stores,
+      assets,
+      requests,
+      activityLogs,
+      purchaseOrders,
+      vendors,
+      passes,
+      permits,
+      assetCategories
+    ] = await Promise.all([
+      User.find({}).lean(),
+      Store.find({}).lean(),
+      Asset.find({}).lean(),
+      Request.find({}).lean(),
+      ActivityLog.find({}).lean(),
+      PurchaseOrder.find({}).lean(),
+      Vendor.find({}).lean(),
+      Pass.find({}).lean(),
+      Permit.find({}).lean(),
+      AssetCategory.find({}).lean()
+    ]);
+
+    const payload = {
+      meta: {
+        createdAt: new Date().toISOString(),
+        version: 1
+      },
+      collections: {
+        users,
+        stores,
+        assets,
+        requests,
+        activityLogs,
+        purchaseOrders,
+        vendors,
+        passes,
+        permits,
+        assetCategories
+      }
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const fileName = `expo-backup-${timestamp}.json`;
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
+    res.send(json);
+  } catch (error) {
+    console.error('Error generating backup file:', error);
+    res.status(500).json({ message: error.message || 'Failed to generate backup file' });
+  }
+});
+
+// @desc    Restore database from uploaded backup file
+// @route   POST /api/system/restore-from-file
+// @access  Private/SuperAdmin
+router.post('/restore-from-file', protect, superAdmin, upload.single('backup'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: 'Backup file is required' });
+  }
+
+  try {
+    const content = req.file.buffer.toString('utf8');
+    const payload = JSON.parse(content);
+    const collections = payload.collections || {};
+
+    await User.deleteMany({});
+    await Store.deleteMany({});
+    await Asset.deleteMany({});
+    await Request.deleteMany({});
+    await ActivityLog.deleteMany({});
+    await PurchaseOrder.deleteMany({});
+    await Vendor.deleteMany({});
+    await Pass.deleteMany({});
+    await Permit.deleteMany({});
+    await AssetCategory.deleteMany({});
+
+    if (collections.users?.length) await User.insertMany(collections.users, { ordered: false });
+    if (collections.stores?.length) await Store.insertMany(collections.stores, { ordered: false });
+    if (collections.assets?.length) await Asset.insertMany(collections.assets, { ordered: false });
+    if (collections.requests?.length) await Request.insertMany(collections.requests, { ordered: false });
+    if (collections.activityLogs?.length) await ActivityLog.insertMany(collections.activityLogs, { ordered: false });
+    if (collections.purchaseOrders?.length) await PurchaseOrder.insertMany(collections.purchaseOrders, { ordered: false });
+    if (collections.vendors?.length) await Vendor.insertMany(collections.vendors, { ordered: false });
+    if (collections.passes?.length) await Pass.insertMany(collections.passes, { ordered: false });
+    if (collections.permits?.length) await Permit.insertMany(collections.permits, { ordered: false });
+    if (collections.assetCategories?.length) await AssetCategory.insertMany(collections.assetCategories, { ordered: false });
+
+    res.json({ message: 'Restore completed successfully' });
+  } catch (error) {
+    console.error('Error restoring from backup file:', error);
+    res.status(500).json({ message: error.message || 'Failed to restore from backup file' });
   }
 });
 

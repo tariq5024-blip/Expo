@@ -1,15 +1,28 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Edit, Trash2, UserCheck, UserX } from 'lucide-react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
+import { useAuth } from '../context/AuthContext';
+
+const flattenProducts = (list, level = 0) => {
+  const out = [];
+  (list || []).forEach(p => {
+    out.push({ ...p, level });
+    if (p.children && p.children.length > 0) {
+      out.push(...flattenProducts(p.children, level + 1));
+    }
+  });
+  return out;
+};
 
 const Assets = () => {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
-  const categoryParam = searchParams.get('category');
+  const productParam = searchParams.get('product');
   const statusParam = searchParams.get('status');
   const actionParam = searchParams.get('action');
+  const { activeStore } = useAuth();
 
   const [assets, setAssets] = useState([]);
   const [stores, setStores] = useState([]);
@@ -75,7 +88,6 @@ const Assets = () => {
     mac_address: '',
     manufacturer: '',
     ticket_number: '',
-    category: 'Other',
     store: '',
     location: '',
     status: '',
@@ -90,11 +102,10 @@ const Assets = () => {
     mac_address: '',
     manufacturer: '',
     ticket_number: '',
-    category: 'Other',
     store: '',
     location: '',
-    status: 'New',
-    condition: 'New / Excellent',
+    status: 'In Store',
+    condition: 'New',
     rfid: '',
     qr_code: ''
   });
@@ -102,7 +113,7 @@ const Assets = () => {
   const [filterLocation, setFilterLocation] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCondition, setFilterCondition] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
+  const [filterProductName, setFilterProductName] = useState('');
   
   // Advanced Filters
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -110,8 +121,6 @@ const Assets = () => {
   const [filterModelNumber, setFilterModelNumber] = useState('');
   const [filterSerialNumber, setFilterSerialNumber] = useState('');
   const [filterMacAddress, setFilterMacAddress] = useState('');
-  const [filterProductType, setFilterProductType] = useState('');
-  const [filterProductName, setFilterProductName] = useState('');
   const [filterTicket, setFilterTicket] = useState('');
   const [filterRfid, setFilterRfid] = useState('');
   const [filterQr, setFilterQr] = useState('');
@@ -123,74 +132,30 @@ const Assets = () => {
   const [total, setTotal] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [showManualAddModal, setShowManualAddModal] = useState(false);
-  const [categories, setCategories] = useState([]);
-  const [fullCategories, setFullCategories] = useState([]);
-  const [manualRows, setManualRows] = useState([]);
-  const [manualRowCount, setManualRowCount] = useState(50);
-  const [manualPaste, setManualPaste] = useState('');
-  const [manualCategory, setManualCategory] = useState('');
-  const [manualType, setManualType] = useState('');
-  const [manualProduct, setManualProduct] = useState('');
-  const [manualAllowDup, setManualAllowDup] = useState(false);
+  const [fullProducts, setFullProducts] = useState([]);
   const [manualLoading, setManualLoading] = useState(false);
 
   // Sync category & status params from URL
   useEffect(() => {
-    setFilterCategory(categoryParam || '');
+    if (productParam) setFilterProductName(productParam);
     if (statusParam) setFilterStatus(statusParam);
     if (actionParam === 'add') setShowAddModal(true);
-  }, [categoryParam, statusParam, actionParam]);
+  }, [productParam, statusParam, actionParam]);
 
 
   // Hierarchical State for Add/Import
-  const [selectedCategory, setSelectedCategory] = useState('');
-  const [selectedType, setSelectedType] = useState('');
   const [selectedProduct, setSelectedProduct] = useState('');
 
-  useEffect(() => {
-    fetchStores();
-    fetchTechnicians();
-    fetchCategories();
+  const fetchProducts = useCallback(async () => {
+    try {
+      const res = await api.get('/products');
+      setFullProducts(res.data || []);
+    } catch (error) {
+      console.error('Error fetching products:', error);
+    }
   }, []);
 
-  const fetchCategories = async () => {
-    try {
-      const res = await api.get('/asset-categories');
-      setFullCategories(res.data);
-      setCategories(res.data.map(c => c.name));
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-    }
-  };
-
-  // Helper to safely get types
-  const getTypes = (catName) => {
-    if (!catName) return [];
-    const cat = fullCategories.find(c => c.name === catName);
-    return cat ? cat.types : [];
-  };
-
-  // Helper to safely get products (flattened)
-  const getProducts = (catName, typeName) => {
-    if (!catName || !typeName) return [];
-    const types = getTypes(catName);
-    const type = types.find(t => t.name === typeName);
-    if (!type || !type.products) return [];
-
-    const flatten = (list, level = 0) => {
-      let results = [];
-      list.forEach(p => {
-        results.push({ ...p, level });
-        if (p.children && p.children.length > 0) {
-          results = [...results, ...flatten(p.children, level + 1)];
-        }
-      });
-      return results;
-    };
-
-    return flatten(type.products);
-  };
+  const flatProducts = useMemo(() => flattenProducts(fullProducts), [fullProducts]);
 
   const fetchAssets = async (params, options) => {
     const silent = options?.silent === true;
@@ -202,14 +167,14 @@ const Assets = () => {
           limit,
           q: searchTerm || undefined,
           status: filterStatus || undefined,
-          store: filterLocation || undefined, // Send store ID correctly
+          location: filterLocation || undefined,
           condition: filterCondition || undefined, // Add condition filter
-          category: filterCategory || undefined,
+          // category removed
           manufacturer: filterManufacturer || undefined,
           model_number: filterModelNumber || undefined,
           serial_number: filterSerialNumber || undefined,
           mac_address: filterMacAddress || undefined,
-          product_type: filterProductType || undefined,
+          // product_type removed
           product_name: filterProductName || undefined,
           ticket_number: filterTicket || undefined,
           rfid: filterRfid || undefined,
@@ -228,16 +193,21 @@ const Assets = () => {
     }
   };
 
-  const fetchStores = async () => {
+  const fetchStores = useCallback(async () => {
     try {
-      const response = await api.get('/stores');
-      setStores(response.data);
+      if (activeStore && activeStore._id) {
+        const response = await api.get(`/stores?parent=${activeStore._id}`);
+        setStores(response.data || []);
+      } else {
+        const response = await api.get('/stores');
+        setStores(response.data || []);
+      }
     } catch (error) {
       console.error('Error fetching stores:', error);
     }
-  };
+  }, [activeStore]);
   
-  const fetchTechnicians = async () => {
+  const fetchTechnicians = useCallback(async () => {
     try {
       const response = await api.get('/users');
       setTechnicians(response.data || []);
@@ -245,7 +215,13 @@ const Assets = () => {
       setTechnicians([]);
       console.error('Error fetching technicians:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchStores();
+    fetchTechnicians();
+    fetchProducts();
+  }, [fetchStores, fetchTechnicians, fetchProducts]);
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
@@ -257,8 +233,6 @@ const Assets = () => {
     formData.append('file', file);
     formData.append('allowDuplicates', String(allowDup));
     // Append hierarchical data if selected
-    if (selectedCategory) formData.append('category', selectedCategory);
-    if (selectedType) formData.append('product_type', selectedType);
     if (selectedProduct) formData.append('product_name', selectedProduct);
     if (bulkLocationId) {
       const loc = stores.find(s => s._id === bulkLocationId);
@@ -266,6 +240,7 @@ const Assets = () => {
     }
 
     try {
+      setManualLoading(true);
       const res = await api.post('/assets/import', formData);
       setImportInfo(res.data);
       alert(res.data?.message || 'Upload completed');
@@ -281,6 +256,8 @@ const Assets = () => {
         alert('Upload failed');
       }
       console.error('Bulk import error:', error);
+    } finally {
+      setManualLoading(false);
     }
   };
 
@@ -385,11 +362,7 @@ const Assets = () => {
   };
 
   const setupEditForm = (assetToEdit) => {
-    let initialStatus = assetToEdit.status;
-    if ((assetToEdit.assigned_to || (assetToEdit.assigned_to_external && assetToEdit.assigned_to_external.name)) && (assetToEdit.status === 'New' || assetToEdit.status === 'Used')) {
-      initialStatus = 'In Use';
-    }
-
+    const initialStatus = assetToEdit.status;
     setFormData({
       name: assetToEdit.name,
       model_number: assetToEdit.model_number,
@@ -399,16 +372,13 @@ const Assets = () => {
       ticket_number: assetToEdit.ticket_number || '',
       rfid: assetToEdit.rfid || '',
       qr_code: assetToEdit.qr_code || '',
-      category: assetToEdit.category || 'Other',
       store: assetToEdit.store?._id || assetToEdit.store || '',
       location: assetToEdit.location || '',
       status: initialStatus,
-      condition: assetToEdit.condition || 'New / Excellent'
+      condition: assetToEdit.condition || 'New'
     });
 
     // Populate Hierarchy
-    setSelectedCategory(assetToEdit.category || '');
-    setSelectedType(assetToEdit.product_type || '');
     setSelectedProduct(assetToEdit.product_name || '');
   };
 
@@ -420,29 +390,8 @@ const Assets = () => {
     try {
       const updateData = { 
         ...formData,
-        category: selectedCategory || formData.category,
-        product_type: selectedType,
         product_name: selectedProduct
       };
-      
-      // Handle "In Use" virtual status
-      if (updateData.status === 'In Use') {
-        // If it was already assigned, keep the underlying status (or default to Used)
-        // We don't change assignment here.
-        // If it wasn't assigned, we can't really make it "In Use" without a user.
-        // But for now, let's map it to 'Used' if the original was 'New' or 'Used'.
-        updateData.status = 'Used'; 
-        
-        // Check if actually assigned
-        if (!editingAsset.assigned_to && (!editingAsset.assigned_to_external || !editingAsset.assigned_to_external.name)) {
-             alert("You cannot set status to 'In Use' without assigning the asset first. Please use the Assign button.");
-             return;
-        }
-      } else if (updateData.status === 'New' || updateData.status === 'Used') {
-        // If setting to Spare (New/Used), we must unassign
-        updateData.assigned_to = null;
-        updateData.assigned_to_external = null;
-      }
 
       // Remove empty store to prevent CastError
       if (!updateData.store) {
@@ -454,7 +403,7 @@ const Assets = () => {
       setEditingAsset(null);
       setAssets(prev => prev.map(a => a._id === updated._id ? { ...a, ...updated } : a));
       fetchAssets(undefined, { silent: true });
-      fetchCategories();
+      fetchProducts();
       alert('Asset updated successfully');
     } catch (error) {
       console.error('Error updating asset:', error);
@@ -469,60 +418,6 @@ const Assets = () => {
   const handleAddChange = (e) => {
     setAddForm({ ...addForm, [e.target.name]: e.target.value });
   };
-  
-  // --- PRODUCT AUTOCOMPLETE LOGIC ---
-  const [productSuggestions, setProductSuggestions] = useState([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-
-  const handleProductSearch = (val) => {
-    const value = val;
-    // Update local state
-    setAddForm(prev => ({ ...prev, name: value, model_number: value })); // Default model to name
-    setSelectedProduct(value);
-    
-    if (!value) {
-      setProductSuggestions([]);
-      return;
-    }
-
-    // Search across all categories
-    const matches = [];
-    fullCategories.forEach(cat => {
-      cat.types.forEach(type => {
-        // Recursive search helper
-        const searchProds = (list) => {
-          list.forEach(p => {
-            if (p.name.toLowerCase().includes(value.toLowerCase())) {
-              matches.push({
-                product: p.name,
-                type: type.name,
-                category: cat.name
-              });
-            }
-            if (p.children) searchProds(p.children);
-          });
-        };
-        searchProds(type.products);
-      });
-    });
-    
-    setProductSuggestions(matches.slice(0, 10)); // Limit to 10
-    setShowSuggestions(true);
-  };
-
-  const selectSuggestion = (suggestion) => {
-    setSelectedCategory(suggestion.category);
-    setSelectedType(suggestion.type);
-    setSelectedProduct(suggestion.product);
-    setAddForm(prev => ({ 
-      ...prev, 
-      name: suggestion.product,
-      model_number: suggestion.product 
-    }));
-    setShowSuggestions(false);
-  };
-  // -----------------------------------
-
   const handleAddSubmit = async () => {
     // Validate required fields (Store is optional now)
     if (!addForm.name || !addForm.serial_number) {
@@ -533,8 +428,6 @@ const Assets = () => {
       setAddLoading(true);
       const payload = {
         ...addForm,
-        category: selectedCategory || addForm.category,
-        product_type: selectedType,
         product_name: selectedProduct
       };
       
@@ -552,17 +445,14 @@ const Assets = () => {
         mac_address: '',
         manufacturer: '',
         ticket_number: '',
-        category: 'Other',
         store: '',
         location: '',
         status: 'New'
       });
-      setSelectedCategory('');
-      setSelectedType('');
       setSelectedProduct('');
       setAssets(prev => [created, ...prev]);
       fetchAssets(undefined, { silent: true });
-      fetchCategories();
+      fetchProducts();
       setShowAddModal(false);
       // Optional: toast style message if desired
     } catch (error) {
@@ -648,8 +538,7 @@ const Assets = () => {
       if (bulkForm.status) updates.status = bulkForm.status;
       if (bulkForm.condition) updates.condition = bulkForm.condition;
       if (bulkForm.manufacturer) updates.manufacturer = bulkForm.manufacturer;
-      if (bulkForm.category) updates.category = bulkForm.category;
-      if (bulkForm.product_type) updates.product_type = bulkForm.product_type;
+      // category/product_type removed
       if (bulkForm.product_name) updates.product_name = bulkForm.product_name;
       if (bulkForm.locationId) {
         const loc = stores.find(s => s._id === bulkForm.locationId);
@@ -662,7 +551,7 @@ const Assets = () => {
       setShowBulkEditModal(false);
       setSelectedIds([]);
       fetchAssets(undefined, { silent: true });
-      fetchCategories();
+      fetchProducts();
       alert(res.data?.message || 'Bulk update completed');
     } catch (error) {
       console.error('Bulk update error:', error);
@@ -719,35 +608,17 @@ const Assets = () => {
   };
 
   const getDerivedStatus = (asset) => {
-    // 1. Condition-based statuses (Priority over Assignment)
-    // These statuses must ALWAYS be displayed regardless of assignment
-    if (asset.status === 'Faulty') {
-      return { label: 'Faulty', color: 'bg-red-100 text-red-800' };
-    }
-    if (asset.status === 'Under Repair') {
-      return { label: 'Under Repair', color: 'bg-amber-100 text-amber-800' };
-    }
-    if (asset.status === 'Disposed') {
-      return { label: 'Disposed', color: 'bg-gray-100 text-gray-800' };
-    }
-
-    // 2. Assignment status
-    if (asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) {
-      return { label: 'In Use', color: 'bg-blue-100 text-blue-800' };
-    }
-
-    // 3. Spare status (Only for Available New/Used)
-    if (asset.status === 'New' || asset.status === 'Used') {
-      return { label: 'Spare', color: 'bg-green-100 text-green-800' };
-    }
-
-    // 4. Fallback (For Testing and other custom statuses)
-    // If status is 'Testing', we just show 'Testing' in gray or purple?
-    if (asset.status === 'Testing') {
-       return { label: 'Testing', color: 'bg-purple-100 text-purple-800' };
-    }
-
-    return { label: asset.status, color: 'bg-gray-100 text-gray-800' };
+    const s = asset.status;
+    const cond = String(asset.condition || '').toLowerCase();
+    if (cond.includes('faulty') || s === 'Faulty') return { label: 'Faulty', color: 'bg-red-100 text-red-800' };
+    if (cond.includes('repair') || s === 'Under Repair') return { label: 'Under Repair', color: 'bg-amber-100 text-amber-800' };
+    if (cond.includes('disposed') || s === 'Disposed') return { label: 'Disposed', color: 'bg-gray-100 text-gray-800' };
+    if (cond.includes('scrap') || s === 'Scrapped') return { label: 'Scrapped', color: 'bg-gray-100 text-gray-800' };
+    if (s === 'In Use') return { label: 'In Use', color: 'bg-blue-100 text-blue-800' };
+    if (s === 'In Store') return { label: 'In Store', color: 'bg-green-100 text-green-800' };
+    if (s === 'Spare') return { label: 'Spare', color: 'bg-green-100 text-green-800' };
+    if (s === 'Missing') return { label: 'Missing', color: 'bg-amber-100 text-amber-800' };
+    return { label: s || '-', color: 'bg-gray-100 text-gray-800' };
   };
 
 
@@ -759,10 +630,10 @@ const Assets = () => {
       } else {
         fetchAssets(); // Directly fetch if already on page 1
       }
-    }, 300);
+    }, 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, filterLocation, filterStatus, filterCondition, filterCategory, filterManufacturer, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductType, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
+  }, [searchTerm, filterLocation, filterStatus, filterCondition, filterManufacturer, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
 
   // Page/Limit change effect
   useEffect(() => {
@@ -774,14 +645,13 @@ const Assets = () => {
     <div>
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
         <h1 className="text-2xl font-bold">
-          {categoryParam ? `${categoryParam} Management` : 'Assets Management'}
+          {productParam ? `${productParam} Management` : 'Assets Management'}
         </h1>
         <div className="flex flex-wrap gap-2 items-center">
            <button 
              onClick={() => {
-               setSelectedCategory('');
-               setSelectedType('');
                setSelectedProduct('');
+               setAddForm(prev => ({ ...prev, store: activeStore?._id || prev.store, status: prev.status || 'In Store', condition: prev.condition || 'New' }));
                setShowAddModal(true);
              }} 
              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded font-medium flex items-center gap-2"
@@ -790,42 +660,6 @@ const Assets = () => {
                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
              </svg>
              Add New Asset
-           </button>
-           <button 
-             onClick={() => {
-                setSelectedCategory('');
-                setSelectedType('');
-                setSelectedProduct('');
-                setFile(null);
-                setImportInfo(null);
-                setShowImportModal(true);
-             }} 
-             className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded flex items-center gap-2"
-           >
-             Import
-           </button>
-           <button 
-             onClick={() => {
-               setManualCategory('');
-               setManualType('');
-               setManualProduct('');
-               setManualRows(Array.from({ length: manualRowCount }, () => ({
-                 name: '',
-                 model_number: '',
-                 serial_number: '',
-                 mac_address: '',
-                 manufacturer: '',
-                 ticket_number: '',
-                 rfid: '',
-                 qr_code: '',
-                 location: ''
-               })));
-               setManualPaste('');
-               setShowManualAddModal(true);
-             }}
-             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded"
-           >
-             Manual Bulk Add
            </button>
            <button
              onClick={() => setShowBulkEditModal(true)}
@@ -841,8 +675,9 @@ const Assets = () => {
            >
              {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedIds.length})`}
            </button>
-           <button onClick={handleExport} className="bg-amber-600 hover:bg-amber-700 text-black px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Export</button>
-           <button onClick={handleDownloadTemplate} className="bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Template</button>
+          <button onClick={() => setShowImportModal(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Bulk Import</button>
+          <button onClick={handleDownloadTemplate} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Download Sample</button>
+          <button onClick={handleExport} className="bg-amber-600 hover:bg-amber-700 text-black px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Export</button>
         </div>
       </div>
       
@@ -892,6 +727,86 @@ const Assets = () => {
         </div>
       )}
 
+      {showImportModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl relative">
+            <h2 className="text-xl font-bold mb-4">Bulk Import Assets</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Template</label>
+                <div className="flex gap-2">
+                  <button onClick={handleDownloadTemplate} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-2 rounded">Download Sample Sheet</button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Default Product (optional)</label>
+                <select
+                  value={selectedProduct}
+                  onChange={(e) => setSelectedProduct(e.target.value)}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                >
+                  <option value="">Select Product</option>
+                  {flatProducts.map(p => (
+                    <option key={p._id || p.name} value={p.name}>
+                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Default Location (optional)</label>
+                <select
+                  value={bulkLocationId}
+                  onChange={(e) => setBulkLocationId(e.target.value)}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                >
+                  <option value="">Select Location</option>
+                  {stores.map(s => (
+                    <option key={s._id} value={s._id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="allowDup"
+                  checked={allowDup}
+                  onChange={(e) => setAllowDup(e.target.checked)}
+                />
+                <label htmlFor="allowDup" className="text-sm text-gray-700">Allow duplicates in same store</label>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Excel File</label>
+                <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end space-x-3">
+              <button
+                onClick={() => { setShowImportModal(false); setFile(null); }}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpload}
+                disabled={manualLoading}
+                className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+              >
+                {manualLoading ? 'Uploading, please wait…' : 'Upload'}
+              </button>
+            </div>
+            {manualLoading && (
+              <div className="absolute inset-0 bg-white/80 flex items-center justify-center rounded-lg">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-sm font-medium text-gray-700">Processing upload, please wait…</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <input
@@ -907,9 +822,7 @@ const Assets = () => {
             className="border p-2 rounded"
           >
             <option value="">All Locations</option>
-            {stores
-              .filter(s => s.parentStore)
-              .map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+            {stores.map(s => <option key={s._id} value={s.name}>{s.name}</option>)}
           </select>
           <select
             value={filterCondition}
@@ -917,13 +830,11 @@ const Assets = () => {
             className="border p-2 rounded"
           >
             <option value="">All Conditions</option>
-            <option value="New / Excellent">New / Excellent</option>
-            <option value="Good / Fair">Good / Fair</option>
-            <option value="Used / Substandard">Used / Substandard</option>
-            <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
-            <option value="Faulty / Defective">Faulty / Defective</option>
-            <option value="Poor / Near Failure">Poor / Near Failure</option>
-            <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+            <option value="New">New</option>
+            <option value="Used">Used</option>
+            <option value="Faulty">Faulty</option>
+            <option value="Repaired">Repaired</option>
+            <option value="Under Repair">Under Repair</option>
             <option value="Disposed">Disposed</option>
           </select>
           <select
@@ -932,13 +843,11 @@ const Assets = () => {
             className="border p-2 rounded"
           >
             <option value="">All Statuses</option>
-            <option value="New">Spare (New)</option>
-            <option value="Used">Spare (Used)</option>
+            <option value="In Store">In Store</option>
             <option value="In Use">In Use</option>
-            <option value="Testing">Testing</option>
-            <option value="Faulty">Faulty</option>
-            <option value="Under Repair">Under Repair</option>
-            <option value="Disposed">Disposed</option>
+            <option value="Spare">Spare</option>
+            <option value="Missing">Missing</option>
+            <option value="Scrapped">Scrapped</option>
           </select>
           <div className="flex gap-2">
             <button
@@ -950,7 +859,7 @@ const Assets = () => {
             <button
               onClick={() => {
                 setSearchTerm(''); setFilterLocation(''); setFilterStatus(''); setFilterCondition('');
-                setFilterManufacturer(''); setFilterProductType(''); setFilterProductName('');
+                setFilterManufacturer(''); setFilterProductName('');
                 setFilterModelNumber(''); setFilterSerialNumber(''); setFilterMacAddress('');
                 setFilterTicket(''); setFilterRfid(''); setFilterQr('');
                 setFilterDateFrom(''); setFilterDateTo('');
@@ -964,14 +873,6 @@ const Assets = () => {
 
         {showAdvancedFilters && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3 pt-3 border-t border-gray-100">
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              className="border p-2 rounded"
-            >
-              <option value="">All Categories</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
             <input
               type="text"
               placeholder="Manufacturer"
@@ -1000,13 +901,7 @@ const Assets = () => {
               onChange={(e) => setFilterMacAddress(e.target.value)}
               className="border p-2 rounded"
             />
-            <input
-              type="text"
-              placeholder="Product Type"
-              value={filterProductType}
-              onChange={(e) => setFilterProductType(e.target.value)}
-              className="border p-2 rounded"
-            />
+            {/* Product Type filter removed */}
             <input
               type="text"
               placeholder="Product Name"
@@ -1074,7 +969,7 @@ const Assets = () => {
               </th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Unique ID</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Category</th>
+              {/* Category column removed */}
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Model</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Serial</th>
               <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Ticket</th>
@@ -1097,7 +992,7 @@ const Assets = () => {
                 </td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap font-mono text-xs text-gray-600 text-center hidden lg:table-cell">{asset.uniqueId || '-'}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.name}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">{asset.category || '-'}</td>
+                {/* Category cell removed */}
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.model_number}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.serial_number}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.ticket_number || '-'}</td>
@@ -1105,13 +1000,10 @@ const Assets = () => {
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">{asset.manufacturer || '-'}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.condition || 'New / Excellent'}</td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm font-medium text-gray-700">
-                  {asset.status === 'New' ? 'Spare (New)' : 
-                   asset.status === 'Used' ? 'Spare (Used)' : 
-                   asset.status === 'Faulty' ? 'Faulty' : 
-                   asset.status === 'Disposed' ? 'Disposed' : asset.status}
+                  {asset.status || '-'}
                 </td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">
-                  {asset.store?.name || '-'}
+                  {(asset.store?.parentStore?.name) || (asset.store?.name) || (activeStore?.name) || '-'}
                 </td>
                 <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">
                   {asset.location || '-'}
@@ -1176,10 +1068,7 @@ const Assets = () => {
             </div>
             
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm text-gray-700 mb-4">
-              <div>
-                <span className="text-xs text-gray-500 block">Category</span>
-                <span className="font-medium">{asset.category || '-'}</span>
-              </div>
+              {/* Category removed */}
               <div>
                 <span className="text-xs text-gray-500 block">Model</span>
                 <span className="font-medium">{asset.model_number}</span>
@@ -1190,12 +1079,7 @@ const Assets = () => {
               </div>
               <div className="col-span-2">
                 <span className="text-xs text-gray-500 block">Status</span>
-                <span className="font-medium">
-                  {asset.status === 'New' ? 'Spare (New)' : 
-                   asset.status === 'Used' ? 'Spare (Used)' : 
-                   asset.status === 'Faulty' ? 'Faulty' : 
-                   asset.status === 'Disposed' ? 'Disposed' : asset.status}
-                </span>
+                <span className="font-medium">{asset.status || '-'}</span>
               </div>
               <div className="col-span-2">
                 <span className="text-xs text-gray-500 block">Serial</span>
@@ -1203,7 +1087,7 @@ const Assets = () => {
               </div>
               <div>
                 <span className="text-xs text-gray-500 block">Store</span>
-                <span className="font-medium">{asset.store?.name || '-'}</span>
+                <span className="font-medium">{(asset.store?.parentStore?.name) || (asset.store?.name) || (activeStore?.name) || '-'}</span>
               </div>
               <div>
                 <span className="text-xs text-gray-500 block">Location</span>
@@ -1441,39 +1325,8 @@ const Assets = () => {
             <h2 className="text-xl font-bold mb-4">Edit Asset</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               
-              {/* Hierarchy Selectors - Adapted for Edit */}
-              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-3 rounded mb-2 border">
-                 <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase">Category</label>
-                    <select
-                      value={selectedCategory}
-                      onChange={(e) => {
-                        setSelectedCategory(e.target.value);
-                        setSelectedType('');
-                        setSelectedProduct('');
-                        setFormData(prev => ({ ...prev, category: e.target.value }));
-                      }}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
-                    >
-                      <option value="">Select Category</option>
-                      {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
-                    </select>
-                 </div>
-                 <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase">Product Type</label>
-                    <select
-                      value={selectedType}
-                      onChange={(e) => {
-                        setSelectedType(e.target.value);
-                        setSelectedProduct('');
-                      }}
-                      disabled={!selectedCategory}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
-                    >
-                      <option value="">Select Type</option>
-                      {getTypes(selectedCategory).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                    </select>
-                 </div>
+              {/* Product Selector */}
+              <div className="md:col-span-2 grid grid-cols-1 gap-4 bg-gray-50 p-3 rounded mb-2 border">
                  <div>
                     <label className="block text-xs font-medium text-gray-500 uppercase">Product</label>
                     <select
@@ -1485,11 +1338,10 @@ const Assets = () => {
                             setFormData(prev => ({ ...prev, name: val, model_number: val }));
                          }
                       }}
-                      disabled={!selectedType}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
                     >
                       <option value="">Select Product</option>
-                      {getProducts(selectedCategory, selectedType).map(p => (
+                      {flatProducts.map(p => (
                         <option key={p._id || p.name} value={p.name}>
                           {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
                         </option>
@@ -1587,28 +1439,12 @@ const Assets = () => {
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
                   <option value="">Select Location</option>
-                  {stores
-                    .filter(s => s.parentStore) // Only show sub-locations (child stores)
-                    .map(s => (
-                      <option key={s._id} value={s.name}>{s.name}</option>
-                    ))
-                  }
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Store (Fixed)</label>
-                <select
-                  name="store"
-                  value={formData.store}
-                  onChange={handleInputChange}
-                  disabled={true}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 bg-gray-100"
-                >
-                  {stores.filter(s => !s.parentStore).map(store => (
-                    <option key={store._id} value={store._id}>{store.name}</option>
+                  {stores.map(s => (
+                    <option key={s._id} value={s.name}>{s.name}</option>
                   ))}
                 </select>
               </div>
+        {/* Store field removed per requirements */}
               <div>
                 <label className="block text-sm font-medium text-gray-700">Condition</label>
                 <select
@@ -1617,14 +1453,13 @@ const Assets = () => {
                   onChange={handleInputChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
-                  <option value="New / Excellent">New / Excellent</option>
-                  <option value="Good / Fair">Good / Fair</option>
-                  <option value="Used / Substandard">Used / Substandard</option>
-                  <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
-                  <option value="Faulty / Defective">Faulty / Defective</option>
-                  <option value="Poor / Near Failure">Poor / Near Failure</option>
-                  <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+                  <option value="New">New</option>
+                  <option value="Used">Used</option>
+                  <option value="Faulty">Faulty</option>
+                  <option value="Repaired">Repaired</option>
+                  <option value="Under Repair">Under Repair</option>
                   <option value="Disposed">Disposed</option>
+                  <option value="Scrapped">Scrapped</option>
                 </select>
               </div>
               <div>
@@ -1635,13 +1470,11 @@ const Assets = () => {
                   onChange={handleInputChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
-                  <option value="New">Spare (New)</option>
-                  <option value="Used">Spare (Used)</option>
+                  <option value="In Store">In Store</option>
                   <option value="In Use">In Use</option>
-                  <option value="Testing">Testing</option>
-                  <option value="Faulty">Faulty</option>
-                  <option value="Under Repair">Under Repair</option>
-                  <option value="Disposed">Disposed</option>
+                  <option value="Spare">Spare</option>
+                  <option value="Missing">Missing</option>
+                  <option value="Scrapped">Scrapped</option>
                 </select>
               </div>
             </div>
@@ -1668,93 +1501,28 @@ const Assets = () => {
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Add New Asset</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Hierarchy Selectors */}
-              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-3 rounded mb-2 border">
+              {/* Product Selector */}
+              <div className="md:col-span-2 grid grid-cols-1 gap-4 bg-gray-50 p-3 rounded mb-2 border">
                  <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase">Category</label>
+                    <label className="block text-xs font-medium text-gray-500 uppercase">Product</label>
                     <select
-                      value={selectedCategory}
+                      value={selectedProduct}
                       onChange={(e) => {
-                        setSelectedCategory(e.target.value);
-                        setSelectedType('');
-                        setSelectedProduct('');
-                        setAddForm(prev => ({ ...prev, category: e.target.value }));
+                         const val = e.target.value;
+                         setSelectedProduct(val);
+                         if (val) {
+                            setAddForm(prev => ({ ...prev, name: val, model_number: val }));
+                         }
                       }}
                       className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
                     >
-                      <option value="">Select Category</option>
-                      {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
+                      <option value="">Select Product</option>
+                      {flatProducts.map(p => (
+                        <option key={p._id || p.name} value={p.name}>
+                          {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                        </option>
+                      ))}
                     </select>
-                 </div>
-                 <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase">Product Type</label>
-                    <select
-                      value={selectedType}
-                      onChange={(e) => {
-                        setSelectedType(e.target.value);
-                        setSelectedProduct('');
-                        // Auto-fill name if empty? Maybe not yet.
-                      }}
-                      disabled={!selectedCategory}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
-                    >
-                      <option value="">Select Type</option>
-                      {getTypes(selectedCategory).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                    </select>
-                 </div>
-                 <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase">Product</label>
-                    <div className="flex flex-col gap-1">
-                      {selectedType ? (
-                        <select
-                          value={selectedProduct}
-                          onChange={(e) => {
-                             const val = e.target.value;
-                             setSelectedProduct(val);
-                             if (val) {
-                                setAddForm(prev => ({ ...prev, name: val, model_number: val }));
-                             }
-                          }}
-                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
-                        >
-                          <option value="">Select Product</option>
-                          {getProducts(selectedCategory, selectedType).map(p => (
-                            <option key={p._id || p.name} value={p.name}>
-                              {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={selectedProduct}
-                            onChange={(e) => handleProductSearch(e.target.value)}
-                            onFocus={() => setShowSuggestions(true)}
-                            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                            placeholder="Type to search or select hierarchy..."
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
-                          />
-                          {showSuggestions && productSuggestions.length > 0 && (
-                            <div className="absolute z-10 w-full bg-white border border-gray-300 mt-1 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                              {productSuggestions.map((s, idx) => (
-                                <div 
-                                  key={idx}
-                                  className="p-2 hover:bg-indigo-50 cursor-pointer text-sm"
-                                  onClick={() => selectSuggestion(s)}
-                                >
-                                  <div className="font-medium">{s.product}</div>
-                                  <div className="text-xs text-gray-500">{s.category} &gt; {s.type}</div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div className="text-[10px] text-gray-400 text-right">
-                        {selectedType ? 'Select from list or change Type' : 'Search or select Category first'}
-                      </div>
-                    </div>
                  </div>
               </div>
 
@@ -1847,28 +1615,12 @@ const Assets = () => {
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
                   <option value="">Select Location</option>
-                  {stores
-                    .filter(s => s.parentStore) // Only show sub-locations (child stores)
-                    .map(s => (
-                      <option key={s._id} value={s.name}>{s.name}</option>
-                    ))
-                  }
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Store (Fixed)</label>
-                <select
-                  name="store"
-                  value={addForm.store}
-                  onChange={handleAddChange}
-                  disabled={true}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 bg-gray-100"
-                >
-                  {stores.filter(s => !s.parentStore).map(store => (
-                    <option key={store._id} value={store._id}>{store.name}</option>
+                  {stores.map(s => (
+                    <option key={s._id} value={s.name}>{s.name}</option>
                   ))}
                 </select>
               </div>
+        {/* Store field removed per requirements */}
               <div>
                 <label className="block text-sm font-medium text-gray-700">Condition</label>
                 <select
@@ -1877,13 +1629,11 @@ const Assets = () => {
                   onChange={handleAddChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
-                  <option value="New / Excellent">New / Excellent</option>
-                  <option value="Good / Fair">Good / Fair</option>
-                  <option value="Used / Substandard">Used / Substandard</option>
-                  <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
-                  <option value="Faulty / Defective">Faulty / Defective</option>
-                  <option value="Poor / Near Failure">Poor / Near Failure</option>
-                  <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+                  <option value="New">New</option>
+                  <option value="Used">Used</option>
+                  <option value="Faulty">Faulty</option>
+                  <option value="Repaired">Repaired</option>
+                  <option value="Under Repair">Under Repair</option>
                   <option value="Disposed">Disposed</option>
                 </select>
               </div>
@@ -1895,13 +1645,11 @@ const Assets = () => {
                   onChange={handleAddChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
-                  <option value="New">Spare (New)</option>
-                  <option value="Used">Spare (Used)</option>
+                  <option value="In Store">In Store</option>
                   <option value="In Use">In Use</option>
-                  <option value="Testing">Testing</option>
-                  <option value="Faulty">Faulty</option>
-                  <option value="Under Repair">Under Repair</option>
-                  <option value="Disposed">Disposed</option>
+                  <option value="Spare">Spare</option>
+                  <option value="Missing">Missing</option>
+                  <option value="Scrapped">Scrapped</option>
                 </select>
               </div>
             </div>
@@ -1924,433 +1672,6 @@ const Assets = () => {
         </div>
       )}
 
-      {/* Import Modal */}
-      {showImportModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Bulk Import Assets</h2>
-            <div className="space-y-4">
-              <div className="bg-blue-50 p-3 rounded text-sm text-blue-800">
-                Select the product details below to apply them to all imported rows, or leave blank to use Excel columns.
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Location (Optional)</label>
-                <select
-                  value={bulkLocationId}
-                  onChange={(e) => setBulkLocationId(e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                >
-                  <option value="">Use Excel Location column</option>
-                  {stores.filter(s => s.parentStore).map(s => (
-                    <option key={s._id} value={s._id}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Category</label>
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => {
-                    setSelectedCategory(e.target.value);
-                    setSelectedType('');
-                    setSelectedProduct('');
-                  }}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                >
-                  <option value="">Select Category</option>
-                  {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Product Type</label>
-                <select
-                  value={selectedType}
-                  onChange={(e) => {
-                    setSelectedType(e.target.value);
-                    setSelectedProduct('');
-                  }}
-                  disabled={!selectedCategory}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 disabled:bg-gray-100"
-                >
-                  <option value="">Select Type</option>
-                  {getTypes(selectedCategory).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Product</label>
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  disabled={!selectedType}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 disabled:bg-gray-100"
-                >
-                  <option value="">Select Product</option>
-                  {getProducts(selectedCategory, selectedType).map(p => (
-                    <option key={p._id || p.name} value={p.name}>
-                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="border-t pt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Excel File</label>
-                <input 
-                  type="file" 
-                  onChange={handleFileChange} 
-                  className="block w-full text-sm text-gray-500
-                    file:mr-4 file:py-2 file:px-4
-                    file:rounded-full file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-indigo-50 file:text-indigo-700
-                    hover:file:bg-indigo-100" 
-                  accept=".xlsx, .xls" 
-                />
-              </div>
-              
-              <div className="flex items-center gap-2">
-                 <input type="checkbox" checked={allowDup} onChange={(e) => setAllowDup(e.target.checked)} id="allowDupImport" />
-                 <label htmlFor="allowDupImport" className="text-sm text-gray-700">Allow duplicate serials</label>
-              </div>
-
-            </div>
-            <div className="mt-6 flex justify-between space-x-3">
-              <button 
-                 onClick={handleDownloadTemplate} 
-                 className="text-blue-600 hover:text-blue-800 text-sm font-medium underline"
-              >
-                 Download Template
-              </button>
-              <div className="flex space-x-3">
-                <button
-                  onClick={() => {
-                     setShowImportModal(false);
-                     setFile(null);
-                  }}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleUpload}
-                  disabled={!file}
-                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
-                >
-                  Upload
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showManualAddModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4">Manual Bulk Add</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-3 rounded mb-4 border">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase">Category</label>
-                <select
-                  value={manualCategory}
-                  onChange={(e) => {
-                    setManualCategory(e.target.value);
-                    setManualType('');
-                    setManualProduct('');
-                  }}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
-                >
-                  <option value="">Select Category</option>
-                  {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase">Product Type</label>
-                <select
-                  value={manualType}
-                  onChange={(e) => {
-                    setManualType(e.target.value);
-                    setManualProduct('');
-                  }}
-                  disabled={!manualCategory}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
-                >
-                  <option value="">Select Type</option>
-                  {getTypes(manualCategory).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase">Product</label>
-                <select
-                  value={manualProduct}
-                  onChange={(e) => setManualProduct(e.target.value)}
-                  disabled={!manualType}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm disabled:bg-gray-100"
-                >
-                  <option value="">Select Product</option>
-                  {getProducts(manualCategory, manualType).map(p => (
-                    <option key={p._id || p.name} value={p.name}>
-                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">Rows</span>
-                <select
-                  value={manualRowCount}
-                  onChange={(e) => {
-                    const count = parseInt(e.target.value, 10);
-                    setManualRowCount(count);
-                    setManualRows(Array.from({ length: count }, (_, i) => manualRows[i] || {
-                      name: '',
-                      model_number: '',
-                      serial_number: '',
-                      mac_address: '',
-                      manufacturer: '',
-                      ticket_number: '',
-                      rfid: '',
-                      qr_code: '',
-                      location: ''
-                    }));
-                  }}
-                  className="border p-2 rounded text-sm"
-                >
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="manualAllowDup" checked={manualAllowDup} onChange={(e) => setManualAllowDup(e.target.checked)} />
-                <label htmlFor="manualAllowDup" className="text-sm text-gray-700">Allow duplicate serials</label>
-              </div>
-            </div>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700">Paste rows (tab-separated)</label>
-              <textarea
-                value={manualPaste}
-                onChange={(e) => setManualPaste(e.target.value)}
-                placeholder="Name\tModel\tSerial\tMAC\tManufacturer\tTicket\tRFID\tQR\tLocation"
-                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 h-28"
-              />
-              <div className="mt-2">
-                <button
-                  onClick={() => {
-                    const lines = manualPaste.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-                    const next = [...manualRows];
-                    let idx = 0;
-                    for (const line of lines) {
-                      const cols = line.split('\t');
-                      if (idx >= next.length) break;
-                      next[idx] = {
-                        name: cols[0] || '',
-                        model_number: cols[1] || '',
-                        serial_number: cols[2] || '',
-                        mac_address: cols[3] || '',
-                        manufacturer: cols[4] || '',
-                        ticket_number: cols[5] || '',
-                        rfid: cols[6] || '',
-                        qr_code: cols[7] || '',
-                        location: cols[8] || ''
-                      };
-                      idx++;
-                    }
-                    setManualRows(next);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm"
-                >
-                  Parse
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full border">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="px-2 py-1 text-xs border">Name</th>
-                    <th className="px-2 py-1 text-xs border">Model</th>
-                    <th className="px-2 py-1 text-xs border">Serial</th>
-                    <th className="px-2 py-1 text-xs border">MAC</th>
-                    <th className="px-2 py-1 text-xs border">Manufacturer</th>
-                    <th className="px-2 py-1 text-xs border">Ticket</th>
-                    <th className="px-2 py-1 text-xs border">RFID</th>
-                    <th className="px-2 py-1 text-xs border">QR</th>
-                    <th className="px-2 py-1 text-xs border">Location</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {manualRows.map((row, i) => (
-                    <tr key={i}>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.name}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, name: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.model_number}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, model_number: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.serial_number}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, serial_number: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.mac_address}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, mac_address: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.manufacturer}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, manufacturer: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.ticket_number}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, ticket_number: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.rfid}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, rfid: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.qr_code}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, qr_code: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                      <td className="border px-1 py-1">
-                        <input
-                          value={row.location}
-                          onChange={(e) => {
-                            const next = [...manualRows];
-                            next[i] = { ...row, location: e.target.value };
-                            setManualRows(next);
-                          }}
-                          className="w-full border rounded p-1 text-xs"
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                onClick={() => {
-                  setShowManualAddModal(false);
-                  setManualRows([]);
-                  setManualPaste('');
-                }}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  try {
-                    setManualLoading(true);
-                    const assetsPayload = manualRows
-                      .filter(r => r.serial_number || r.name)
-                      .map(r => ({
-                        name: r.name || manualProduct || manualType || 'Unknown Asset',
-                        model_number: r.model_number || '',
-                        serial_number: r.serial_number || '',
-                        mac_address: r.mac_address || '',
-                        manufacturer: r.manufacturer || '',
-                        ticket_number: r.ticket_number || '',
-                        rfid: r.rfid || '',
-                        qr_code: r.qr_code || '',
-                        location: r.location || '',
-                        status: 'New',
-                        condition: 'New / Excellent',
-                        category: manualCategory || 'Other',
-                        product_type: manualType || 'General',
-                        product_name: manualProduct || ''
-                      }));
-                    if (assetsPayload.length === 0) {
-                      alert('No rows to add');
-                      setManualLoading(false);
-                      return;
-                    }
-                    await api.post('/assets/bulk', { assets: assetsPayload });
-                    setShowManualAddModal(false);
-                    setManualRows([]);
-                    setManualPaste('');
-                    fetchAssets(undefined, { silent: true });
-                    fetchCategories();
-                    alert(`Added ${assetsPayload.length} assets`);
-                  } catch (err) {
-                    alert(err.response?.data?.message || 'Bulk add failed');
-                  } finally {
-                    setManualLoading(false);
-                  }
-                }}
-                disabled={manualLoading}
-                className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-              >
-                {manualLoading ? 'Adding…' : 'Add All'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Bulk Edit Modal */}
       {showBulkEditModal && (
@@ -2362,41 +1683,17 @@ const Assets = () => {
                 Select fields to update for all selected assets. Leave blank to keep existing values.
               </div>
 
-              {/* Hierarchy Selectors for Bulk Edit */}
+              {/* Product Selector for Bulk Edit */}
               <div className="grid grid-cols-1 gap-3 border-b pb-4 mb-2">
-                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Category (Optional)</label>
-                    <select
-                      value={bulkForm.category}
-                      onChange={(e) => setBulkForm({ ...bulkForm, category: e.target.value, product_type: '', product_name: '' })}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    >
-                      <option value="">No change</option>
-                      {fullCategories.map(c => <option key={c._id} value={c.name}>{c.name}</option>)}
-                    </select>
-                 </div>
-                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Product Type (Optional)</label>
-                    <select
-                      value={bulkForm.product_type}
-                      onChange={(e) => setBulkForm({ ...bulkForm, product_type: e.target.value, product_name: '' })}
-                      disabled={!bulkForm.category}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 disabled:bg-gray-100"
-                    >
-                      <option value="">No change</option>
-                      {bulkForm.category && getTypes(bulkForm.category).map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-                    </select>
-                 </div>
                  <div>
                     <label className="block text-sm font-medium text-gray-700">Product (Optional)</label>
                     <select
-                      value={bulkForm.product_name}
+                      value={bulkForm.product_name || ''}
                       onChange={(e) => setBulkForm({ ...bulkForm, product_name: e.target.value })}
-                      disabled={!bulkForm.product_type}
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 disabled:bg-gray-100"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                     >
                       <option value="">No change</option>
-                      {bulkForm.category && bulkForm.product_type && getProducts(bulkForm.category, bulkForm.product_type).map(p => (
+                      {flatProducts.map(p => (
                         <option key={p._id || p.name} value={p.name}>
                           {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
                         </option>
@@ -2413,12 +1710,11 @@ const Assets = () => {
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
                   <option value="">No change</option>
-                  <option value="New">Spare (New)</option>
-                  <option value="Used">Spare (Used)</option>
-                  <option value="Testing">Testing</option>
-                  <option value="Faulty">Faulty</option>
-                  <option value="Under Repair">Under Repair</option>
-                  <option value="Disposed">Disposed</option>
+                  <option value="In Store">In Store</option>
+                  <option value="In Use">In Use</option>
+                  <option value="Spare">Spare</option>
+                  <option value="Missing">Missing</option>
+                  <option value="Scrapped">Scrapped</option>
                 </select>
               </div>
               <div>
@@ -2429,13 +1725,12 @@ const Assets = () => {
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
                   <option value="">No change</option>
-                  <option value="New / Excellent">New / Excellent</option>
-                  <option value="Good / Fair">Good / Fair</option>
-                  <option value="Used / Substandard">Used / Substandard</option>
-                  <option value="Repaired / Reconditioned">Repaired / Reconditioned</option>
-                  <option value="Faulty / Defective">Faulty / Defective</option>
-                  <option value="Poor / Near Failure">Poor / Near Failure</option>
-                  <option value="Failed / Unserviceable">Failed / Unserviceable</option>
+                  <option value="New">New</option>
+                  <option value="Used">Used</option>
+                  <option value="Faulty">Faulty</option>
+                  <option value="Repaired">Repaired</option>
+                  <option value="Under Repair">Under Repair</option>
+                  <option value="Disposed">Disposed</option>
                 </select>
               </div>
               <div>
@@ -2456,7 +1751,7 @@ const Assets = () => {
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 >
                   <option value="">No change</option>
-                  {stores.filter(s => s.parentStore).map(s => (
+                  {stores.map(s => (
                     <option key={s._id} value={s._id}>{s.name}</option>
                   ))}
                 </select>

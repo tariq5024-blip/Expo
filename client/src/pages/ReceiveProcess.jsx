@@ -6,15 +6,25 @@ import { Upload, Download, FileSpreadsheet, RefreshCw, Truck, Briefcase, UserCog
 import * as XLSX from 'xlsx';
 
 const ReceiveProcess = () => {
-  const [activeTab, setActiveTab] = useState('vendor'); // 'vendor', 'contractor', 'technician'
+  const [activeTab, setActiveTab] = useState('vendor');
   const [pendingReturns, setPendingReturns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [recentActivity, setRecentActivity] = useState([]);
-  const [recentAssets, setRecentAssets] = useState([]); // Assets recently added/updated
+  const [recentAssets, setRecentAssets] = useState([]);
   const [showRecentAssets, setShowRecentAssets] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [assetsLoading, setAssetsLoading] = useState(false);
+  const [filterForm, setFilterForm] = useState({
+    query: '',
+    serial: '',
+    model: '',
+    location: '',
+    vendor: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+  const [assetFilters, setAssetFilters] = useState(null);
 
 
   const fetchPendingReturns = useCallback(async () => {
@@ -29,10 +39,9 @@ const ReceiveProcess = () => {
     }
   }, []);
 
-  const fetchRecentAssets = useCallback(async () => {
+  const fetchRecentAssets = useCallback(async (overrideFilters) => {
     setAssetsLoading(true);
     try {
-      // Fetch latest assets (sorted by updatedAt desc by default)
       const params = { limit: 50 };
       const sourceMap = {
         contractor: 'Contractor',
@@ -40,6 +49,16 @@ const ReceiveProcess = () => {
         vendor: 'Vendor'
       };
       if (sourceMap[activeTab]) params.source = sourceMap[activeTab];
+      const filters = overrideFilters || assetFilters;
+      if (filters) {
+        if (filters.query) params.q = filters.query;
+        if (filters.serial) params.serial_number = filters.serial;
+        if (filters.model) params.model_number = filters.model;
+        if (filters.location) params.location = filters.location;
+        if (filters.vendor) params.vendor_name = filters.vendor;
+        if (filters.dateFrom) params.date_from = filters.dateFrom;
+        if (filters.dateTo) params.date_to = filters.dateTo;
+      }
       const res = await api.get('/assets', { params });
       setRecentAssets(res.data.items || []);
     } catch (err) {
@@ -47,7 +66,7 @@ const ReceiveProcess = () => {
     } finally {
       setAssetsLoading(false);
     }
-  }, [activeTab]);
+  }, [activeTab, assetFilters]);
 
   const fetchRecentImports = useCallback(async () => {
     setActivityLoading(true);
@@ -125,6 +144,9 @@ const ReceiveProcess = () => {
       'Asset Name': item.name,
       'Serial Number': item.serial_number,
       'Model': item.model_number,
+      'Vendor Name': item.vendor_name,
+      'Delivered By': item.delivered_by_name,
+      'Delivered At': item.delivered_at ? new Date(item.delivered_at).toLocaleString() : (item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '-'),
       'Status': item.status,
       'Category': item.category,
       'Last Updated': item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '-'
@@ -135,6 +157,108 @@ const ReceiveProcess = () => {
     XLSX.utils.book_append_sheet(wb, ws, 'Received Assets');
     XLSX.writeFile(wb, `Received_Assets_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
+
+  const handleApplyAssetFilters = (e) => {
+    e.preventDefault();
+    const next = {
+      query: filterForm.query.trim(),
+      serial: filterForm.serial.trim(),
+      model: filterForm.model.trim(),
+      location: filterForm.location.trim(),
+      vendor: filterForm.vendor.trim(),
+      dateFrom: filterForm.dateFrom,
+      dateTo: filterForm.dateTo
+    };
+    setAssetFilters(next);
+    if (showRecentAssets) {
+      fetchRecentAssets(next);
+    } else {
+      setShowRecentAssets(true);
+    }
+  };
+
+  const renderAssetFilters = () => (
+    <div className="px-4 pt-4 pb-2 bg-white border-b border-gray-200">
+      <form onSubmit={handleApplyAssetFilters} className="grid gap-3 md:grid-cols-6 items-end">
+        <div>
+          <label className="block text-xs font-medium text-gray-600">Search</label>
+          <input
+            type="text"
+            value={filterForm.query}
+            onChange={(e) => setFilterForm({ ...filterForm, query: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+            placeholder="Name, ticket, unique ID"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600">Serial</label>
+          <input
+            type="text"
+            value={filterForm.serial}
+            onChange={(e) => setFilterForm({ ...filterForm, serial: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+            placeholder="Serial number"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600">Model</label>
+          <input
+            type="text"
+            value={filterForm.model}
+            onChange={(e) => setFilterForm({ ...filterForm, model: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+            placeholder="Model number"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600">Location</label>
+          <input
+            type="text"
+            value={filterForm.location}
+            onChange={(e) => setFilterForm({ ...filterForm, location: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+            placeholder="Store location"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600">Vendor / Contractor / Tech</label>
+          <input
+            type="text"
+            value={filterForm.vendor}
+            onChange={(e) => setFilterForm({ ...filterForm, vendor: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+            placeholder="Vendor name"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600">From</label>
+          <input
+            type="date"
+            value={filterForm.dateFrom}
+            onChange={(e) => setFilterForm({ ...filterForm, dateFrom: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600">To</label>
+          <input
+            type="date"
+            value={filterForm.dateTo}
+            onChange={(e) => setFilterForm({ ...filterForm, dateTo: e.target.value })}
+            className="mt-1 w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div className="md:col-span-6 flex justify-end mt-2">
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 shadow-sm"
+          >
+            Apply Filters
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 
   return (
     <div className="p-6 min-h-screen bg-gray-50">
@@ -185,10 +309,9 @@ const ReceiveProcess = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 min-h-[500px]">
         {activeTab === 'vendor' && (
           <div className="p-1">
-             {/* Recent Assets Table */}
              {showRecentAssets && (
              <div className="bg-white rounded-lg border border-gray-200 mb-6 mx-4 mt-4 overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
-                <div className="flex justify-between items-center p-4 bg-gray-50 border-b border-gray-200">
+               <div className="flex justify-between items-center p-4 bg-gray-50 border-b border-gray-200">
                    <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                      <Briefcase className="w-4 h-4 text-gray-500" />
                      Recently Received / Updated Assets
@@ -205,6 +328,7 @@ const ReceiveProcess = () => {
                      Export List
                    </button>
                 </div>
+                {renderAssetFilters()}
                 
                 {assetsLoading ? (
                    <div className="text-center py-8 text-gray-500">Loading assets...</div>
@@ -213,37 +337,41 @@ const ReceiveProcess = () => {
                      No recent assets found.
                    </div>
                 ) : (
-                   <div className="overflow-x-auto max-h-[400px]">
-                     <table className="min-w-full divide-y divide-gray-200">
-                       <thead className="bg-gray-50 sticky top-0 z-10">
-                         <tr>
-                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Asset Name</th>
-                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Serial</th>
-                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
+                  <div className="overflow-x-auto max-h-[400px]">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50 sticky top-0 z-10">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Asset Name</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Serial</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vendor Name</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivered By</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivered At</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                       {recentAssets.map((asset) => (
+                         <tr key={asset._id} className="hover:bg-gray-50">
+                           <td className="px-4 py-3 text-sm font-medium text-gray-900">{asset.name}</td>
+                           <td className="px-4 py-3 text-sm text-gray-500">{asset.serial_number}</td>
+                           <td className="px-4 py-3 text-sm text-gray-500">{asset.vendor_name || '-'}</td>
+                           <td className="px-4 py-3 text-sm text-gray-500">{asset.delivered_by_name || '-'}</td>
+                           <td className="px-4 py-3 text-sm">
+                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                               ${asset.status === 'Available' ? 'bg-green-100 text-green-800' : 
+                                 asset.status === 'In Use' ? 'bg-blue-100 text-blue-800' : 
+                                 'bg-gray-100 text-gray-800'}`}>
+                               {asset.status}
+                             </span>
+                           </td>
+                           <td className="px-4 py-3 text-sm text-gray-500">
+                             {asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : new Date(asset.updatedAt).toLocaleString()}
+                           </td>
                          </tr>
-                       </thead>
-                       <tbody className="bg-white divide-y divide-gray-200">
-                         {recentAssets.map((asset) => (
-                           <tr key={asset._id} className="hover:bg-gray-50">
-                             <td className="px-4 py-3 text-sm font-medium text-gray-900">{asset.name}</td>
-                             <td className="px-4 py-3 text-sm text-gray-500">{asset.serial_number}</td>
-                             <td className="px-4 py-3 text-sm">
-                               <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
-                                 ${asset.status === 'Available' ? 'bg-green-100 text-green-800' : 
-                                   asset.status === 'In Use' ? 'bg-blue-100 text-blue-800' : 
-                                   'bg-gray-100 text-gray-800'}`}>
-                                 {asset.status}
-                               </span>
-                             </td>
-                             <td className="px-4 py-3 text-sm text-gray-500">
-                               {new Date(asset.updatedAt).toLocaleDateString()}
-                             </td>
-                           </tr>
-                         ))}
-                       </tbody>
-                     </table>
-                   </div>
+                       ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
              </div>
              )}
@@ -296,7 +424,6 @@ const ReceiveProcess = () => {
               </div>
             </div>
 
-            {/* Recently Added/Updated Assets Table */}
             {showRecentAssets && (
             <div className="bg-white rounded-lg border border-gray-200 mb-6 overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
                <div className="flex justify-between items-center p-4 bg-gray-50 border-b border-gray-200">
@@ -316,6 +443,7 @@ const ReceiveProcess = () => {
                     Export List
                   </button>
                </div>
+               {renderAssetFilters()}
                
                {assetsLoading ? (
                   <div className="text-center py-8 text-gray-500">Loading assets...</div>
@@ -330,8 +458,10 @@ const ReceiveProcess = () => {
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Asset Name</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Serial</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivered By</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivered At</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
@@ -339,6 +469,8 @@ const ReceiveProcess = () => {
                           <tr key={asset._id} className="hover:bg-gray-50">
                             <td className="px-4 py-3 text-sm font-medium text-gray-900">{asset.name}</td>
                             <td className="px-4 py-3 text-sm text-gray-500">{asset.serial_number}</td>
+                            <td className="px-4 py-3 text-sm text-gray-500">{asset.source || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-500">{asset.delivered_by_name || '-'}</td>
                             <td className="px-4 py-3 text-sm">
                               <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
                                 ${asset.status === 'New' ? 'bg-green-100 text-green-800' : 
@@ -347,7 +479,7 @@ const ReceiveProcess = () => {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-500">
-                              {new Date(asset.updatedAt).toLocaleString()}
+                              {asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : new Date(asset.updatedAt).toLocaleString()}
                             </td>
                           </tr>
                         ))}
@@ -440,7 +572,6 @@ const ReceiveProcess = () => {
               </div>
             </div>
 
-            {/* Recent Assets Table */}
             {showRecentAssets && (
             <div className="bg-white rounded-lg border border-gray-200 mb-6 overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
                <div className="flex justify-between items-center p-4 bg-gray-50 border-b border-gray-200">
@@ -460,6 +591,7 @@ const ReceiveProcess = () => {
                     Export List
                   </button>
                </div>
+               {renderAssetFilters()}
                
                {assetsLoading ? (
                   <div className="text-center py-8 text-gray-500">Loading assets...</div>
@@ -474,8 +606,10 @@ const ReceiveProcess = () => {
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Asset Name</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Serial</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivered By</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Delivered At</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
@@ -483,6 +617,8 @@ const ReceiveProcess = () => {
                           <tr key={asset._id} className="hover:bg-gray-50">
                             <td className="px-4 py-3 text-sm font-medium text-gray-900">{asset.name}</td>
                             <td className="px-4 py-3 text-sm text-gray-500">{asset.serial_number}</td>
+                            <td className="px-4 py-3 text-sm text-gray-500">{asset.source || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-500">{asset.delivered_by_name || '-'}</td>
                             <td className="px-4 py-3 text-sm">
                               <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
                                 ${asset.status === 'Available' ? 'bg-green-100 text-green-800' : 
@@ -492,7 +628,7 @@ const ReceiveProcess = () => {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-500">
-                              {new Date(asset.updatedAt).toLocaleDateString()}
+                              {asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : new Date(asset.updatedAt).toLocaleString()}
                             </td>
                           </tr>
                         ))}

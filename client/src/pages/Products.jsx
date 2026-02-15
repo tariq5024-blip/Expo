@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Package, Edit2, Trash2, Settings } from 'lucide-react';
+import { Search, Edit2, Trash2, Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../api/axios';
 import PropTypes from 'prop-types';
@@ -15,11 +15,16 @@ const Products = ({ readOnly = false }) => {
   const [productName, setProductName] = useState('');
   const [productImage, setProductImage] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [parentId, setParentId] = useState('');
+  const [bulkNames, setBulkNames] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedAssets, setSelectedAssets] = useState([]);
+  const [panelLoading, setPanelLoading] = useState(false);
 
   const fetchProducts = async () => {
     try {
-      const res = await api.get('/asset-categories/stats');
-      setProducts(res.data);
+      const res = await api.get('/products');
+      setProducts(res.data || []);
     } catch (err) {
       console.error('Failed to fetch products:', err);
     } finally {
@@ -38,22 +43,10 @@ const Products = ({ readOnly = false }) => {
     setDeletingProduct(null);
   };
 
-  const handleEditClick = (product) => {
-    setEditingProduct(product);
-    setProductName(product.name);
-    setProductImage(null); // Reset image input
-    setShowEditModal(true);
-  };
-
-  const handleDeleteClick = (product) => {
-    setDeletingProduct(product);
-    setShowDeleteModal(true);
-  };
-
   const handleDeleteConfirm = async () => {
     if (!deletingProduct) return;
     try {
-      await api.delete(`/asset-categories/products/${deletingProduct._id}`);
+      await api.delete(`/products/${deletingProduct._id}`);
       setShowDeleteModal(false);
       setDeletingProduct(null);
       fetchProducts();
@@ -72,7 +65,7 @@ const Products = ({ readOnly = false }) => {
       }
 
       if (editingProduct) {
-        await api.put(`/asset-categories/products/${editingProduct._id}`, formData, {
+        await api.put(`/products/${editingProduct._id}`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
       }
@@ -91,11 +84,35 @@ const Products = ({ readOnly = false }) => {
     }
   };
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.categoryName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.typeName?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const flatten = (list, level = 0) => {
+    const out = [];
+    (list || []).forEach(p => {
+      out.push({ ...p, level });
+      if (p.children && p.children.length > 0) out.push(...flatten(p.children, level + 1));
+    });
+    return out;
+  };
+  const flatProducts = flatten(products);
+  const filteredProducts = flatProducts.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  const loadAssetsFor = async (product) => {
+    setSelectedProduct(product);
+    setPanelLoading(true);
+    try {
+      const res = await api.get('/assets', { params: { product_name: product.name, limit: 1000 } });
+      setSelectedAssets(res.data.items || []);
+    } catch {
+      setSelectedAssets([]);
+    } finally {
+      setPanelLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedProduct && filteredProducts.length > 0) {
+      const firstLeaf = filteredProducts.find(p => !p.children || p.children.length === 0) || filteredProducts[0];
+      loadAssetsFor(firstLeaf);
+    }
+  }, [filteredProducts, selectedProduct]);
 
   const ProductModal = ({ title, onClose }) => (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
@@ -182,13 +199,57 @@ const Products = ({ readOnly = false }) => {
           </p>
         </div>
         {!readOnly && (
-          <Link
-            to="/setup/asset-categories"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-          >
-            <Settings size={20} />
-            <span>Manage Hierarchy</span>
-          </Link>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <h2 className="font-semibold mb-2">Bulk Product Assignment</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm text-gray-600">Parent Product (optional)</label>
+                <select
+                  value={parentId}
+                  onChange={(e) => setParentId(e.target.value)}
+                  className="mt-1 w-full border p-2 rounded"
+                >
+                  <option value="">Root level</option>
+                  {flatProducts.map(p => (
+                    <option key={p._id} value={p._id}>
+                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Paste product names (one per line)</label>
+                <textarea
+                  value={bulkNames}
+                  onChange={(e) => setBulkNames(e.target.value)}
+                  className="mt-1 w-full border p-2 rounded h-24"
+                  placeholder="Product A\nProduct B\nProduct C"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <button
+                onClick={async () => {
+                  const names = bulkNames.split('\n').map(s => s.trim()).filter(Boolean);
+                  if (names.length === 0) {
+                    alert('No product names to add');
+                    return;
+                  }
+                  try {
+                    const res = await api.post('/products/bulk-create', { parentId: parentId || null, names });
+                    alert(res.data?.message || 'Products created');
+                    setBulkNames('');
+                    fetchProducts();
+                  } catch (err) {
+                    alert(err.response?.data?.message || 'Bulk create failed');
+                  }
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              >
+                Create Products
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -203,107 +264,146 @@ const Products = ({ readOnly = false }) => {
         />
       </div>
 
-      {loading ? (
-        <div className="text-center py-12 text-gray-500">Loading...</div>
-      ) : filteredProducts.length === 0 ? (
-        <div className="text-center py-12 text-gray-500 bg-white rounded-xl shadow-sm border border-gray-100">
-          No products found. Add them in Setup &gt; Asset Categories.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {filteredProducts.map((product) => (
-            <Link 
-              to={`/products/${encodeURIComponent(product.name)}`}
-              key={product._id} 
-              className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow flex flex-col block"
-            >
-              <div className="p-4 flex items-start gap-4 border-b border-gray-50">
-                <div className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                  {product.image ? (
-                    <img 
-                      src={product.image} 
-                      alt={product.name} 
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = '';
-                        e.target.parentElement.innerHTML = '<div class="text-gray-400"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></div>';
-                      }}
-                    />
-                  ) : (
-                    <div className="text-gray-400">
-                      <Package size={24} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          {loading ? (
+            <div className="text-center py-12 text-gray-500">Loading...</div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="text-center py-12 text-gray-500 bg-white rounded-xl shadow-sm border border-gray-100">
+              No products found. Use Bulk Product Assignment to add new products.
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <ul className="divide-y">
+                {filteredProducts.map((product) => (
+                  <li 
+                    key={product._id} 
+                    className={`p-3 flex items-center justify-between hover:bg-gray-50 cursor-pointer ${selectedProduct && selectedProduct._id === product._id ? 'bg-gray-50' : ''}`}
+                    onClick={() => loadAssetsFor(product)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400">{product.level > 0 ? '└'.padStart(product.level + 1, ' ') : ''}</span>
+                      <span className="font-medium">{product.name}</span>
                     </div>
-                  )}
+                    <div className="flex items-center gap-3">
+                      <Link 
+                        to={`/products/${encodeURIComponent(product.name)}`} 
+                        className="text-blue-600 hover:text-blue-800 text-sm"
+                      >
+                        View Details
+                      </Link>
+                      {!readOnly && (
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setEditingProduct(product); setProductName(product.name); setShowEditModal(true); }}
+                            className="text-gray-500 hover:text-blue-600"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setDeletingProduct(product); setShowDeleteModal(true); }}
+                            className="text-gray-500 hover:text-red-600"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-800">Product Overview</h3>
+              <span className="text-xs text-gray-500">{selectedProduct ? selectedProduct.name : 'Select a product'}</span>
+            </div>
+            {panelLoading ? (
+              <div className="text-gray-500 text-sm py-6">Loading product stats...</div>
+            ) : !selectedProduct ? (
+              <div className="text-gray-500 text-sm py-6">Click a product to view stats and recent history.</div>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  {(() => {
+                    const total = selectedAssets.length;
+                    const isAssigned = (a) => a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name);
+                    const isFaulty = (a) => String(a.status).toLowerCase() === 'faulty' || String(a.condition).toLowerCase() === 'faulty';
+                    const isUnderRepair = (a) => String(a.status).toLowerCase() === 'under repair' || String(a.condition).toLowerCase() === 'under repair';
+                    const isDisposed = (a) => String(a.status).toLowerCase() === 'disposed';
+                    const isInUseStatus = (a) => String(a.status).toLowerCase() === 'in use';
+                    const inUse = selectedAssets.filter(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && (isAssigned(a) || isInUseStatus(a))).length;
+                    const inStore = selectedAssets.filter(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && !(isAssigned(a) || isInUseStatus(a))).length;
+                    const faulty = selectedAssets.filter(a => isFaulty(a)).length;
+                    const underRepair = selectedAssets.filter(a => isUnderRepair(a)).length;
+                    const disposed = selectedAssets.filter(a => a.status === 'Disposed').length;
+                    return (
+                      <>
+                        <div className="rounded-lg border bg-white p-3">
+                          <div className="text-xs text-gray-500">Total</div>
+                          <div className="text-xl font-bold">{total}</div>
+                        </div>
+                        <div className="rounded-lg border bg-blue-50 p-3 border-blue-100">
+                          <div className="text-xs text-blue-500">In Use</div>
+                          <div className="text-xl font-bold text-blue-700">{inUse}</div>
+                        </div>
+                        <div className="rounded-lg border bg-green-50 p-3 border-green-100">
+                          <div className="text-xs text-green-600">In Store</div>
+                          <div className="text-xl font-bold text-green-700">{inStore}</div>
+                        </div>
+                        <div className="rounded-lg border bg-red-50 p-3 border-red-100">
+                          <div className="text-xs text-red-600">Faulty</div>
+                          <div className="text-xl font-bold text-red-700">{faulty}</div>
+                        </div>
+                        <div className="rounded-lg border bg-amber-50 p-3 border-amber-100">
+                          <div className="text-xs text-amber-600">Under Repair</div>
+                          <div className="text-xl font-bold text-amber-700">{underRepair}</div>
+                        </div>
+                        <div className="rounded-lg border bg-gray-50 p-3">
+                          <div className="text-xs text-gray-600">Disposed</div>
+                          <div className="text-xl font-bold text-gray-700">{disposed}</div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-gray-500 mb-1 truncate" title={`${product.categoryName} > ${product.typeName}`}>
-                    {product.categoryName} &gt; {product.typeName}
+                <div className="rounded-xl border bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-medium text-gray-800">Recent History</div>
+                    <Link 
+                      to={selectedProduct ? `/products/${encodeURIComponent(selectedProduct.name)}` : '#'} 
+                      className="text-xs text-blue-600"
+                    >
+                      View All
+                    </Link>
                   </div>
-                  <div className="flex justify-between items-start gap-2">
-                    <h3 className="font-semibold text-gray-900 line-clamp-2 leading-tight" title={product.name}>
-                      {product.name}
-                    </h3>
-                    {!readOnly && (
-                      <div className="flex gap-1 flex-shrink-0">
-                        <button 
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleEditClick(product);
-                          }}
-                          className="text-gray-400 hover:text-blue-600 transition-colors p-1 rounded-full hover:bg-blue-50"
-                          title="Edit Product"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button 
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDeleteClick(product);
-                          }}
-                          className="text-gray-400 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-red-50"
-                          title="Delete Product"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                  <div className="space-y-2 max-h-64 overflow-auto">
+                    {selectedAssets
+                      .flatMap(a => (a.history || []).map(h => ({ ...h, serial: a.serial_number, uniqueId: a.uniqueId })))
+                      .sort((x, y) => new Date(y.date || y.createdAt || 0) - new Date(x.date || x.createdAt || 0))
+                      .slice(0, 10)
+                      .map((ev, idx) => (
+                        <div key={idx} className="text-sm text-gray-700">
+                          <div className="flex justify-between">
+                            <span className="font-semibold">{ev.action}</span>
+                            <span className="text-xs text-gray-400">{new Date(ev.date || ev.createdAt || Date.now()).toLocaleString()}</span>
+                          </div>
+                          <div className="text-xs text-gray-500">UID: {ev.uniqueId || 'N/A'} • SN: {ev.serial || 'N/A'}</div>
+                        </div>
+                      ))}
+                    {selectedAssets.length === 0 && (
+                      <div className="text-xs text-gray-500">No history available.</div>
                     )}
                   </div>
                 </div>
-              </div>
-              
-              <div className="grid grid-cols-3 gap-px bg-gray-100 text-sm flex-1">
-                <div className="bg-white p-2 text-center flex flex-col justify-center">
-                  <div className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Total</div>
-                  <div className="font-bold text-gray-900 text-lg">{product.total}</div>
-                </div>
-                <div className="bg-white p-2 text-center flex flex-col justify-center">
-                  <div className="text-blue-600 text-[10px] uppercase font-bold tracking-wider mb-1">In Use</div>
-                  <div className="font-bold text-blue-700 text-lg">{product.inUse}</div>
-                </div>
-                <div className="bg-white p-2 text-center flex flex-col justify-center">
-                  <div className="text-green-600 text-[10px] uppercase font-bold tracking-wider mb-1">In Store</div>
-                  <div className="font-bold text-green-700 text-lg">{product.inStore}</div>
-                </div>
-                <div className="bg-white p-2 text-center flex flex-col justify-center">
-                  <div className="text-red-600 text-[10px] uppercase font-bold tracking-wider mb-1">Faulty</div>
-                  <div className="font-bold text-red-700 text-lg">{product.faulty}</div>
-                </div>
-                <div className="bg-white p-2 text-center flex flex-col justify-center">
-                  <div className="text-orange-600 text-[10px] uppercase font-bold tracking-wider mb-1">Repair</div>
-                  <div className="font-bold text-orange-700 text-lg">{product.underRepair}</div>
-                </div>
-                <div className="bg-white p-2 text-center flex flex-col justify-center">
-                  <div className="text-gray-500 text-[10px] uppercase font-bold tracking-wider mb-1">Disposed</div>
-                  <div className="font-bold text-gray-600 text-lg">{product.disposed}</div>
-                </div>
-              </div>
-            </Link>
-          ))}
+              </>
+            )}
+          </div>
         </div>
-      )}
+      </div>
 
       {showEditModal && (
         <ProductModal 

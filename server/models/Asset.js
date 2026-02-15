@@ -41,12 +41,6 @@ const assetSchema = new mongoose.Schema({
     default: '',
     index: true
   },
-  category: {
-    type: String,
-    required: true,
-    index: true,
-    default: 'Other'
-  },
   uniqueId: {
     type: String,
     unique: true,
@@ -68,29 +62,25 @@ const assetSchema = new mongoose.Schema({
     default: '',
     index: true
   },
-  product_type: {
-    type: String,
-    index: true
-  },
   product_name: {
     type: String,
     index: true
   },
   status: {
     type: String,
-    enum: ['New', 'Used', 'Faulty', 'Disposed', 'Under Repair', 'In Use', 'Testing'],
-    default: 'New',
+    enum: ['In Store', 'In Use', 'Spare', 'Missing', 'Scrapped', 'Disposed', 'Faulty', 'Under Repair'],
+    default: 'In Store',
     index: true
   },
   previous_status: {
     type: String,
-    enum: ['New', 'Used', 'Faulty', 'Disposed', 'Under Repair', 'In Use', 'Testing'],
+    enum: ['New', 'Used', 'Faulty', 'Disposed', 'Under Repair', 'In Use', 'In Store', 'Testing'],
     default: null
   },
   condition: {
     type: String,
-    enum: ['New / Excellent', 'Good / Fair', 'Used / Substandard', 'Repaired / Reconditioned', 'Faulty / Defective', 'Poor / Near Failure', 'Failed / Unserviceable', 'Disposed'],
-    default: 'New / Excellent',
+    enum: ['New', 'Used', 'Faulty', 'Repaired', 'Under Repair', 'Disposed', 'Scrapped'],
+    default: 'New',
     index: true
   },
   assigned_to: {
@@ -102,6 +92,11 @@ const assetSchema = new mongoose.Schema({
     name: String,
     phone: String,
     note: String
+  },
+  vendor_name: {
+    type: String,
+    default: '',
+    index: true
   },
   source: {
     type: String,
@@ -131,12 +126,18 @@ const assetSchema = new mongoose.Schema({
       }
     ],
     default: []
+  },
+  delivered_by_name: {
+    type: String,
+    default: ''
+  },
+  delivered_at: {
+    type: Date
   }
 }, { timestamps: true });
 
 // Compound Indexes for Common Filters
 assetSchema.index({ store: 1, status: 1 });
-assetSchema.index({ store: 1, category: 1 });
 assetSchema.index({ store: 1, serial_number: 1 }); // For duplicate checks
 assetSchema.index({ store: 1, model_number: 1 });
 

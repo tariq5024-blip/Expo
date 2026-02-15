@@ -11,15 +11,19 @@ const AdminTechnicianAssets = () => {
   const [total, setTotal] = useState(0);
 
   const getDerivedStatus = (asset) => {
-    // 1. Condition-based statuses (Priority over Assignment)
-    if (asset.status === 'Faulty') {
+    // 1. Condition-based statuses (Priority)
+    const cond = String(asset.condition || '').toLowerCase();
+    if (cond.includes('faulty') || asset.status === 'Faulty') {
       return { label: 'Faulty', color: 'bg-red-100 text-red-800' };
     }
-    if (asset.status === 'Under Repair') {
+    if (cond.includes('repair') || asset.status === 'Under Repair') {
       return { label: 'Under Repair', color: 'bg-amber-100 text-amber-800' };
     }
-    if (asset.status === 'Disposed') {
+    if (cond.includes('disposed') || asset.status === 'Disposed') {
       return { label: 'Disposed', color: 'bg-gray-100 text-gray-800' };
+    }
+    if (cond.includes('scrap') || asset.status === 'Scrapped') {
+      return { label: 'Scrapped', color: 'bg-gray-100 text-gray-800' };
     }
 
     if (asset.status === 'Testing') {
@@ -159,6 +163,7 @@ const AdminTechnicianAssets = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Asset</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Serial</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ticket</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Store</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Condition</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
@@ -172,6 +177,7 @@ const AdminTechnicianAssets = () => {
                     <td className="px-6 py-4">{a.name}</td>
                     <td className="px-6 py-4">{a.model_number}</td>
                     <td className="px-6 py-4">{a.serial_number}</td>
+                    <td className="px-6 py-4">{a.ticket_number || '-'}</td>
                     <td className="px-6 py-4">{a.store?.name}</td>
                     <td className="px-6 py-4">
                       {a.status === 'New' ? 'Spare (New)' : 

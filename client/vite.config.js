@@ -1,17 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const apiHost = (globalThis.process && globalThis.process.env && globalThis.process.env.VITE_API_HOST) || 'localhost'
+
 export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
     proxy: {
       '/api': {
-        target: `http://${process.env.VITE_API_HOST || 'localhost'}:5000`,
+        target: `http://${apiHost}:5000`,
         changeOrigin: true,
         secure: false,
       },
       '/uploads': {
-        target: `http://${process.env.VITE_API_HOST || 'localhost'}:5000`,
+        target: `http://${apiHost}:5000`,
         changeOrigin: true,
         secure: false,
       },

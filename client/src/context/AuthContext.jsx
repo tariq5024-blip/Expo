@@ -12,14 +12,14 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeStore, setActiveStore] = useState(null);
+  const [globalLoading, setGlobalLoading] = useState(false);
 
   useEffect(() => {
-    // Ensure CSRF token cookie is present
     (async () => {
       try {
         await api.get('/auth/csrf-token');
-      } catch (e) {
-        // noop
+      } catch (error) {
+        console.error('CSRF token fetch failed:', error);
       }
     })();
 
@@ -52,6 +52,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (email, password) => {
+    setGlobalLoading(true);
     const response = await api.post('/auth/login', { email, password });
     const userData = response.data;
     
@@ -69,16 +70,22 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('activeStore');
     }
 
+    setGlobalLoading(false);
     return userData;
   };
 
-  const logout = () => {
-    // Clear cookie session on server
-    api.post('/auth/logout').catch(() => {});
+  const logout = async () => {
+    setGlobalLoading(true);
+    try {
+      await api.post('/auth/logout');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
     localStorage.removeItem('user');
     localStorage.removeItem('activeStore');
     setUser(null);
     setActiveStore(null);
+    setGlobalLoading(false);
   };
 
   const selectStore = (store) => {
@@ -92,7 +99,8 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     selectStore,
-    loading
+    loading,
+    globalLoading
   };
 
   return (

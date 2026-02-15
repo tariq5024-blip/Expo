@@ -5,11 +5,16 @@ import {
   CheckCircle, 
   LayoutGrid, 
   Trash2,
-  TrendingUp
+  TrendingUp,
+  AlertCircle
 } from 'lucide-react';
 
-const StatCard = ({ title, value, icon: Icon, color, subText }) => (
-  <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+const StatCard = ({ title, value, icon: Icon, color, subText, onClick }) => {
+  return (
+  <div
+    className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center justify-between relative overflow-hidden group hover:shadow-md transition-shadow cursor-pointer"
+    onClick={onClick}
+  >
     <div className={`absolute left-0 top-0 bottom-0 w-1 bg-${color}-500`}></div>
     <div>
       <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">{title}</h3>
@@ -22,20 +27,21 @@ const StatCard = ({ title, value, icon: Icon, color, subText }) => (
       <Icon className="w-6 h-6" />
     </div>
   </div>
-);
+)};
 
 StatCard.propTypes = {
   title: PropTypes.string.isRequired,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
   icon: PropTypes.elementType.isRequired,
   color: PropTypes.string.isRequired,
-  subText: PropTypes.string
+  subText: PropTypes.string,
+  onClick: PropTypes.func
 };
 
 const DashboardCharts = ({ stats }) => {
   if (!stats) return <div className="p-8 text-center text-gray-500">Loading dashboard data...</div>;
 
-  const { overview, models, growth } = stats;
+  const { overview, growth } = stats;
   
   const safeOverview = overview || {
     total: 0,
@@ -47,14 +53,14 @@ const DashboardCharts = ({ stats }) => {
     pendingRequests: 0
   };
 
-  // ApexCharts Options for Donut
+  // Donut: In Use vs Not In Use (center shows Total)
   const donutOptions = {
     chart: {
       type: 'donut',
       fontFamily: 'inherit'
     },
-    labels: ['In Use', 'Spare', 'Faulty', 'Disposed'],
-    colors: ['#10b981', '#f59e0b', '#ef4444', '#6b7280'],
+    labels: ['In Use', 'Not In Use'],
+    colors: ['#3b82f6', '#f59e0b'],
     plotOptions: {
       pie: {
         donut: {
@@ -64,9 +70,7 @@ const DashboardCharts = ({ stats }) => {
             total: {
               show: true,
               label: 'Total',
-              formatter: function (w) {
-                return w.globals.seriesTotals.reduce((a, b) => a + b, 0);
-              }
+              formatter: function () { return (overview?.total || 0); }
             }
           }
         }
@@ -80,20 +84,19 @@ const DashboardCharts = ({ stats }) => {
     }
   };
 
-  const donutSeries = [
-    safeOverview.inUse, 
-    safeOverview.spare, 
-    safeOverview.faulty, 
-    safeOverview.disposed
-  ];
+  const inUseCount = safeOverview.inUse || 0;
+  const notInUseCount = Math.max((safeOverview.total || 0) - inUseCount, 0);
+  const donutSeries = [inUseCount, notInUseCount];
 
-  // Filter out zero values if needed, but ApexCharts handles zeros gracefully usually.
-  // Actually for donut it's better to keep indices aligned with labels.
+  const navigateToAssets = (status) => {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    const query = params.toString();
+    const path = `/assets${query ? `?${query}` : ''}`;
+    window.open(path, '_blank', 'noopener,noreferrer');
+  };
 
-  const modelData = (models || []).slice(0, 10);
-  const hasModelData = modelData.length > 0;
-  
-  // ApexCharts Options for Bar
+  // Bar: Spare / Faulty / Disposed (readings from stat cards)
   const barOptions = {
     chart: {
       type: 'bar',
@@ -119,7 +122,7 @@ const DashboardCharts = ({ stats }) => {
     },
     colors: ['#3b82f6'],
     xaxis: {
-      categories: hasModelData ? modelData.map(m => m.name) : [],
+      categories: ['Spare', 'Faulty', 'Disposed'],
     },
     grid: {
       borderColor: '#f3f4f6',
@@ -136,8 +139,8 @@ const DashboardCharts = ({ stats }) => {
   };
 
   const barSeries = [{
-    name: 'Assets',
-    data: hasModelData ? modelData.map(m => m.value) : []
+    name: 'Inventory Status',
+    data: [safeOverview.spare || 0, safeOverview.faulty || 0, safeOverview.disposed || 0]
   }];
 
   // Growth Chart Options
@@ -180,13 +183,14 @@ const DashboardCharts = ({ stats }) => {
   return (
     <div className="space-y-6">
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <StatCard 
           title="Total Assets" 
           value={safeOverview.total} 
           icon={Box} 
           color="blue" 
           subText="In Inventory"
+          onClick={() => navigateToAssets('')}
         />
         <StatCard 
           title="In Use" 
@@ -194,6 +198,7 @@ const DashboardCharts = ({ stats }) => {
           icon={CheckCircle} 
           color="emerald" 
           subText={`${safeOverview.total ? Math.round((safeOverview.inUse / safeOverview.total) * 100) : 0}% Utilization`}
+          onClick={() => navigateToAssets('In Use')}
         />
         <StatCard 
           title="Spare" 
@@ -201,31 +206,35 @@ const DashboardCharts = ({ stats }) => {
           icon={LayoutGrid} 
           color="amber" 
           subText="Ready to assign"
+          onClick={() => navigateToAssets('Spare')}
         />
         <StatCard 
-          title="Faulty / Disposed" 
-          value={safeOverview.faulty + safeOverview.disposed} 
-          icon={Trash2} 
+          title="Faulty" 
+          value={safeOverview.faulty} 
+          icon={AlertCircle} 
           color="red" 
-          subText={`${safeOverview.faulty} Faulty, ${safeOverview.disposed} Disposed`}
+          subText="Not issuable"
+          onClick={() => navigateToAssets('Faulty')}
+        />
+        <StatCard 
+          title="Disposed" 
+          value={safeOverview.disposed} 
+          icon={Trash2} 
+          color="gray" 
+          subText="Write-off history"
+          onClick={() => navigateToAssets('Disposed')}
         />
       </div>
 
       {/* Main Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-gray-800 font-bold mb-4">Asset Allocation</h3>
+          <h3 className="text-gray-800 font-bold mb-4">Total vs In Use</h3>
           <Chart options={donutOptions} series={donutSeries} type="donut" height={300} />
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-gray-800 font-bold mb-4">Top 10 Asset Models</h3>
-          {hasModelData ? (
-            <Chart options={barOptions} series={barSeries} type="bar" height={300} />
-          ) : (
-            <div className="h-[300px] flex items-center justify-center text-gray-400 text-sm italic border-2 border-dashed border-gray-100 rounded-lg">
-              No asset model data available
-            </div>
-          )}
+          <h3 className="text-gray-800 font-bold mb-4">Spare vs Faulty vs Disposed</h3>
+          <Chart options={barOptions} series={barSeries} type="bar" height={300} />
         </div>
       </div>
 

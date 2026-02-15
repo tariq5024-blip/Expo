@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Store = require('../models/Store');
+const Asset = require('../models/Asset');
+const mongoose = require('mongoose');
 const { protect, admin } = require('../middleware/authMiddleware');
 
 // @desc    Get all stores (with optional filtering)
@@ -58,7 +60,91 @@ router.get('/', protect, async (req, res) => {
     }
 
     // Sort by name for better UX
-    const stores = await Store.find(filter).sort({ name: 1 }).lean();
+    let stores = await Store.find(filter).sort({ name: 1 }).lean();
+
+    if (req.query.includeAssetTotals === 'true' && stores.length > 0) {
+      const match = {};
+
+      // Scope by parent store (main store) and its child locations
+      let allowedStoreIds = [];
+      if (req.query.parent) {
+        const parentId = new mongoose.Types.ObjectId(req.query.parent);
+        allowedStoreIds = [parentId, ...stores.map(s => s._id)];
+      } else if (req.activeStore) {
+        allowedStoreIds = [new mongoose.Types.ObjectId(req.activeStore)];
+      }
+      if (allowedStoreIds.length > 0) {
+        match.store = { $in: allowedStoreIds };
+      }
+
+      const totals = await Asset.aggregate([
+        { $match: match },
+        {
+          $project: {
+            locLower: { $toLower: { $ifNull: ['$location', ''] } },
+            statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+            condLower: { $toLower: { $ifNull: ['$condition', ''] } },
+            assigned_to: 1,
+            assigned_to_external: 1
+          }
+        },
+        {
+          $group: {
+            _id: '$locLower',
+            total: { $sum: 1 },
+            disposed: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ['$statusLower', 'disposed'] },
+                      { $eq: ['$condLower', 'disposed'] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            },
+            installed: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ['$statusLower', 'in use'] },
+                      { $ifNull: ['$assigned_to', false] },
+                      {
+                        $and: [
+                          { $ifNull: ['$assigned_to_external.name', false] },
+                          { $ne: ['$assigned_to_external.name', ''] }
+                        ]
+                      }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ]);
+
+      const totalsMap = totals.reduce((acc, t) => {
+        const total = t.total || 0;
+        const disposed = t.disposed || 0;
+        const installed = t.installed || 0;
+        const available = Math.max(total - disposed - installed, 0);
+        acc[String(t._id || '')] = available;
+        return acc;
+      }, {});
+
+      stores = stores.map(s => ({
+        ...s,
+        availableAssetCount: totalsMap[String((s.name || '').toLowerCase())] || 0
+      }));
+    }
+
     res.json(stores);
   } catch (error) {
     res.status(500).json({ message: error.message });

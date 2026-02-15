@@ -1,38 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 250" role="img" aria-label="Expo City Dubai">
-  <rect width="900" height="250" fill="white"/>
-  <g transform="translate(140,125)">
-    <g id="dot" transform="translate(0,-80)">
-      <circle r="16" fill="#FFC107"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Expo City Dubai">
+  <g transform="translate(100,100)">
+    <g id="ringDot">
+      <circle r="9" fill="#FFC107" />
     </g>
     <g>
-      <use href="#dot" transform="rotate(0)"/>
-      <use href="#dot" transform="rotate(15)"/>
-      <use href="#dot" transform="rotate(30)"/>
-      <use href="#dot" transform="rotate(45)"/>
-      <use href="#dot" transform="rotate(60)"/>
-      <use href="#dot" transform="rotate(75)"/>
-      <use href="#dot" transform="rotate(90)"/>
-      <use href="#dot" transform="rotate(105)"/>
-      <use href="#dot" transform="rotate(120)"/>
-      <use href="#dot" transform="rotate(135)"/>
-      <use href="#dot" transform="rotate(150)"/>
-      <use href="#dot" transform="rotate(165)"/>
-      <use href="#dot" transform="rotate(180)"/>
-      <use href="#dot" transform="rotate(195)"/>
-      <use href="#dot" transform="rotate(210)"/>
-      <use href="#dot" transform="rotate(225)"/>
-      <use href="#dot" transform="rotate(240)"/>
-      <use href="#dot" transform="rotate(255)"/>
-      <use href="#dot" transform="rotate(270)"/>
-      <use href="#dot" transform="rotate(285)"/>
-      <use href="#dot" transform="rotate(300)"/>
-      <use href="#dot" transform="rotate(315)"/>
-      <use href="#dot" transform="rotate(330)"/>
-      <use href="#dot" transform="rotate(345)"/>
+      <use href="#ringDot" transform="rotate(0) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(15) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(30) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(45) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(60) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(75) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(90) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(105) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(120) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(135) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(150) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(165) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(180) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(195) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(210) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(225) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(240) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(255) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(270) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(285) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(300) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(315) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(330) translate(0,-70)" />
+      <use href="#ringDot" transform="rotate(345) translate(0,-70)" />
     </g>
-  </g>
-  <g transform="translate(270,95)">
-    <text x="0" y="0" font-size="48" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" fill="#000000">مدينة إكسبو دبي</text>
-    <text x="0" y="70" font-size="64" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" fill="#000000">EXPO CITY DUBAI</text>
   </g>
 </svg>

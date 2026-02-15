@@ -158,6 +158,7 @@ router.get('/stats', protect, async (req, res) => {
         allProducts.push({
           _id: prod._id,
           name: prod.name,
+          model_number: prod.model_number || '',
           image: prod.image || '',
           categoryName: catName,
           typeName: typeName,
@@ -203,24 +204,60 @@ router.get('/stats', protect, async (req, res) => {
     }
 
     console.log('STATS DEBUG: Starting Aggregation');
-    // Aggregation to get counts per product_name
+    // Aggregation to get counts per product_name AND model_number
     const stats = await Asset.aggregate([
       { $match: assetMatch },
+      { 
+        $project: {
+          nameLower: { $toLower: { $ifNull: ['$product_name', ''] } },
+          modelLower: { $toLower: { $ifNull: ['$model_number', ''] } },
+          statusLower: { $toLower: { $ifNull: ['$status', ''] } },
+          condLower: { $toLower: { $ifNull: ['$condition', ''] } },
+          assigned_to: 1,
+          assigned_to_external: 1
+        }
+      },
       {
         $group: {
-          _id: '$product_name',
+          _id: {
+            name: '$nameLower',
+            model: '$modelLower'
+          },
           total: { $sum: 1 },
-          disposed: { $sum: { $cond: [{ $eq: ['$status', 'Disposed'] }, 1, 0] } },
-          faulty: { $sum: { $cond: [{ $eq: ['$status', 'Faulty'] }, 1, 0] } },
-          underRepair: { $sum: { $cond: [{ $eq: ['$status', 'Under Repair'] }, 1, 0] } },
+          disposed: { 
+            $sum: { 
+              $cond: [
+                { 
+                  $or: [
+                    { $eq: ['$statusLower', 'disposed'] },
+                    { $eq: ['$condLower', 'disposed'] }
+                  ] 
+                }, 
+                1, 
+                0 
+              ] 
+            } 
+          },
+          faulty: { 
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ['$statusLower', 'faulty'] },
+                  { $eq: ['$condLower', 'faulty'] }
+                ]}, 1, 0
+              ] 
+            } 
+          },
+          underRepair: { $sum: { $cond: [{ $eq: ['$statusLower', 'under repair'] }, 1, 0] } },
           inUse: { 
             $sum: { 
               $cond: [
                 { 
                   $and: [
-                    { $ne: ['$status', 'Disposed'] },
-                    { $ne: ['$status', 'Faulty'] },
-                    { $ne: ['$status', 'Under Repair'] },
+                    { $ne: ['$statusLower', 'disposed'] },
+                    { $ne: ['$condLower', 'disposed'] },
+                    { $ne: ['$statusLower', 'faulty'] },
+                    { $ne: ['$statusLower', 'under repair'] },
                     { 
                       $or: [
                         { $ifNull: ['$assigned_to', false] }, 
@@ -230,7 +267,7 @@ router.get('/stats', protect, async (req, res) => {
                             { $ne: ['$assigned_to_external.name', ''] }
                           ]
                         },
-                        { $eq: ['$status', 'In Use'] }
+                        { $eq: ['$statusLower', 'in use'] }
                       ]
                     }
                   ]
@@ -244,37 +281,64 @@ router.get('/stats', protect, async (req, res) => {
       }
     ]);
 
-    // Map stats to a lookup object (Case-Insensitive Accumulation)
-    const statsMap = {};
+    // Create lookup maps
+    const modelMap = {};
+    const nameMap = {};
+    
     stats.forEach(s => {
-      if (s._id) {
-        const key = String(s._id).toLowerCase();
-        if (!statsMap[key]) {
-          statsMap[key] = { ...s };
+      // s._id is { name, model }
+      if (s._id.model) {
+        // If model exists, map it directly
+        // Note: Multiple product names might share a model number (unlikely but possible), 
+        // we sum them up if they do.
+        if (!modelMap[s._id.model]) {
+          modelMap[s._id.model] = { ...s };
         } else {
-          // Accumulate if multiple asset product_names map to same lowercase key
-          statsMap[key].total += s.total;
-          statsMap[key].disposed += s.disposed;
-          statsMap[key].faulty += s.faulty;
-          statsMap[key].underRepair += s.underRepair;
-          statsMap[key].inUse += s.inUse;
+          modelMap[s._id.model].total += s.total;
+          modelMap[s._id.model].disposed += s.disposed;
+          modelMap[s._id.model].faulty += s.faulty;
+          modelMap[s._id.model].underRepair += s.underRepair;
+          modelMap[s._id.model].inUse += s.inUse;
+        }
+      }
+      
+      if (s._id.name) {
+        // Map by name (accumulate if multiple entries share the name)
+        if (!nameMap[s._id.name]) {
+          nameMap[s._id.name] = { ...s };
+        } else {
+          nameMap[s._id.name].total += s.total;
+          nameMap[s._id.name].disposed += s.disposed;
+          nameMap[s._id.name].faulty += s.faulty;
+          nameMap[s._id.name].underRepair += s.underRepair;
+          nameMap[s._id.name].inUse += s.inUse;
         }
       }
     });
 
     // Combine products with stats
     const result = allProducts.map(prod => {
-      const s = statsMap[String(prod.name).toLowerCase()] || { total: 0, inUse: 0, faulty: 0, underRepair: 0, disposed: 0 };
-      const inStore = s.total - s.inUse - s.faulty - s.underRepair - s.disposed;
+      let s = null;
+      // Priority 1: Model Number Match
+      if (prod.model_number) {
+        s = modelMap[String(prod.model_number).toLowerCase()];
+      }
+      // Priority 2: Product Name Match (Fallback)
+      if (!s) {
+        s = nameMap[String(prod.name).toLowerCase()];
+      }
+      
+      const stat = s || { total: 0, inUse: 0, faulty: 0, underRepair: 0, disposed: 0 };
+      const inStore = stat.total - stat.inUse - stat.faulty - stat.underRepair - stat.disposed;
       
       return {
         ...prod,
-        total: s.total,
-        inUse: s.inUse,
+        total: stat.total,
+        inUse: stat.inUse,
         inStore: Math.max(0, inStore),
-        faulty: s.faulty,
-        underRepair: s.underRepair,
-        disposed: s.disposed
+        faulty: stat.faulty,
+        underRepair: stat.underRepair,
+        disposed: stat.disposed
       };
     });
 
@@ -319,6 +383,12 @@ router.put('/products/:id', protect, admin, upload.single('image'), async (req, 
       }
       product.name = name;
     }
+    
+    // Update Model Number
+    if (req.body.model_number !== undefined) {
+      product.model_number = req.body.model_number;
+    }
+
     if (req.file) {
       await resizeImage(req.file.path);
       product.image = `/uploads/${req.file.filename}`;
@@ -386,7 +456,7 @@ router.delete('/products/:id', protect, admin, async (req, res) => {
 // @route   POST /api/asset-categories/products/:id/children
 // @access  Private/Admin
 router.post('/products/:id/children', protect, admin, upload.single('image'), async (req, res) => {
-  const { name } = req.body;
+  const { name, model_number } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ message: 'Name is required' });
 
   try {
@@ -410,7 +480,7 @@ router.post('/products/:id/children', protect, admin, upload.single('image'), as
     const image = req.file ? `/uploads/${req.file.filename}` : '';
 
     if (!product.children) product.children = [];
-    product.children.push({ name, image, children: [] });
+    product.children.push({ name, model_number: model_number || '', image, children: [] });
     
     await category.save();
     res.json(category);

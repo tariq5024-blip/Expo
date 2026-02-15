@@ -28,6 +28,10 @@ router.get('/', protect, admin, async (req, res) => {
     const { vendor, status, startDate, endDate } = req.query;
     const filter = {};
 
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+
     if (vendor) filter.vendor = vendor;
     if (status) filter.status = status;
     if (startDate && endDate) {

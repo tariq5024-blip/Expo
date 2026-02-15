@@ -13,7 +13,7 @@ const Stores = () => {
 
   const fetchStores = useCallback(async () => {
     try {
-      const res = await api.get(`/stores?parent=${activeStore._id}`);
+      const res = await api.get(`/stores?parent=${activeStore._id}&includeAssetTotals=true`);
       setStores(res.data);
     } catch (err) {
       console.error(err);
@@ -124,6 +124,9 @@ const Stores = () => {
                 <>
                   <div className="flex justify-between items-start mb-2">
                     <span className="font-bold text-lg">{store.name}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-600">
+                    Total available in store: <span className="font-semibold">{store.availableAssetCount ?? 0}</span>
                   </div>
                   <div className="flex gap-2 justify-end border-t pt-2">
                     <button onClick={() => startEdit(store)} className="text-amber-600 text-sm hover:underline">Edit</button>

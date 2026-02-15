@@ -99,21 +99,21 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
   const { user, logout, activeStore } = useAuth();
   const location = useLocation();
   const [openSubMenu, setOpenSubMenu] = useState({});
-  const [assetCategories, setAssetCategories] = useState([]);
+  const [productsTree, setProductsTree] = useState([]);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   useEffect(() => {
-    const fetchCategories = async () => {
+    const fetchProducts = async () => {
       try {
-        const res = await api.get('/asset-categories');
-        setAssetCategories(res.data);
+        const res = await api.get('/products');
+        setProductsTree(res.data || []);
       } catch (err) {
-        console.error('Failed to fetch asset categories:', err);
+        console.error('Failed to fetch products:', err);
       }
     };
 
     if (user?.role === 'Admin') {
-      fetchCategories();
+      fetchProducts();
     }
   }, [user, location.pathname]);
 
@@ -138,19 +138,19 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
       roles: ['Admin'],
       subItems: [
         { name: 'All Assets', path: '/assets', uniqueKey: 'all-assets' },
-        ...assetCategories.map(cat => ({
-          name: cat.name,
-          path: `/assets?category=${encodeURIComponent(cat.name)}`,
-          uniqueKey: `cat-${cat._id}`,
-          subItems: (cat.types || []).map(type => ({
-             name: type.name,
-             path: `/assets?category=${encodeURIComponent(cat.name)}&type=${encodeURIComponent(type.name)}`,
-             uniqueKey: `type-${cat._id}-${type.name}`,
-             subItems: (type.products || []).map(prod => ({
-               name: prod.name,
-               path: `/assets?category=${encodeURIComponent(cat.name)}&type=${encodeURIComponent(type.name)}&product=${encodeURIComponent(prod.name)}`,
-               uniqueKey: `prod-${cat._id}-${type.name}-${prod.name}`
-             }))
+        ...productsTree.map(root => ({
+          name: root.name,
+          path: `/assets?product=${encodeURIComponent(root.name)}`,
+          uniqueKey: `prod-root-${root._id}`,
+          subItems: (root.children || []).map(child => ({
+            name: child.name,
+            path: `/assets?product=${encodeURIComponent(child.name)}`,
+            uniqueKey: `prod-child-${root._id}-${child.name}`,
+            subItems: (child.children || []).map(grand => ({
+              name: grand.name,
+              path: `/assets?product=${encodeURIComponent(grand.name)}`,
+              uniqueKey: `prod-grand-${root._id}-${child.name}-${grand.name}`
+            }))
           }))
         }))
       ]

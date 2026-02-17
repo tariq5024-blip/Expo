@@ -123,9 +123,31 @@ router.post('/bulk-create', protect, admin, async (req, res) => {
   if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ message: 'No product names provided' });
   try {
     let targetDoc;
+    let rootDoc;
     if (parentId) {
-      targetDoc = await Product.findById(parentId);
-      if (!targetDoc) return res.status(404).json({ message: 'Parent product not found' });
+      rootDoc = await Product.findById(parentId);
+      if (!rootDoc) {
+        const filter = {};
+        if (req.activeStore) {
+          filter.$or = [
+            { store: req.activeStore },
+            { store: null },
+            { store: { $exists: false } }
+          ];
+        }
+        const roots = await Product.find(filter);
+        for (const r of roots) {
+          const found = findInTree(r.children || [], String(parentId));
+          if (found && found.node) {
+            rootDoc = r;
+            targetDoc = found.node;
+            break;
+          }
+        }
+      }
+      if (!rootDoc) return res.status(404).json({ message: 'Parent product not found' });
+      if (!targetDoc) targetDoc = rootDoc;
+
       if (!targetDoc.children) targetDoc.children = [];
     }
     const created = [];
@@ -138,15 +160,16 @@ router.post('/bulk-create', protect, admin, async (req, res) => {
           const doc = await Product.create({ name, image: '', children: [], store: req.activeStore });
           created.push(doc);
         }
-      } else {
+      } else if (targetDoc) {
         if (!targetDoc.children.some(c => String(c.name).toLowerCase() === name.toLowerCase())) {
           targetDoc.children.push({ name, image: '', children: [] });
         }
       }
     }
-    if (parentId) {
-      await targetDoc.save();
-      return res.json({ message: 'Bulk children created', parent: targetDoc });
+    if (parentId && rootDoc) {
+      rootDoc.markModified('children');
+      await rootDoc.save();
+      return res.json({ message: 'Bulk children created', parent: rootDoc });
     }
     res.json({ message: `Created ${created.length} root products`, items: created });
   } catch (err) {

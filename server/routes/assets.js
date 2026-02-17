@@ -244,7 +244,10 @@ router.get('/', protect, async (req, res) => {
     if (serialNumber) filter.serial_number = new RegExp(serialNumber, 'i');
     if (macAddress) filter.mac_address = new RegExp(macAddress, 'i');
     // product_type removed
-    if (productName) filter.product_name = new RegExp(productName, 'i');
+    if (productName) {
+      const escaped = productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.product_name = new RegExp(`^${escaped}$`, 'i');
+    }
     if (ticketNumber) filter.ticket_number = new RegExp(ticketNumber, 'i');
     if (rfid) filter.rfid = new RegExp(rfid, 'i');
     if (qrCode) filter.qr_code = new RegExp(qrCode, 'i');
@@ -671,8 +674,9 @@ router.get('/template', async (req, res) => {
     const wb = xlsx.utils.book_new();
 
     const headers = [
+      'Category',
+      'Product Type',
       'Product Name',
-      'Name',
       'Model Number',
       'Serial Number',
       'MAC Address',
@@ -696,20 +700,21 @@ router.get('/template', async (req, res) => {
 
     // Sheet 2: Sample (headers + one example row)
     const sampleRow = [
-      'Magnetic Locks',
-      'Locks',
-      'mec-1200',
+      'ACCESS CONTROL SYSTEMS',
+      'LOCKS',
+      'MAGNETIC LOCKS',
+      'MEC-1200',
       '1584632152',
       '',
-      'simens',
+      'SIEMENS',
       '-',
       '-',
       '-',
-      'scy Store',
-      'Mobility store-10',
-      'in store',
-      'used',
-      'John Doe',
+      'SCY STORE',
+      'MOBILITY STORE-10',
+      'IN STORE',
+      'USED',
+      'JOHN DOE',
       '2024-01-01 10:00'
     ];
     const wsSample = xlsx.utils.aoa_to_sheet([headers, sampleRow]);
@@ -1100,7 +1105,9 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
       
       let productName = reqProductName || norm['product name'] || norm['product'] || '-';
 
-      // Fallback: If Product Name is empty, use "Asset Type" as it's the specific identifier in user's Excel
+      const categoryFromRow = norm['category'] || '';
+      const typeFromRow = norm['product type'] || norm['producttype'] || '';
+
       if (!productName && (norm['asset type'] || norm['assettype'])) {
         productName = norm['asset type'] || norm['assettype'];
       }
@@ -1112,7 +1119,7 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
       }
       
       // Name fallback strategy
-      const name = norm['asset name'] || norm['name'] || productName || '-';
+      const name = productName || '-';
       
       const model = norm['model number'] || norm['model'] || '-';
       const serial = norm['serial number'] || norm['serial'] || '-';
@@ -1171,6 +1178,29 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
         storeId = req.activeStore;
       }
       
+      // Uppercase enforcement: if any field with letters contains lowercase, mark row invalid
+      const hasLower = (s) => /[a-z]/.test(String(s || ''));
+      const uppercaseViolations = [];
+      if (hasLower(categoryFromRow)) uppercaseViolations.push('Category');
+      if (hasLower(typeFromRow)) uppercaseViolations.push('Product Type');
+      if (hasLower(productName)) uppercaseViolations.push('Product Name');
+      if (hasLower(model)) uppercaseViolations.push('Model Number');
+      if (hasLower(mac)) uppercaseViolations.push('MAC Address');
+      if (hasLower(manufacturer)) uppercaseViolations.push('Manufacturer');
+      if (hasLower(ticketNumber)) uppercaseViolations.push('Ticket Number');
+      if (hasLower(rfid)) uppercaseViolations.push('RFID');
+      if (hasLower(qrCode)) uppercaseViolations.push('QR Code');
+      if (hasLower(location)) uppercaseViolations.push('Location');
+      if (hasLower(deliveredByFromRow)) uppercaseViolations.push('Delivered By');
+      if (hasLower(vendorNameFromRow)) uppercaseViolations.push('Vendor Name');
+      if (uppercaseViolations.length > 0) {
+        invalidRows.push({
+          serial,
+          reason: `Non-capital letters in: ${uppercaseViolations.join(', ')}`
+        });
+        continue;
+      }
+      
       // Hierarchy creation removed from import
       {
         const serialStr = String(serial).trim();
@@ -1209,12 +1239,12 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
         }
 
         assetsToInsert.push({
-          name: capitalizeWords(name),
+          name: String(name || '').toUpperCase(),
           model_number: model,
           serial_number: serialStr,
           serial_last_4: isNA(serialStr) ? '-' : serialStr.slice(-4),
           mac_address: mac,
-          manufacturer: capitalizeWords(manufacturer),
+          manufacturer: String(manufacturer || '').toUpperCase(),
           ticket_number: ticketNumber,
           rfid,
           qr_code: qrCode,
@@ -1222,9 +1252,9 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
           store: storeId,
           status,
           condition,
-          product_name: capitalizeWords(productName),
+          product_name: productName,
           source: reqSource,
-          location: capitalizeWords(location),
+          location: String(location || '').toUpperCase(),
           vendor_name: vendorNameFromRow || reqVendorName || '',
           delivered_by_name: deliveredByFromRow || reqDeliveredByName || '',
           delivered_at: deliveredAtDate
@@ -1302,12 +1332,12 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
         console.error('Bulk insert error:', e?.message || e);
       }
       const suffix = invalidRows.length
-        ? `, ${invalidRows.length} row(s) skipped due to invalid location`
+        ? `, ${invalidRows.length} row(s) skipped due to invalid formatting/capitalization`
         : '';
       res.json({ message: `${toInsert.length} assets processed${suffix}`, skipped_duplicates: duplicates, invalid_rows: invalidRows });
     } else {
       const msg = invalidRows.length
-        ? `No valid assets found to import. ${invalidRows.length} row(s) skipped due to invalid location`
+        ? `No valid assets found to import. ${invalidRows.length} row(s) skipped due to invalid formatting/capitalization`
         : 'No valid assets found to import';
       res.status(400).json({ message: msg, skipped_duplicates: duplicates, invalid_rows: invalidRows });
     }

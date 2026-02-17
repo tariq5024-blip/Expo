@@ -5,12 +5,14 @@ import api from '../api/axios';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
 
-const flattenProducts = (list, level = 0) => {
+const flattenProducts = (list, level = 0, ancestors = []) => {
   const out = [];
   (list || []).forEach(p => {
-    out.push({ ...p, level });
+    const pathParts = [...ancestors, p.name];
+    const fullPath = pathParts.join(' / ');
+    out.push({ ...p, level, fullPath });
     if (p.children && p.children.length > 0) {
-      out.push(...flattenProducts(p.children, level + 1));
+      out.push(...flattenProducts(p.children, level + 1, pathParts));
     }
   });
   return out;
@@ -383,7 +385,9 @@ const Assets = () => {
   };
 
   const handleInputChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    const up = typeof value === 'string' ? value.toUpperCase() : value;
+    setFormData({ ...formData, [name]: up });
   };
 
   const handleSave = async () => {
@@ -416,7 +420,9 @@ const Assets = () => {
   };
   
   const handleAddChange = (e) => {
-    setAddForm({ ...addForm, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    const up = typeof value === 'string' ? value.toUpperCase() : value;
+    setAddForm({ ...addForm, [name]: up });
   };
   const handleAddSubmit = async () => {
     // Validate required fields (Store is optional now)
@@ -722,7 +728,7 @@ const Assets = () => {
             </div>
           )}
           <div className="mt-2 text-sm text-gray-600">
-            Excel headers supported: Asset Type, Model, Serial, MAC, Manufacturer, Ticket, RFID, QR Code, Store, Location, Status
+            Excel headers supported: Category, Product Type, Product Name, Model, Serial, MAC, Manufacturer, Ticket, RFID, QR Code, Store, Location, Status, Condition
           </div>
         </div>
       )}
@@ -748,7 +754,7 @@ const Assets = () => {
                   <option value="">Select Product</option>
                   {flatProducts.map(p => (
                     <option key={p._id || p.name} value={p.name}>
-                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                        {p.fullPath}
                     </option>
                   ))}
                 </select>
@@ -1335,7 +1341,7 @@ const Assets = () => {
                          const val = e.target.value;
                          setSelectedProduct(val);
                          if (val) {
-                            setFormData(prev => ({ ...prev, name: val, model_number: val }));
+                            setFormData(prev => ({ ...prev, name: String(val).toUpperCase(), model_number: String(val).toUpperCase() }));
                          }
                       }}
                       className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
@@ -1343,7 +1349,7 @@ const Assets = () => {
                       <option value="">Select Product</option>
                       {flatProducts.map(p => (
                         <option key={p._id || p.name} value={p.name}>
-                          {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                          {p.fullPath}
                         </option>
                       ))}
                     </select>
@@ -1511,7 +1517,7 @@ const Assets = () => {
                          const val = e.target.value;
                          setSelectedProduct(val);
                          if (val) {
-                            setAddForm(prev => ({ ...prev, name: val, model_number: val }));
+                            setAddForm(prev => ({ ...prev, name: String(val).toUpperCase(), model_number: String(val).toUpperCase() }));
                          }
                       }}
                       className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
@@ -1695,7 +1701,7 @@ const Assets = () => {
                       <option value="">No change</option>
                       {flatProducts.map(p => (
                         <option key={p._id || p.name} value={p.name}>
-                          {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                          {p.fullPath}
                         </option>
                       ))}
                     </select>

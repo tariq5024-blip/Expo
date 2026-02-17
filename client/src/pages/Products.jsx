@@ -84,11 +84,15 @@ const Products = ({ readOnly = false }) => {
     }
   };
 
-  const flatten = (list, level = 0) => {
+  const flatten = (list, level = 0, ancestors = []) => {
     const out = [];
     (list || []).forEach(p => {
-      out.push({ ...p, level });
-      if (p.children && p.children.length > 0) out.push(...flatten(p.children, level + 1));
+      const pathParts = [...ancestors, p.name];
+      const fullPath = pathParts.join(' / ');
+      out.push({ ...p, level, fullPath });
+      if (p.children && p.children.length > 0) {
+        out.push(...flatten(p.children, level + 1, pathParts));
+      }
     });
     return out;
   };
@@ -212,7 +216,7 @@ const Products = ({ readOnly = false }) => {
                   <option value="">Root level</option>
                   {flatProducts.map(p => (
                     <option key={p._id} value={p._id}>
-                      {p.level > 0 ? '\u00A0'.repeat(p.level * 4) + '└ ' : ''}{p.name}
+                      {p.fullPath}
                     </option>
                   ))}
                 </select>

@@ -34,3 +34,7 @@ client/.env
 # Uploads
 server/uploads/
 !server/uploads/.gitkeep
+
+# Backups and archives
+backups/
+*.zip

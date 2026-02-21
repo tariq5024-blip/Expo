@@ -1,21 +1,20 @@
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Session = require('../models/Session');
 
 const protect = async (req, res, next) => {
   try {
-    let token = req.cookies?.jwt;
+    const sid = req.cookies?.sid;
 
-    // Also check Authorization header
-    if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
+    if (!sid) {
+      return res.status(401).json({ message: 'Not authorized, no session' });
     }
 
-    if (!token) {
-      return res.status(401).json({ message: 'Not authorized, no token' });
+    const now = new Date();
+    const session = await Session.findOne({ sid, expiresAt: { $gt: now } }).lean();
+    if (!session) {
+      return res.status(401).json({ message: 'Session expired or invalid' });
     }
-    const secret = process.env.JWT_SECRET || 'dev-secret';
-    const decoded = jwt.verify(token, secret);
-    req.user = await User.findById(decoded.id).select('-password');
+    req.user = await User.findById(session.user).select('-password');
     if (!req.user) {
       return res.status(401).json({ message: 'User not found' });
     }

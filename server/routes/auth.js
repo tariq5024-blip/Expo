@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
@@ -8,13 +8,7 @@ const path = require('path');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 
-// Generate JWT (with dev fallback secret)
-const generateToken = (id) => {
-  const secret = process.env.JWT_SECRET || 'dev-secret';
-  return jwt.sign({ id }, secret, {
-    expiresIn: '30d',
-  });
-};
+const Session = require('../models/Session');
 
 // Login rate limiter (relaxed for internal use)
 const loginLimiter = rateLimit({
@@ -51,13 +45,16 @@ router.post('/login',
     }).populate('assignedStore');
 
     if (user && (await bcrypt.compare(password, user.password))) {
-      const token = generateToken(user._id);
-      res.cookie('jwt', token, {
+      const sid = crypto.randomBytes(32).toString('hex');
+      const maxAgeMs = parseInt(process.env.SESSION_MAX_AGE_MS || `${30 * 24 * 60 * 60 * 1000}`, 10);
+      const expires = new Date(Date.now() + maxAgeMs);
+      await Session.create({ sid, user: user._id, expiresAt: expires });
+      res.cookie('sid', sid, {
         httpOnly: true,
-        secure: false, // Force false for local dev
-        sameSite: 'lax', // Relax for local dev
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
         path: '/',
-        maxAge: 30 * 24 * 60 * 60 * 1000
+        maxAge: maxAgeMs
       });
       res.json({
         _id: user.id,
@@ -78,7 +75,11 @@ router.post('/login',
 // @route   POST /api/auth/logout
 // @access  Public
 router.post('/logout', (req, res) => {
-  res.clearCookie('jwt', { path: '/', secure: false, sameSite: 'lax' });
+  const sid = req.cookies?.sid;
+  if (sid) {
+    Session.deleteOne({ sid }).catch(() => {});
+  }
+  res.clearCookie('sid', { path: '/', secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.status(200).json({ message: 'Logged out' });
 });
 

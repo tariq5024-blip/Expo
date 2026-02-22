@@ -11,7 +11,8 @@ services:
       - PORT=5000
       - MONGO_URI=mongodb://mongo:27017/expo_stores?retryWrites=true&w=majority
       - SESSION_MAX_AGE_MS=2592000000
-      - COOKIE_SECURE=false
+      - COOKIE_SECURE=true
+      - ENABLE_CSRF=true
     ports:
       - "5000:5000"
     depends_on:

@@ -9,6 +9,7 @@ const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 
 const Session = require('../models/Session');
+const cookieSecure = String(process.env.COOKIE_SECURE || '').toLowerCase() === 'true';
 
 // Login rate limiter (relaxed for internal use)
 const loginLimiter = rateLimit({
@@ -51,7 +52,7 @@ router.post('/login',
       await Session.create({ sid, user: user._id, expiresAt: expires });
       res.cookie('sid', sid, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: cookieSecure,
         sameSite: 'lax',
         path: '/',
         maxAge: maxAgeMs
@@ -79,7 +80,7 @@ router.post('/logout', (req, res) => {
   if (sid) {
     Session.deleteOne({ sid }).catch(() => {});
   }
-  res.clearCookie('sid', { path: '/', secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
+  res.clearCookie('sid', { path: '/', secure: cookieSecure, sameSite: 'lax' });
   res.status(200).json({ message: 'Logged out' });
 });
 

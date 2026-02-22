@@ -1,91 +1,160 @@
-# Store Management System
+# Expo Asset Management (MERN)
 
-A complete MERN stack application for managing inventory across multiple stores.
+Production‑ready asset and store management system with session‑based authentication, Super Admin portal, branding customization, backup/restore, and first‑class Docker + GitHub Actions deployment.
 
-## Features
+## Highlights
 
-- **Admin Dashboard**: Analytics with Recharts.
-- **Asset Management**: CRUD assets, Bulk upload via Excel, Export reports.
-- **Technician Portal**: Mobile-optimized scanner using `html5-qrcode`.
-- **Stores Management**: Manage store locations.
-- **Technician Management**: Manage technician accounts.
-- **Authentication**: JWT-based auth with Role-Based Access Control (Admin/Technician).
+- Asset lifecycle and inventory across multiple stores
+- Admin and Technician portals (mobile‑friendly scanner via html5‑qrcode)
+- Session‑based auth with role control (Super Admin, Admin, Technician)
+- Super Admin Portal (/portal): seed stores, reset utilities, backup/restore
+- Branding: upload a custom application logo and live favicon update
+- Secure Express best‑practices (helmet, rate limits, mongo‑sanitize)
+- One‑command production via Docker Compose
+- GitHub Actions workflow for remote Docker deployments over SSH
 
-## Setup
+## Monorepo Layout
 
-### Prerequisites
-- Node.js
-- MongoDB (running locally on default port 27017)
+- server/ — Express API, MongoDB models, routes, and static serving
+- client/ — React app (Vite, Tailwind)
+- Dockerfile, docker-compose.yml — Production build & run
+- .github/workflows/deploy.yml — SSH deploy using Docker Compose
 
-### Installation
+## Quick Start (Local Dev)
 
-1.  **Clone the repository** (if applicable)
-2.  **Install Dependencies**
+Prerequisites:
+- Node.js 18+
+- MongoDB running locally (or use docker-compose below)
 
-    ```bash
-    # Server
-    cd server
-    npm install
+Install and run:
 
-    # Client
-    cd ../client
-    npm install
-    ```
+```bash
+# From project root
+npm run install:all
+npm run dev
+```
 
-3.  **Environment Variables**
-    
-    The server comes with a pre-configured `.env` file:
-    ```
-    MONGO_URI=mongodb://localhost:27017/expostores
-    JWT_SECRET=supersecretkey123
-    PORT=5000
-    ```
+This starts:
+- API on http://localhost:5000
+- Vite dev client on http://localhost:5173
 
-4.  **Database Seeding**
-    
-    The server automatically seeds the default stores upon the first connection.
+Default data:
+- On first run, the system seeds default stores and ensures a Super Admin exists.
 
-### Running the Application
+## Environment Variables (server/.env)
 
-1.  **Start the Backend Server**
-    
-    ```bash
-    cd server
-    npm run dev
-    ```
-    Server runs on `http://localhost:5000`
+Copy and adjust:
 
-2.  **Start the Frontend Client**
-    
-    ```bash
-    cd client
-    npm run dev
-    ```
-    Client runs on `http://localhost:5173` (or similar)
+```bash
+cp server/.env.example server/.env
+```
 
-## Default Usage
+Key variables:
+- MONGO_URI=mongodb://127.0.0.1:27017/expo-stores
+- PORT=5000
+- NODE_ENV=development
+- SESSION_MAX_AGE_MS=2592000000
+- COOKIE_SECURE=false                  # true in production over HTTPS
+- COOKIE_SECRET=<random_32_bytes>
+- CORS_ORIGIN=http://localhost:5173    # Dev client origin
+- SMTP_* (optional for emails)
+- EMERGENCY_RESET_SECRET=emergency_unlock  # Dev only
 
-1.  **Create an Admin Account**
-    
-    Since there is no default admin, you can create one by manually using Postman or by temporarily allowing public registration (not enabled by default). 
-    
-    *Recommendation*: Use a tool like MongoDB Compass to insert an initial admin user or modify the code temporarily to seed an admin user.
-    
-    **Seeding Admin User (Optional Script):**
-    You can create a `seedAdmin.js` in server root if needed.
+## Production with Docker Compose
 
-    For now, use the API directly or add a script.
+Build and run:
 
-    **Quick Fix for First Run:**
-    The system doesn't have a registration page (it's an internal tool). 
-    You might want to add a temporary seed for an admin user in `server.js` if no users exist.
+```bash
+docker compose build
+docker compose up -d
+```
+
+Services:
+- web (Node 18): serves API on port 5000 and static client built from client/dist
+- mongo (MongoDB 6): data persisted in a named volume
+
+Ports:
+- http://<host>:5000
+- MongoDB available at 27017 (host) if you keep the port mapping
+
+Logs and status:
+
+```bash
+docker compose ps
+docker compose logs -f web
+```
+
+## CI/CD: GitHub Actions (Deploy via SSH + Docker Compose)
+
+Workflow: `.github/workflows/deploy.yml`
+- Trigger: push to `main` (or manual)
+- Action: SSH to your server, clone/update the repo in `/srv/expo-asset`, ensure Docker/Compose is installed, then `docker compose build && docker compose up -d`
+
+Repository secrets (Settings → Secrets and variables → Actions):
+- `SSH_HOST` — server IP or hostname
+- `SSH_USER` — deploy user (e.g., ubuntu)
+- `SSH_PRIVATE_KEY` — private key (ed25519 or RSA) contents
+- `SSH_PORT` — SSH port (e.g., 22)
+
+Alternatively, you can use a password instead of a private key:
+- `SSH_PASSWORD` — password for SSH_USER (leave SSH_PRIVATE_KEY empty)
+
+Server prerequisites:
+- Linux machine with SSH access
+- Docker Engine and docker‑compose plugin (workflow installs them if missing on apt‑based distros)
+
+Verification after a run:
+
+```bash
+ssh $SSH_USER@$SSH_HOST -p $SSH_PORT
+cd /srv/expo-asset
+docker compose ps
+docker compose logs -f web
+```
+
+## Branding: Custom Application Logo
+
+- Super Admin page: http://<host>:5000/portal
+- Under “Admin Utilities” → “Customize Application Logo”
+- Accepts PNG/JPG/SVG up to 2 MB
+- Stored at `/uploads/branding/...` and published through `/api/system/public-config`
+- The client pulls the logo at startup and updates the favicon automatically
+- Fallback is `/logo.svg` (client/public)
+
+## Backup & Restore (Super Admin)
+
+- Download backup (JSON): Portal → Admin Utilities → “Download Backup File”
+- Restore from file: Portal → Admin Utilities → “Restore From Backup File”
+- API endpoints (for automation):
+  - `GET /api/system/backup-file` — download full JSON backup (Super Admin)
+  - `POST /api/system/restore-from-file` — upload JSON to restore (Super Admin)
+
+## Security Notes
+
+- Set `COOKIE_SECURE=true` and serve over HTTPS in production
+- CSRF protection can be enabled for production (middleware hook in server.js)
+- Emergency reset route is disabled in production and gated by `EMERGENCY_RESET_SECRET` in non‑prod
+- Sessions include a TTL index to auto‑expire in MongoDB
+
+## Scripts Reference (root)
+
+```json
+{
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "cd server && npm install && cd ../client && npm install && npm run build",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "build:prod": "npm ci --omit=dev && cd client && npm ci --omit=dev && npm run build",
+    "start:prod": "NODE_ENV=production node server/server.js"
+  }
+}
+```
 
 ## Tech Stack
 
-- **MongoDB**: Database
-- **Express**: Backend Framework
-- **React**: Frontend Library (Vite)
-- **Node.js**: Runtime
-- **Tailwind CSS**: Styling
-- **Recharts**: Charts
-- **XLSX**: Excel processing
+- MongoDB, Mongoose
+- Express (helmet, rate limit, sanitize)
+- React (Vite, Tailwind)
+- Multer, Sharp (image handling)
+- Winston (logging)
+- Docker, GitHub Actions

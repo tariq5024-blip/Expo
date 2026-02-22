@@ -114,11 +114,14 @@ router.get('/csrf-token', (req, res) => {
 
 // @desc    Emergency Super Admin Reset (Dev Only)
 // @route   GET /api/auth/emergency-reset-superadmin
-// @access  Public (Protected by secret)
+// @access  Restricted by env and secret
 router.get('/emergency-reset-superadmin', async (req, res) => {
-  const { secret } = req.query;
-  
-  if (secret !== 'emergency_unlock') {
+  const param = req.query?.secret;
+  const secret = process.env.EMERGENCY_RESET_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ message: 'Forbidden in production.' });
+  }
+  if (!secret || param !== secret) {
     return res.status(403).json({ message: 'Forbidden: Invalid secret key.' });
   }
 

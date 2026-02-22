@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 const Layout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const { user } = useAuth();
+  const { user, branding } = useAuth();
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -42,7 +42,7 @@ const Layout = () => {
             {user?.role === 'Technician' ? (
               <span className="font-bold text-lg">Expo City Dubai</span>
             ) : (
-              <img src="/logo.svg" alt="Expo City Dubai" className="h-8" />
+              <img src={branding?.logoUrl || '/logo.svg'} alt="Expo City Dubai" className="h-8" />
             )}
             {user?.role === 'Admin' && (
               <Link to="/setup" className="text-white p-1">

@@ -17,8 +17,35 @@ const Permit = require('../models/Permit');
 const AssetCategory = require('../models/AssetCategory');
 const bcrypt = require('bcryptjs');
 const { backupDatabase } = require('../backup_db');
+const Setting = require('../models/Setting');
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+// Branding logo upload (disk storage)
+const brandingDir = path.join(__dirname, '../uploads/branding');
+if (!fs.existsSync(brandingDir)) {
+  fs.mkdirSync(brandingDir, { recursive: true });
+}
+const brandingStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, brandingDir),
+  filename: (req, file, cb) => {
+    const ts = Date.now();
+    const extMatch = file.originalname.match(/\.[a-zA-Z0-9]+$/);
+    const ext = extMatch ? extMatch[0].toLowerCase() : '';
+    cb(null, `app-logo-${ts}${ext}`);
+  }
+});
+const allowedMime = new Set(['image/png', 'image/jpeg', 'image/svg+xml']);
+const brandingUpload = multer({
+  storage: brandingStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (req, file, cb) => {
+    if (!allowedMime.has(file.mimetype)) {
+      return cb(new Error('Invalid file type. Allowed: PNG, JPG, SVG'));
+    }
+    cb(null, true);
+  }
+});
 
 // Simple in-process lock to prevent concurrent resets
 let RESET_LOCK = false;
@@ -64,6 +91,51 @@ router.get('/storage', protect, admin, async (req, res) => {
   } catch (error) {
     console.error('Error fetching storage stats:', error);
     res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Public configuration (branding, etc.)
+// @route   GET /api/system/public-config
+// @access  Public
+router.get('/public-config', async (req, res) => {
+  try {
+    const setting = await Setting.findOne({ key: 'logoUrl' }).lean();
+    const logoUrl = setting?.value || '/logo.svg';
+    res.json({ logoUrl });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Upload/replace application logo (Super Admin only)
+// @route   POST /api/system/logo
+// @access  Private/SuperAdmin
+router.post('/logo', protect, superAdmin, brandingUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Logo file is required' });
+    }
+    // Optionally, remove very old logos to save space (keep latest 5)
+    try {
+      const files = fs.readdirSync(brandingDir).filter(f => f.startsWith('app-logo-'));
+      files.sort(); // oldest first by name since includes timestamp
+      while (files.length > 5) {
+        const toDelete = files.shift();
+        if (toDelete) {
+          fs.unlinkSync(path.join(brandingDir, toDelete));
+        }
+      }
+    } catch {}
+
+    const relativeUrl = `/uploads/branding/${req.file.filename}`;
+    await Setting.updateOne(
+      { key: 'logoUrl' },
+      { $set: { value: relativeUrl, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ message: 'Logo updated', logoUrl: relativeUrl });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 });
 

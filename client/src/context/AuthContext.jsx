@@ -13,6 +13,22 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [activeStore, setActiveStore] = useState(null);
   const [globalLoading, setGlobalLoading] = useState(false);
+  const [branding, setBranding] = useState({ logoUrl: '/logo.svg' });
+
+  const setFavicon = (href) => {
+    try {
+      const head = document.head || document.getElementsByTagName('head')[0];
+      // Remove existing favicons
+      Array.from(document.querySelectorAll('link[rel~=\"icon\"], link[rel=\"mask-icon\"]')).forEach(el => el.parentNode.removeChild(el));
+      const link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = href.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
+      link.href = href;
+      head.appendChild(link);
+    } catch (e) {
+      // Non-blocking
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -22,6 +38,18 @@ export const AuthProvider = ({ children }) => {
         console.error('CSRF token fetch failed:', error);
       }
     })();
+
+    const fetchBranding = async () => {
+      try {
+        const res = await api.get('/system/public-config');
+        const logoUrl = res.data?.logoUrl || '/logo.svg';
+        setBranding({ logoUrl });
+        setFavicon(logoUrl);
+      } catch (e) {
+        setBranding({ logoUrl: '/logo.svg' });
+        setFavicon('/logo.svg');
+      }
+    };
 
     const verifySession = async () => {
       const storedUser = localStorage.getItem('user');
@@ -48,6 +76,7 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     };
 
+    fetchBranding();
     verifySession();
   }, []);
 
@@ -100,7 +129,19 @@ export const AuthProvider = ({ children }) => {
     logout,
     selectStore,
     loading,
-    globalLoading
+    globalLoading,
+    branding,
+    refreshBranding: async () => {
+      try {
+        const res = await api.get('/system/public-config');
+        const logoUrl = res.data?.logoUrl || '/logo.svg';
+        setBranding({ logoUrl });
+        setFavicon(logoUrl);
+      } catch {
+        setBranding({ logoUrl: '/logo.svg' });
+        setFavicon('/logo.svg');
+      }
+    }
   };
 
   return (

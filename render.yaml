@@ -10,5 +10,7 @@ services:
         value: production
       - key: MONGO_URI
         sync: false
-      - key: JWT_SECRET
+      - key: COOKIE_SECRET
         sync: false
+      - key: SESSION_MAX_AGE_MS
+        value: 2592000000

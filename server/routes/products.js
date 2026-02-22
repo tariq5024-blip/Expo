@@ -2,11 +2,22 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
+const path = require('path');
 const { protect, admin } = require('../middleware/authMiddleware');
 const Product = require('../models/Product');
 const Asset = require('../models/Asset');
 
-const upload = multer({ dest: 'server/uploads/' });
+// Ensure uploads are placed under server/uploads relative to this file
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, 'uploads'));
+  },
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, `${unique}-${file.originalname.replace(/\s+/g, '_')}`);
+  }
+});
+const upload = multer({ storage });
 
 async function resizeImage(filePath) {
   try {
@@ -50,7 +61,7 @@ router.post('/', protect, admin, upload.single('image'), async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ message: 'Name is required' });
   try {
     if (req.file) await resizeImage(req.file.path);
-    const image = req.file ? `/uploads/${req.file.filename}` : '';
+    const image = req.file ? `/uploads/${path.basename(req.file.path)}` : '';
     const query = { name: new RegExp(`^${name}$`, 'i') };
     if (req.activeStore) query.store = req.activeStore;
     const exists = await Product.findOne(query);
@@ -87,15 +98,16 @@ router.put('/:id', protect, admin, upload.single('image'), async (req, res) => {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: 'Product not found' });
     const { name } = req.body;
+    const oldName = product.name;
     if (name) product.name = name;
     if (req.file) {
       await resizeImage(req.file.path);
-      product.image = `/uploads/${req.file.filename}`;
+      product.image = `/uploads/${path.basename(req.file.path)}`;
     }
     const updated = await product.save();
     // Update assets if name changed
     if (name) {
-      await Asset.updateMany({ product_name: product.name }, { $set: { product_name: name } });
+      await Asset.updateMany({ product_name: oldName }, { $set: { product_name: name } });
     }
     res.json(updated);
   } catch (err) {

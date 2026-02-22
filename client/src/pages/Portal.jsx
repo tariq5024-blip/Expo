@@ -7,7 +7,7 @@ import AddMembers from './AddMembers';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 
 const Portal = () => {
-  const { user, selectStore, activeStore, logout } = useAuth();
+  const { user, selectStore, activeStore, logout, branding, refreshBranding } = useAuth();
   const navigate = useNavigate();
   const [stores, setStores] = useState([]);
   const [deletionRequests, setDeletionRequests] = useState([]);
@@ -197,7 +197,7 @@ const Portal = () => {
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 md:h-20 flex items-center justify-between">
           <div className="flex items-center gap-3 md:gap-4">
-             <img src="/logo.svg" alt="Expo City Dubai" className="h-10 md:h-14 w-auto" />
+             <img src={(branding?.logoUrl) || '/logo.svg'} alt="Expo City Dubai" className="h-10 md:h-14 w-auto" />
              <div>
                <h1 className="text-lg md:text-xl font-bold tracking-tight text-slate-900 uppercase drop-shadow-sm leading-tight">Expo City Dubai</h1>
                <div className="flex items-center gap-2">
@@ -412,6 +412,52 @@ const Portal = () => {
                </div>
                <Settings size={18} className="ml-auto text-slate-400 group-hover:text-red-500 group-hover:rotate-45 transition-all md:w-[20px] md:h-[20px]" />
              </div>
+            
+            {/* Customize Application Logo */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm">
+              <div className="flex items-center gap-4 md:gap-5">
+                <div className="p-3 md:p-4 bg-amber-50 rounded-lg text-amber-600 border border-amber-100">
+                  <Settings size={20} className="md:w-[24px] md:h-[24px]" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base md:text-lg font-bold text-slate-900 mb-1">Customize Application Logo</h3>
+                  <p className="text-slate-500 text-xs md:text-sm mb-3">Upload PNG, JPG, or SVG. Max 2 MB.</p>
+                  <div className="flex items-center gap-4">
+                    <img src={branding?.logoUrl || '/logo.svg'} alt="Current Logo" className="h-10 w-auto rounded border border-slate-200 p-1 bg-white" />
+                    <label className="inline-flex items-center px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 cursor-pointer text-sm font-medium border border-slate-200">
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 2 * 1024 * 1024) {
+                            alert('File too large. Max size is 2 MB.');
+                            e.target.value = '';
+                            return;
+                          }
+                          const form = new FormData();
+                          form.append('logo', file);
+                          try {
+                            await api.post('/system/logo', form, {
+                              headers: { 'Content-Type': 'multipart/form-data' }
+                            });
+                            await refreshBranding();
+                            alert('Logo updated successfully.');
+                          } catch (err) {
+                            alert(err.response?.data?.message || 'Upload failed');
+                          } finally {
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                      <span>Select Logo…</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </main>

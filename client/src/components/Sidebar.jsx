@@ -96,7 +96,7 @@ SidebarItem.propTypes = {
 };
 
 const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
-  const { user, logout, activeStore } = useAuth();
+  const { user, logout, activeStore, branding } = useAuth();
   const location = useLocation();
   const [openSubMenu, setOpenSubMenu] = useState({});
   const [productsTree, setProductsTree] = useState([]);
@@ -279,13 +279,13 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
 
         {!isCollapsed ? (
           <div className="mt-6 flex flex-col items-center w-full">
-            <img src="/logo.svg" alt="Expo City Dubai" className="h-14 w-auto" />
+            <img src={branding?.logoUrl || '/logo.svg'} alt="Expo City Dubai" className="h-14 w-auto" />
             <p className={`text-sm ${theme.logoText} mt-3 text-center font-medium`}>{user?.name}</p>
             <p className={`text-xs ${theme.storeText} font-bold uppercase tracking-wider text-center mt-1`}>{activeStore?.name || user?.role}</p>
           </div>
         ) : (
           <div className="mt-10 flex justify-center w-full">
-             <img src="/logo.svg" alt="Expo City Dubai" className="h-8 w-auto" />
+            <img src={branding?.logoUrl || '/logo.svg'} alt="Expo City Dubai" className="h-8 w-auto" />
           </div>
         )}
       </div>

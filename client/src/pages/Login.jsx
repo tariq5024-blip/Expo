@@ -7,7 +7,7 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, user, loading: authLoading } = useAuth();
+  const { login, user, loading: authLoading, branding } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -55,7 +55,7 @@ const Login = () => {
       <div className="w-full max-w-md px-6 relative z-10">
         {/* Logo Section */}
         <div className="flex flex-col items-center mb-8">
-           <img src="/logo.svg" alt="Expo City Dubai" className="h-24 w-auto mb-4 drop-shadow-sm" />
+           <img src={branding?.logoUrl || '/logo.svg'} alt="Expo City Dubai" className="h-24 w-auto mb-4 drop-shadow-sm" />
            <div className="text-center">
              <h1 className="text-2xl font-bold tracking-tight text-slate-900 uppercase">Expo City Dubai</h1>
              <div className="flex items-center justify-center gap-2 mt-2">

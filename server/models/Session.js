@@ -15,8 +15,7 @@ const sessionSchema = new mongoose.Schema({
   },
   expiresAt: {
     type: Date,
-    required: true,
-    index: true
+    required: true
   },
   createdAt: {
     type: Date,
@@ -27,5 +26,8 @@ const sessionSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+// TTL index to automatically expire sessions at expiresAt
+sessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.model('Session', sessionSchema);

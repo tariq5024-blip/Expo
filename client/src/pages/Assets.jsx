@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Edit, Trash2, UserCheck, UserX } from 'lucide-react';
+import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw } from 'lucide-react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
@@ -33,6 +33,8 @@ const Assets = () => {
   const [file, setFile] = useState(null);
   const [allowDup, setAllowDup] = useState(false);
   const [importInfo, setImportInfo] = useState(null);
+  const [importStep, setImportStep] = useState('select');
+  const [importPreview, setImportPreview] = useState(null);
   const [forceLoading, setForceLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
   const [bulkLocationId, setBulkLocationId] = useState('');
@@ -53,6 +55,78 @@ const Assets = () => {
 
   const openConfirm = (title, message, onConfirm, type = 'danger', confirmText = 'Confirm') => {
     setConfirmModal({ isOpen: true, title, message, onConfirm, type, confirmText });
+  };
+
+  const handleConfirmImport = async () => {
+    if (!Array.isArray(importPreview) || importPreview.length === 0) return;
+    try {
+      setManualLoading(true);
+      // Reuse the original file and let server perform robust parsing/upsert
+      const form = new FormData();
+      form.append('file', file);
+      if (selectedProduct) form.append('product_name', selectedProduct);
+      if (bulkLocationId) {
+        const loc = stores.find(s => s._id === bulkLocationId);
+        if (loc) form.append('location', loc.name);
+      }
+      const res = await api.post('/assets/import', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setImportInfo({ message: res.data?.message || 'Import complete', warnings: res.data?.skipped_duplicates || [], invalid_rows: res.data?.invalid_rows || [] });
+      alert(res.data?.message || 'Import completed');
+      setShowImportModal(false);
+      setImportPreview(null);
+      setImportStep('select');
+      setFile(null);
+      fetchAssets(undefined, { silent: true });
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to import assets');
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const handleExportSelected = async () => {
+    if (!selectedIds.length) return;
+    const rows = assets.filter(a => selectedIds.includes(a._id)).map(a => {
+      const out = {
+        'Unique ID': a.uniqueId || '',
+        'Name': a.name || '',
+        'Product Name': a.product_name || '',
+        'Model Number': a.model_number || '',
+        'Serial Number': a.serial_number || '',
+        'Serial Last 4': a.serial_last_4 || '',
+        'MAC Address': a.mac_address || '',
+        'Manufacturer': a.manufacturer || '',
+        'Ticket Number': a.ticket_number || '',
+        'RFID': a.rfid || '',
+        'QR Code': a.qr_code || '',
+        'Status': a.status || '',
+        'Previous Status': a.previous_status || '',
+        'Condition': a.condition || '',
+        'Quantity': a.quantity ?? '',
+        'Price': typeof a.price === 'number' ? a.price : '',
+        'Vendor Name': a.vendor_name || '',
+        'Source': a.source || '',
+        'Delivered By': a.delivered_by_name || '',
+        'Delivered At': a.delivered_at ? new Date(a.delivered_at).toLocaleString() : '',
+        'Store': a.store?.parentStore?.name || a.store?.name || '',
+        'Location': a.location || '',
+        'Assigned To': a.assigned_to?.name || a.assigned_to_external?.name || '',
+        'Updated At': a.updatedAt ? new Date(a.updatedAt).toLocaleString() : '',
+        'Created At': a.createdAt ? new Date(a.createdAt).toLocaleString() : ''
+      };
+      return out;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Selected Assets');
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'selected_assets.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const closeConfirm = () => {
@@ -137,6 +211,59 @@ const Assets = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [fullProducts, setFullProducts] = useState([]);
   const [manualLoading, setManualLoading] = useState(false);
+  const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState({
+    uniqueId: true,
+    name: true,
+    model: true,
+    serial: true,
+    serialLast4: true,
+    ticket: true,
+    poNumber: true,
+    mac: true,
+    rfid: true,
+    qr: true,
+    manufacturer: true,
+    condition: true,
+    status: true,
+    prevStatus: true,
+    store: true,
+    location: true,
+    quantity: true,
+    vendor: true,
+    source: true,
+    deliveredBy: true,
+    deliveredAt: true,
+    assignedTo: true,
+    dateTime: true,
+    action: true,
+    price: true
+  });
+
+  const handleTopEdit = () => {
+    if (selectedIds.length === 0) return;
+    if (selectedIds.length === 1) {
+      const asset = assets.find(a => a._id === selectedIds[0]);
+      if (asset) handleEditClick(asset);
+    } else {
+      setShowBulkEditModal(true);
+    }
+  };
+
+  const handleTopAssign = () => {
+    if (selectedIds.length !== 1) return;
+    const asset = assets.find(a => a._id === selectedIds[0]);
+    if (asset) handleAssignClick(asset);
+  };
+
+  const handleTopDelete = () => {
+    if (selectedIds.length === 0) return;
+    if (selectedIds.length === 1) {
+      handleDelete(selectedIds[0]);
+    } else {
+      handleBulkDelete();
+    }
+  };
 
   // Sync category & status params from URL
   useEffect(() => {
@@ -235,28 +362,23 @@ const Assets = () => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('allowDuplicates', String(allowDup));
-    // Append hierarchical data if selected
     if (selectedProduct) formData.append('product_name', selectedProduct);
     if (bulkLocationId) {
       const loc = stores.find(s => s._id === bulkLocationId);
       if (loc) formData.append('location', loc.name);
     }
-
     try {
       setManualLoading(true);
-      const res = await api.post('/assets/import', formData);
-      setImportInfo(res.data);
-      alert(res.data?.message || 'Upload completed');
-      setShowImportModal(false); // Close modal on success
-      setFile(null); // Reset file
-      fetchAssets(undefined, { silent: true });
+      const res = await api.post('/assets/import/preview', formData);
+      const preview = res.data?.assets || [];
+      setImportPreview(preview);
+      setImportStep('preview');
     } catch (error) {
       const data = error.response?.data;
       if (data) {
-        setImportInfo(data);
-        alert(data.message || data.error || 'Upload failed');
+        alert(data.message || data.error || 'Preview failed');
       } else {
-        alert('Upload failed');
+        alert('Preview failed');
       }
       console.error('Bulk import error:', error);
     } finally {
@@ -662,7 +784,7 @@ const Assets = () => {
                setAddForm(prev => ({ ...prev, store: activeStore?._id || prev.store, status: prev.status || 'In Store', condition: prev.condition || 'New' }));
                setShowAddModal(true);
              }} 
-             className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded font-medium flex items-center gap-2"
+             className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
            >
              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
@@ -672,26 +794,39 @@ const Assets = () => {
            <button
              onClick={() => setShowBulkEditModal(true)}
              disabled={selectedIds.length === 0}
-             className={`px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded font-medium ${selectedIds.length === 0 ? 'bg-purple-400 text-white cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white'}`}
+             className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg border text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
            >
              Bulk Edit ({selectedIds.length})
            </button>
            <button
              onClick={handleBulkDelete}
              disabled={selectedIds.length === 0 || bulkLoading}
-             className={`px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded font-medium ${selectedIds.length === 0 || bulkLoading ? 'bg-red-400 text-white cursor-not-allowed' : 'bg-red-600 hover:bg-red-700 text-white'}`}
+             className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg border text-sm ${selectedIds.length === 0 || bulkLoading ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
            >
              {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedIds.length})`}
            </button>
-          <button onClick={() => setShowImportModal(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Bulk Import</button>
-          <button onClick={handleDownloadTemplate} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Download Sample</button>
-          <button onClick={handleExport} className="bg-amber-600 hover:bg-amber-700 text-black px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded">Export</button>
+          <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Bulk Import</button>
+          <button onClick={handleDownloadTemplate} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Download Sample</button>
+          <button onClick={handleExport} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Export</button>
         </div>
       </div>
       
       {importInfo && (
         <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-3 rounded mb-4">
           <div>Imported: {importInfo.message}</div>
+          {importInfo.warnings && importInfo.warnings.length > 0 && (
+            <div className="mt-2">
+              <div className="font-semibold text-sm">Warnings:</div>
+              <ul className="text-sm list-disc ml-5">
+                {importInfo.warnings.slice(0, 10).map((w, idx) => (
+                  <li key={idx}>{w}</li>
+                ))}
+              </ul>
+              {importInfo.warnings.length > 10 && (
+                <div className="text-xs text-gray-600 mt-1">and {importInfo.warnings.length - 10} more...</div>
+              )}
+            </div>
+          )}
           {importInfo.skipped_duplicates && importInfo.skipped_duplicates.length > 0 && (
             <div className="mt-2">
               <div className="font-semibold text-sm">Skipped duplicates:</div>
@@ -739,70 +874,128 @@ const Assets = () => {
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl relative">
             <h2 className="text-xl font-bold mb-4">Bulk Import Assets</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Template</label>
-                <div className="flex gap-2">
-                  <button onClick={handleDownloadTemplate} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-2 rounded">Download Sample Sheet</button>
+            {importStep === 'select' && (
+              <>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Template</label>
+                    <div className="flex gap-2">
+                      <button onClick={handleDownloadTemplate} className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-2 rounded">Download Sample Sheet</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Default Product (optional)</label>
+                    <select
+                      value={selectedProduct}
+                      onChange={(e) => setSelectedProduct(e.target.value)}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                    >
+                      <option value="">Select Product</option>
+                      {flatProducts.map(p => (
+                        <option key={p._id || p.name} value={p.name}>
+                            {p.fullPath}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Default Location (optional)</label>
+                    <select
+                      value={bulkLocationId}
+                      onChange={(e) => setBulkLocationId(e.target.value)}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                    >
+                      <option value="">Select Location</option>
+                      {stores.map(s => (
+                        <option key={s._id} value={s._id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="allowDup"
+                      checked={allowDup}
+                      onChange={(e) => setAllowDup(e.target.checked)}
+                    />
+                    <label htmlFor="allowDup" className="text-sm text-gray-700">Allow duplicates in same store</label>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Excel File</label>
+                    <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Default Product (optional)</label>
-                <select
-                  value={selectedProduct}
-                  onChange={(e) => setSelectedProduct(e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
-                >
-                  <option value="">Select Product</option>
-                  {flatProducts.map(p => (
-                    <option key={p._id || p.name} value={p.name}>
-                        {p.fullPath}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Default Location (optional)</label>
-                <select
-                  value={bulkLocationId}
-                  onChange={(e) => setBulkLocationId(e.target.value)}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
-                >
-                  <option value="">Select Location</option>
-                  {stores.map(s => (
-                    <option key={s._id} value={s._id}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="allowDup"
-                  checked={allowDup}
-                  onChange={(e) => setAllowDup(e.target.checked)}
-                />
-                <label htmlFor="allowDup" className="text-sm text-gray-700">Allow duplicates in same store</label>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Excel File</label>
-                <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" />
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => { setShowImportModal(false); setFile(null); }}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleUpload}
-                disabled={manualLoading}
-                className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-              >
-                {manualLoading ? 'Uploading, please wait…' : 'Upload'}
-              </button>
-            </div>
+                <div className="mt-6 flex justify-end space-x-3">
+                  <button
+                    onClick={() => { setShowImportModal(false); setFile(null); }}
+                    className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpload}
+                    disabled={manualLoading}
+                    className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                  >
+                    {manualLoading ? 'Uploading, please wait…' : 'Preview'}
+                  </button>
+                </div>
+              </>
+            )}
+            {importStep === 'preview' && (
+              <>
+                <div className="mb-4 text-sm text-gray-700">
+                  Previewing {importPreview?.length || 0} assets
+                </div>
+                <div className="max-h-80 overflow-auto border rounded">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-2 py-2 text-left">Name</th>
+                        <th className="px-2 py-2 text-left">Model</th>
+                        <th className="px-2 py-2 text-left">Serial</th>
+                        <th className="px-2 py-2 text-left">Status</th>
+                        <th className="px-2 py-2 text-left">Condition</th>
+                        <th className="px-2 py-2 text-left">Location</th>
+                        <th className="px-2 py-2 text-left">Vendor</th>
+                        <th className="px-2 py-2 text-left">Delivered By</th>
+                        <th className="px-2 py-2 text-left">Quantity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(importPreview || []).slice(0, 50).map((a, idx) => (
+                        <tr key={idx} className="border-t">
+                          <td className="px-2 py-2">{a.name}</td>
+                          <td className="px-2 py-2">{a.model_number || '-'}</td>
+                          <td className="px-2 py-2">{a.serial_number || '-'}</td>
+                          <td className="px-2 py-2">{a.status || '-'}</td>
+                          <td className="px-2 py-2">{a.condition || '-'}</td>
+                          <td className="px-2 py-2">{a.location || '-'}</td>
+                          <td className="px-2 py-2">{a.vendor_name || '-'}</td>
+                          <td className="px-2 py-2">{a.delivered_by_name || '-'}</td>
+                          <td className="px-2 py-2">{a.quantity ?? 1}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-6 flex justify-end space-x-3">
+                  <button
+                    onClick={() => { setImportStep('select'); setImportPreview(null); }}
+                    className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleConfirmImport}
+                    disabled={manualLoading}
+                    className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {manualLoading ? 'Importing…' : 'Confirm Import'}
+                  </button>
+                </div>
+              </>
+            )}
             {manualLoading && (
               <div className="absolute inset-0 bg-white/80 flex items-center justify-center rounded-lg">
                 <div className="flex flex-col items-center gap-3">
@@ -815,19 +1008,19 @@ const Assets = () => {
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow p-4 mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="bg-white rounded-xl shadow border border-gray-100 p-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-center">
           <input
             type="text"
             placeholder="Search (Name, Model, Serial, MAC, Unique ID, Manufacturer)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="border p-2 rounded"
+            className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           />
           <select
             value={filterLocation}
             onChange={(e) => setFilterLocation(e.target.value)}
-            className="border p-2 rounded"
+            className="h-10 px-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           >
             <option value="">All Locations</option>
             {stores.map(s => <option key={s._id} value={s.name}>{s.name}</option>)}
@@ -835,7 +1028,7 @@ const Assets = () => {
           <select
             value={filterCondition}
             onChange={(e) => setFilterCondition(e.target.value)}
-            className="border p-2 rounded"
+            className="h-10 px-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           >
             <option value="">All Conditions</option>
             <option value="New">New</option>
@@ -848,7 +1041,7 @@ const Assets = () => {
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="border p-2 rounded"
+            className="h-10 px-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           >
             <option value="">All Statuses</option>
             <option value="In Store">In Store</option>
@@ -857,13 +1050,43 @@ const Assets = () => {
             <option value="Missing">Missing</option>
             <option value="Scrapped">Scrapped</option>
           </select>
-          <div className="flex gap-2">
+          <div className="flex gap-2 sm:col-span-2 lg:col-span-4 items-center">
             <button
               onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-              className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded flex-1 hover:bg-indigo-200"
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
             >
-              {showAdvancedFilters ? 'Hide Filters' : 'More Filters'}
+              <Filter className="w-4 h-4" />
+              {showAdvancedFilters ? 'Hide Filters' : 'Filters'}
             </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowColumnMenu(v => !v)}
+                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                Columns
+              </button>
+              {showColumnMenu && (
+                <div className="absolute z-20 mt-2 right-0 bg-white border border-gray-200 shadow-xl rounded-lg p-3 w-64 max-h-72 overflow-auto">
+                  {[
+                    ['uniqueId','Unique ID'],['name','Name'],['model','Model'],['serial','Serial'],['serialLast4','Serial Last 4'],
+                    ['ticket','Ticket'],['poNumber','PO Number'],['mac','MAC Address'],['rfid','RFID'],['qr','QR Code'],['manufacturer','Manufacturer'],
+                    ['condition','Condition'],['status','Status'],['prevStatus','Prev Status'],['store','Store'],['location','Location'],
+                    ['quantity','Quantity'],['vendor','Vendor'],['source','Source'],['deliveredBy','Delivered By'],['deliveredAt','Delivered At'],
+                    ['assignedTo','Assigned To'],['dateTime','Date & Time'],['price','Price'],['action','Action']
+                  ].map(([key,label]) => (
+                    <label key={key} className="flex items-center gap-2 text-sm py-1 px-1 rounded hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns[key]}
+                        onChange={(e) => setVisibleColumns(prev => ({ ...prev, [key]: e.target.checked }))}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               onClick={() => {
                 setSearchTerm(''); setFilterLocation(''); setFilterStatus(''); setFilterCondition('');
@@ -872,10 +1095,49 @@ const Assets = () => {
                 setFilterTicket(''); setFilterRfid(''); setFilterQr('');
                 setFilterDateFrom(''); setFilterDateTo('');
               }}
-              className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
             >
+              <RotateCcw className="w-4 h-4" />
               Clear
             </button>
+            <button
+              onClick={handleExportSelected}
+              disabled={selectedIds.length === 0}
+              className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+              title="Download selected rows as Excel"
+            >
+              <Download className="w-4 h-4" />
+              Download Selected
+            </button>
+            <div className="ml-auto flex gap-2">
+              <button
+                onClick={handleTopEdit}
+                disabled={selectedIds.length === 0}
+                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+                title="Edit selected (single = Edit; multiple = Bulk Edit)"
+              >
+                <Edit size={16} />
+                {selectedIds.length > 1 ? 'Bulk Edit' : 'Edit'}
+              </button>
+              <button
+                onClick={handleTopAssign}
+                disabled={selectedIds.length !== 1}
+                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length !== 1 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+                title="Assign selected asset"
+              >
+                <UserCheck size={16} />
+                Assign
+              </button>
+              <button
+                onClick={handleTopDelete}
+                disabled={selectedIds.length === 0}
+                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+                title="Delete selected"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
+            </div>
           </div>
         </div>
 
@@ -886,28 +1148,28 @@ const Assets = () => {
               placeholder="Manufacturer"
               value={filterManufacturer}
               onChange={(e) => setFilterManufacturer(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <input
               type="text"
               placeholder="Model Number"
               value={filterModelNumber}
               onChange={(e) => setFilterModelNumber(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <input
               type="text"
               placeholder="Serial Number"
               value={filterSerialNumber}
               onChange={(e) => setFilterSerialNumber(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <input
               type="text"
               placeholder="MAC Address"
               value={filterMacAddress}
               onChange={(e) => setFilterMacAddress(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             {/* Product Type filter removed */}
             <input
@@ -915,28 +1177,28 @@ const Assets = () => {
               placeholder="Product Name"
               value={filterProductName}
               onChange={(e) => setFilterProductName(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <input
               type="text"
               placeholder="Ticket Number"
               value={filterTicket}
               onChange={(e) => setFilterTicket(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <input
               type="text"
               placeholder="RFID"
               value={filterRfid}
               onChange={(e) => setFilterRfid(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <input
               type="text"
               placeholder="QR Code"
               value={filterQr}
               onChange={(e) => setFilterQr(e.target.value)}
-              className="border p-2 rounded"
+              className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500 w-10">From:</span>
@@ -944,7 +1206,7 @@ const Assets = () => {
                 type="date"
                 value={filterDateFrom}
                 onChange={(e) => setFilterDateFrom(e.target.value)}
-                className="border p-2 rounded w-full"
+                className="h-10 px-3 border border-gray-300 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -953,7 +1215,7 @@ const Assets = () => {
                 type="date"
                 value={filterDateTo}
                 onChange={(e) => setFilterDateTo(e.target.value)}
-                className="border p-2 rounded w-full"
+                className="h-10 px-3 border border-gray-300 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </div>
           </div>
@@ -973,84 +1235,114 @@ const Assets = () => {
           <thead>
             <tr className="bg-gray-50 border-b">
               <th className="px-3 py-2 md:px-4 md:py-3 text-center">
-                <input type="checkbox" checked={selectedIds.length === assets.length && assets.length > 0} onChange={toggleSelectAll} />
+                <input onClick={(e) => e.stopPropagation()} type="checkbox" checked={selectedIds.length === assets.length && assets.length > 0} onChange={toggleSelectAll} />
               </th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Unique ID</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-              {/* Category column removed */}
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Model</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Serial</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Ticket</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">MAC Address</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Manufacturer</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Condition</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Store</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Location</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Assigned To</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Date & Time</th>
-              <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+              {visibleColumns.uniqueId && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Unique ID</th>}
+              {visibleColumns.name && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>}
+              {visibleColumns.model && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Model</th>}
+              {visibleColumns.serial && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Serial</th>}
+              {visibleColumns.serialLast4 && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Serial Last 4</th>}
+              {visibleColumns.ticket && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Ticket</th>}
+              {visibleColumns.poNumber && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">PO Number</th>}
+              {visibleColumns.mac && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">MAC Address</th>}
+              {visibleColumns.rfid && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">RFID</th>}
+              {visibleColumns.qr && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">QR Code</th>}
+              {visibleColumns.manufacturer && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Manufacturer</th>}
+              {visibleColumns.condition && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Condition</th>}
+              {visibleColumns.status && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>}
+              {visibleColumns.prevStatus && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Prev Status</th>}
+              {visibleColumns.store && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Store</th>}
+              {visibleColumns.location && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Location</th>}
+              {visibleColumns.quantity && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Quantity</th>}
+              {visibleColumns.vendor && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Vendor</th>}
+              {visibleColumns.source && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Source</th>}
+              {visibleColumns.deliveredBy && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Delivered By</th>}
+              {visibleColumns.deliveredAt && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Delivered At</th>}
+              {visibleColumns.assignedTo && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Assigned To</th>}
+              {visibleColumns.dateTime && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Date & Time</th>}
+              {visibleColumns.price && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Price</th>}
+              {visibleColumns.action && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {assets.map((asset) => (
-              <tr key={asset._id} className={asset.isDuplicate ? 'bg-yellow-100' : ''}>
-                <td className="px-3 py-2 md:px-4 md:py-4 text-center">
+              <tr key={asset._id} className={`hover:bg-gray-50 ${asset.isDuplicate ? 'bg-yellow-100' : ''} cursor-pointer`} onClick={() => window.open(`/asset/${asset._id}`, '_blank')}>
+                <td className="px-3 py-2 md:px-4 md:py-4 text-center" onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={selectedIds.includes(asset._id)} onChange={() => toggleSelect(asset._id)} />
                 </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap font-mono text-xs text-gray-600 text-center hidden lg:table-cell">{asset.uniqueId || '-'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.name}</td>
-                {/* Category cell removed */}
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.model_number}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.serial_number}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.ticket_number || '-'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.mac_address || '-'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">{asset.manufacturer || '-'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.condition || 'New / Excellent'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm font-medium text-gray-700">
-                  {asset.status || '-'}
-                </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">
-                  {(asset.store?.parentStore?.name) || (asset.store?.name) || (activeStore?.name) || '-'}
-                </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">
-                  {asset.location || '-'}
-                </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.assigned_to?.name || asset.assigned_to_external?.name || '-'}</td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">
-                  {asset.updatedAt ? new Date(asset.updatedAt).toLocaleString() : '-'}
-                </td>
-                <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">
-                  <div className="flex flex-col gap-1 sm:flex-row justify-center">
-                  <button 
-                    onClick={() => handleEditClick(asset)}
-                    className="text-amber-600 hover:text-amber-700 font-medium text-sm md:text-base"
-                  >
-                    Edit
-                  </button>
-                  {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
-                    <button 
-                      onClick={() => handleUnassign(asset)}
-                      className="text-orange-600 hover:text-orange-900 font-medium text-sm md:text-base"
-                    >
-                      Unassign
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => handleAssignClick(asset)}
-                      className="text-green-600 hover:text-green-900 font-medium text-sm md:text-base"
-                    >
-                      Assign
-                    </button>
-                  )}
-                  <button 
-                    onClick={() => handleDelete(asset._id)}
-                    className="text-red-600 hover:text-red-900 font-medium text-sm md:text-base"
-                  >
-                    Delete
-                  </button>
-                  </div>
-                </td>
+                {visibleColumns.uniqueId && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap font-mono text-xs text-gray-600 text-center hidden lg:table-cell">{asset.uniqueId || '-'}</td>}
+                {visibleColumns.name && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.name}</td>}
+                {visibleColumns.model && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.model_number}</td>}
+                {visibleColumns.serial && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.serial_number}</td>}
+                {visibleColumns.serialLast4 && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.serial_last_4 || '-'}</td>}
+                {visibleColumns.ticket && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.ticket_number || '-'}</td>}
+                {visibleColumns.poNumber && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.po_number || '-'}</td>}
+                {visibleColumns.mac && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.mac_address || '-'}</td>}
+                {visibleColumns.rfid && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.rfid || '-'}</td>}
+                {visibleColumns.qr && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.qr_code || '-'}</td>}
+                {visibleColumns.manufacturer && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">{asset.manufacturer || '-'}</td>}
+                {visibleColumns.condition && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.condition || 'New / Excellent'}</td>}
+                {visibleColumns.status && (
+                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm font-medium text-gray-700">
+                    {asset.status || '-'}
+                  </td>
+                )}
+                {visibleColumns.prevStatus && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.previous_status || '-'}</td>}
+                {visibleColumns.store && (
+                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">
+                    {(asset.store?.parentStore?.name) || (asset.store?.name) || (activeStore?.name) || '-'}
+                  </td>
+                )}
+                {visibleColumns.location && (
+                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">
+                    {asset.location || '-'}
+                  </td>
+                )}
+                {visibleColumns.quantity && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.quantity ?? '-'}</td>}
+                {visibleColumns.vendor && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.vendor_name || '-'}</td>}
+                {visibleColumns.source && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.source || '-'}</td>}
+                {visibleColumns.deliveredBy && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.delivered_by_name || '-'}</td>}
+                {visibleColumns.deliveredAt && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : '-'}</td>}
+                {visibleColumns.assignedTo && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.assigned_to?.name || asset.assigned_to_external?.name || '-'}</td>}
+                {visibleColumns.dateTime && (
+                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">
+                    {asset.updatedAt ? new Date(asset.updatedAt).toLocaleString() : '-'}
+                  </td>
+                )}
+                {visibleColumns.price && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{typeof asset.price === 'number' ? asset.price : '-'}</td>}
+                {visibleColumns.action && (
+                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-col gap-1 sm:flex-row justify-center">
+                      <button 
+                        onClick={() => handleEditClick(asset)}
+                        className="text-amber-600 hover:text-amber-700 font-medium text-sm md:text-base"
+                      >
+                        Edit
+                      </button>
+                      {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
+                        <button 
+                          onClick={() => handleUnassign(asset)}
+                          className="text-orange-600 hover:text-orange-900 font-medium text-sm md:text-base"
+                        >
+                          Unassign
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={() => handleAssignClick(asset)}
+                          className="text-green-600 hover:text-green-900 font-medium text-sm md:text-base"
+                        >
+                          Assign
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => handleDelete(asset._id)}
+                        className="text-red-600 hover:text-red-900 font-medium text-sm md:text-base"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -1060,7 +1352,7 @@ const Assets = () => {
       {/* Mobile Card View */}
       <div className="md:hidden space-y-4 mb-4">
         {assets.map((asset) => (
-          <div key={asset._id} className={`bg-white p-4 rounded-lg shadow-sm border ${asset.isDuplicate ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200'}`}>
+          <div key={asset._id} className={`bg-white p-4 rounded-lg shadow-sm border ${asset.isDuplicate ? 'border-yellow-400 bg-yellow-50' : 'border-gray-200'}`} onClick={() => window.open(`/asset/${asset._id}`, '_blank')}>
             <div className="flex justify-between items-start mb-3">
               <div>
                 <h3 className="font-bold text-gray-900 text-base">{asset.name}</h3>
@@ -1113,28 +1405,28 @@ const Assets = () => {
 
             <div className="flex gap-3 pt-3 border-t border-gray-100">
               <button 
-                onClick={() => handleEditClick(asset)}
+                onClick={(e) => { e.stopPropagation(); handleEditClick(asset); }}
                 className="flex-1 flex items-center justify-center gap-2 bg-gray-50 text-gray-700 py-2 rounded-md text-sm font-medium hover:bg-gray-100 transition-colors border border-gray-200"
               >
                 <Edit size={16} /> Edit
               </button>
               {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
                 <button 
-                  onClick={() => handleUnassign(asset)}
+                  onClick={(e) => { e.stopPropagation(); handleUnassign(asset); }}
                   className="flex-1 flex items-center justify-center gap-2 bg-orange-50 text-orange-700 py-2 rounded-md text-sm font-medium hover:bg-orange-100 transition-colors border border-orange-200"
                 >
                   <UserX size={16} /> Unassign
                 </button>
               ) : (
                 <button 
-                  onClick={() => handleAssignClick(asset)}
+                  onClick={(e) => { e.stopPropagation(); handleAssignClick(asset); }}
                   className="flex-1 flex items-center justify-center gap-2 bg-green-50 text-green-700 py-2 rounded-md text-sm font-medium hover:bg-green-100 transition-colors border border-green-200"
                 >
                   <UserCheck size={16} /> Assign
                 </button>
               )}
               <button 
-                onClick={() => handleDelete(asset._id)}
+                onClick={(e) => { e.stopPropagation(); handleDelete(asset._id); }}
                 className="flex-none flex items-center justify-center bg-red-50 text-red-700 p-2 rounded-md hover:bg-red-100 transition-colors border border-red-200"
                 aria-label="Delete"
               >
@@ -1175,6 +1467,14 @@ const Assets = () => {
               className="px-3 py-2 border rounded disabled:opacity-50"
             >
               Next
+            </button>
+            <button
+              onClick={handleExportSelected}
+              disabled={selectedIds.length === 0}
+              className={`px-3 py-2 rounded text-sm ${selectedIds.length === 0 ? 'bg-amber-300 text-white cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600 text-white'}`}
+              title="Download selected rows as Excel"
+            >
+              Download Selected
             </button>
           </div>
         </div>

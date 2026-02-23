@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
-import { Users, ArrowLeft, Database, AlertTriangle, X, Store, Building2, ChevronRight, Settings, ShieldCheck, Activity, Search, Lock, LogOut } from 'lucide-react';
+import { Users, ArrowLeft, Database, AlertTriangle, X, Store, Building2, ChevronRight, Settings, ShieldCheck, Activity, Search, Lock, LogOut, Palette } from 'lucide-react';
 import AddMembers from './AddMembers';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 
@@ -23,6 +23,7 @@ const Portal = () => {
   const [restoreFileName, setRestoreFileName] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState(null);
+  const [themeSaving, setThemeSaving] = useState(false);
 
   useEffect(() => {
     if (user?.role !== 'Super Admin') {
@@ -158,14 +159,14 @@ const Portal = () => {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+    <div className="min-h-screen flex items-center justify-center bg-app-page">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
     </div>
   );
 
   if (showMembers) {
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-app-page text-app-main">
         <header className="bg-white shadow-sm border-b border-slate-200">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center space-x-4">
@@ -191,7 +192,7 @@ const Portal = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col font-sans text-slate-900 bg-slate-50 relative overflow-x-hidden">
+    <div className="min-h-screen flex flex-col font-sans text-app-main bg-app-page relative overflow-x-hidden">
       
       {/* Navbar */}
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50 transition-all duration-300">
@@ -454,6 +455,52 @@ const Portal = () => {
                       />
                       <span>Select Logo…</span>
                     </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Customize Application Theme (Super Admin only, but Portal is SA-only) */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm">
+              <div className="flex items-center gap-4 md:gap-5">
+                <div className="p-3 md:p-4 bg-indigo-50 rounded-lg text-indigo-600 border border-indigo-100">
+                  <Palette size={20} className="md:w-[24px] md:h-[24px]" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base md:text-lg font-bold text-slate-900 mb-1">Customize Application Theme</h3>
+                  <p className="text-slate-500 text-xs md:text-sm mb-3">
+                    Choose a professional theme. Changes apply to the entire application.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                    <select
+                      value={branding?.theme || 'default'}
+                      onChange={async (e) => {
+                        const newTheme = e.target.value;
+                        try {
+                          setThemeSaving(true);
+                          await api.post('/system/theme', { theme: newTheme });
+                          await refreshBranding();
+                          alert('Theme updated successfully.');
+                        } catch (err) {
+                          alert(err.response?.data?.message || 'Failed to update theme');
+                        } finally {
+                          setThemeSaving(false);
+                        }
+                      }}
+                      className="w-full sm:w-64 border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white text-slate-900"
+                    >
+                      <option value="default">Default (Expo Amber)</option>
+                      <option value="ocean">Ocean Blue</option>
+                      <option value="emerald">Emerald Green</option>
+                      <option value="sunset">Sunset Orange</option>
+                      <option value="midnight">Midnight Dark</option>
+                      <option value="mono">Minimal Monochrome</option>
+                    </select>
+                    {themeSaving && (
+                      <span className="text-xs text-slate-400">
+                        Applying theme…
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

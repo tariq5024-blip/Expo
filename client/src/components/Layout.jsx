@@ -10,7 +10,7 @@ const Layout = () => {
   const { user, branding } = useAuth();
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-app-page text-app-main">
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 

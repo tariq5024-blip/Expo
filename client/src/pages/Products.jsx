@@ -19,6 +19,9 @@ const Products = ({ readOnly = false }) => {
   const [bulkNames, setBulkNames] = useState('');
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedAssets, setSelectedAssets] = useState([]);
+  const [selectedAssetsPage, setSelectedAssetsPage] = useState(1);
+  const [selectedAssetsTotal, setSelectedAssetsTotal] = useState(0);
+  const [selectedAssetsLimit] = useState(5000);
   const [panelLoading, setPanelLoading] = useState(false);
 
   const fetchProducts = async () => {
@@ -102,13 +105,33 @@ const Products = ({ readOnly = false }) => {
     setSelectedProduct(product);
     setPanelLoading(true);
     try {
-      const res = await api.get('/assets', { params: { product_name: product.name, limit: 1000 } });
+      const res = await api.get('/assets', { params: { product_name: product.name, page: 1, limit: selectedAssetsLimit } });
       setSelectedAssets(res.data.items || []);
+      setSelectedAssetsPage(1);
+      setSelectedAssetsTotal(res.data.total || (res.data.items || []).length);
     } catch {
       setSelectedAssets([]);
+      setSelectedAssetsPage(1);
+      setSelectedAssetsTotal(0);
     } finally {
       setPanelLoading(false);
     }
+  };
+
+  const loadMoreAssetsForSelected = async () => {
+    if (!selectedProduct) return;
+    const nextPage = selectedAssetsPage + 1;
+    setPanelLoading(true);
+    try {
+      const res = await api.get('/assets', { params: { product_name: selectedProduct.name, page: nextPage, limit: selectedAssetsLimit } });
+      const items = res.data.items || [];
+      setSelectedAssets(prev => [...prev, ...items]);
+      setSelectedAssetsPage(nextPage);
+      setSelectedAssetsTotal(res.data.total || selectedAssetsTotal);
+    } catch (error) {
+      console.error('Failed to load more assets for product:', error);
+    }
+    setPanelLoading(false);
   };
 
   useEffect(() => {
@@ -333,17 +356,26 @@ const Products = ({ readOnly = false }) => {
               <>
                 <div className="grid grid-cols-3 gap-2 mb-4">
                   {(() => {
-                    const total = selectedAssets.length;
+                    const getQty = (asset) => {
+                      const q = Number(asset.quantity);
+                      if (!Number.isFinite(q) || q <= 0) return 1;
+                      return q;
+                    };
                     const isAssigned = (a) => a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name);
                     const isFaulty = (a) => String(a.status).toLowerCase() === 'faulty' || String(a.condition).toLowerCase() === 'faulty';
                     const isUnderRepair = (a) => String(a.status).toLowerCase() === 'under repair' || String(a.condition).toLowerCase() === 'under repair';
                     const isDisposed = (a) => String(a.status).toLowerCase() === 'disposed';
                     const isInUseStatus = (a) => String(a.status).toLowerCase() === 'in use';
-                    const inUse = selectedAssets.filter(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && (isAssigned(a) || isInUseStatus(a))).length;
-                    const inStore = selectedAssets.filter(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && !(isAssigned(a) || isInUseStatus(a))).length;
-                    const faulty = selectedAssets.filter(a => isFaulty(a)).length;
-                    const underRepair = selectedAssets.filter(a => isUnderRepair(a)).length;
-                    const disposed = selectedAssets.filter(a => a.status === 'Disposed').length;
+                    const sumQty = (predicate) => selectedAssets.reduce((sum, asset) => {
+                      if (predicate(asset)) return sum + getQty(asset);
+                      return sum;
+                    }, 0);
+                    const total = selectedAssets.reduce((sum, asset) => sum + getQty(asset), 0);
+                    const inUse = sumQty(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && (isAssigned(a) || isInUseStatus(a)));
+                    const inStore = sumQty(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && !(isAssigned(a) || isInUseStatus(a)));
+                    const faulty = sumQty(a => isFaulty(a));
+                    const underRepair = sumQty(a => isUnderRepair(a));
+                    const disposed = sumQty(a => String(a.status).toLowerCase() === 'disposed');
                     return (
                       <>
                         <div className="rounded-lg border bg-white p-3">
@@ -375,6 +407,19 @@ const Products = ({ readOnly = false }) => {
                   })()}
                 </div>
                 <div className="rounded-xl border bg-white p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm text-gray-600">
+                      Showing {selectedAssets.length} of {selectedAssetsTotal} assets
+                    </div>
+                    {selectedAssets.length < selectedAssetsTotal && (
+                      <button
+                        onClick={loadMoreAssetsForSelected}
+                        className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                      >
+                        Load More
+                      </button>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between mb-2">
                     <div className="font-medium text-gray-800">Recent History</div>
                     <Link 

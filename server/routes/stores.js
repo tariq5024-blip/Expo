@@ -85,13 +85,25 @@ router.get('/', protect, async (req, res) => {
             statusLower: { $toLower: { $ifNull: ['$status', ''] } },
             condLower: { $toLower: { $ifNull: ['$condition', ''] } },
             assigned_to: 1,
-            assigned_to_external: 1
+            assigned_to_external: 1,
+            qty: {
+              $cond: [
+                {
+                  $and: [
+                    { $ne: ['$quantity', null] },
+                    { $gt: ['$quantity', 0] }
+                  ]
+                },
+                '$quantity',
+                1
+              ]
+            }
           }
         },
         {
           $group: {
             _id: '$locLower',
-            total: { $sum: 1 },
+            total: { $sum: '$qty' },
             disposed: {
               $sum: {
                 $cond: [
@@ -101,7 +113,7 @@ router.get('/', protect, async (req, res) => {
                       { $eq: ['$condLower', 'disposed'] }
                     ]
                   },
-                  1,
+                  '$qty',
                   0
                 ]
               }
@@ -121,7 +133,7 @@ router.get('/', protect, async (req, res) => {
                       }
                     ]
                   },
-                  1,
+                  '$qty',
                   0
                 ]
               }

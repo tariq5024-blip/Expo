@@ -10,6 +10,9 @@ const ProductDetails = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [limit] = useState(5000);
   
   // Client-side pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -22,9 +25,11 @@ const ProductDetails = () => {
     const fetchAssets = async () => {
       setLoading(true);
       try {
-        const params = { limit: 1000, product_name: decodedProductName };
+        const params = { page: 1, limit, product_name: decodedProductName };
         const res = await api.get('/assets', { params });
         setAssets(res.data.items || []);
+        setPage(1);
+        setTotal(res.data.total || (res.data.items || []).length);
       } catch (err) {
         console.error('Failed to fetch product assets:', err);
       } finally {
@@ -33,7 +38,23 @@ const ProductDetails = () => {
     };
 
     fetchAssets();
-  }, [decodedProductName]);
+  }, [decodedProductName, limit]);
+
+  const loadMore = async () => {
+    const nextPage = page + 1;
+    setLoading(true);
+    try {
+      const params = { page: nextPage, limit, product_name: decodedProductName };
+      const res = await api.get('/assets', { params });
+      setAssets(prev => [...prev, ...(res.data.items || [])]);
+      setPage(nextPage);
+      setTotal(res.data.total || total);
+    } catch (err) {
+      console.error('Failed to fetch more assets:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Filter assets: search by Serial Number or Unique ID only (as requested)
   const filteredAssets = assets.filter(asset => 
@@ -54,18 +75,47 @@ const ProductDetails = () => {
 
   // Calculate stats
   const stats = {
-    total: assets.length,
-    inUse: assets.filter(a => (a.status === 'In Use') || a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name)).length,
-    inStore: assets.filter(a => (
-      // Available in store
-      !['Disposed', 'Under Repair', 'In Use'].includes(a.status) &&
-      !a.assigned_to &&
-      (!(a.assigned_to_external && a.assigned_to_external.name))
-    ) || a.status === 'Faulty' // Faulty is considered in store
-    ).length,
-    faulty: assets.filter(a => a.status === 'Faulty' || String(a.condition || '').toLowerCase().includes('faulty')).length,
-    disposed: assets.filter(a => a.status === 'Disposed').length,
-    underRepair: assets.filter(a => a.status === 'Under Repair').length
+    total: assets.reduce((sum, a) => sum + (Number(a.quantity) > 0 ? Number(a.quantity) : 1), 0),
+    inUse: assets.reduce((sum, a) => {
+      const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
+      if ((a.status === 'In Use') || a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name)) {
+        return sum + q;
+      }
+      return sum;
+    }, 0),
+    inStore: assets.reduce((sum, a) => {
+      const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
+      if (
+        (!['Disposed', 'Under Repair', 'In Use'].includes(a.status) &&
+        !a.assigned_to &&
+        !(a.assigned_to_external && a.assigned_to_external.name)) ||
+        a.status === 'Faulty'
+      ) {
+        return sum + q;
+      }
+      return sum;
+    }, 0),
+    faulty: assets.reduce((sum, a) => {
+      const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
+      if (a.status === 'Faulty' || String(a.condition || '').toLowerCase().includes('faulty')) {
+        return sum + q;
+      }
+      return sum;
+    }, 0),
+    disposed: assets.reduce((sum, a) => {
+      const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
+      if (a.status === 'Disposed') {
+        return sum + q;
+      }
+      return sum;
+    }, 0),
+    underRepair: assets.reduce((sum, a) => {
+      const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
+      if (a.status === 'Under Repair') {
+        return sum + q;
+      }
+      return sum;
+    }, 0)
   };
 
   const getDerivedStatus = (asset) => {
@@ -394,6 +444,14 @@ const ProductDetails = () => {
                 >
                   Next
                 </button>
+                {assets.length < total && (
+                  <button
+                    onClick={loadMore}
+                    className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                  >
+                    Load More
+                  </button>
+                )}
               </div>
             </div>
           )}

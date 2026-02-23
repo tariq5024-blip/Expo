@@ -22,7 +22,7 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [systemOk, setSystemOk] = useState(true);
-  const [health, setHealth] = useState({ backend: false, db: false });
+  const [_HEALTH, setHealth] = useState({ backend: false, db: false });
 
   useEffect(() => {
     const fetchStats = async () => {

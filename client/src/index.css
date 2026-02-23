@@ -2,7 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root[data-theme='default'] {
+    --accent: 245 158 11;      /* amber-500 */
+    --accent-soft: 254 243 199;/* amber-100 */
+    --bg-page: 248 250 252;    /* slate-50 */
+    --bg-card: 255 255 255;    /* white */
+    --text-main: 15 23 42;     /* slate-900 */
+  }
+
+  :root[data-theme='ocean'] {
+    --accent: 37 99 235;       /* blue-600 */
+    --accent-soft: 219 234 254;/* blue-100 */
+    --bg-page: 239 246 255;    /* indigo-50 */
+    --bg-card: 255 255 255;
+    --text-main: 15 23 42;
+  }
+
+  :root[data-theme='emerald'] {
+    --accent: 5 150 105;       /* emerald-600 */
+    --accent-soft: 209 250 229;/* emerald-100 */
+    --bg-page: 240 253 244;    /* emerald-50 */
+    --bg-card: 255 255 255;
+    --text-main: 6 78 59;      /* emerald-800 */
+  }
+
+  :root[data-theme='sunset'] {
+    --accent: 249 115 22;      /* orange-500 */
+    --accent-soft: 255 237 213;/* orange-100 */
+    --bg-page: 255 247 237;    /* orange-50 */
+    --bg-card: 255 255 255;
+    --text-main: 30 64 175;    /* blue-800 for contrast */
+  }
+
+  :root[data-theme='midnight'] {
+    --accent: 56 189 248;      /* sky-400 */
+    --accent-soft: 15 23 42;   /* slate-900 panels */
+    --bg-page: 15 23 42;       /* dark */
+    --bg-card: 30 41 59;       /* slate-800 */
+    --text-main: 226 232 240;  /* slate-200 */
+  }
+
+  :root[data-theme='mono'] {
+    --accent: 55 65 81;        /* gray-700 */
+    --accent-soft: 243 244 246;/* gray-100 */
+    --bg-page: 249 250 251;    /* gray-50 */
+    --bg-card: 255 255 255;
+    --text-main: 17 24 39;     /* gray-900 */
+  }
+}
+
 @layer utilities {
+  .bg-app-page {
+    background-color: rgb(var(--bg-page));
+  }
+
+  .bg-app-card {
+    background-color: rgb(var(--bg-card));
+  }
+
+  .text-app-main {
+    color: rgb(var(--text-main));
+  }
+
+  .bg-app-accent {
+    background-color: rgb(var(--accent));
+  }
+
+  .bg-app-accent-soft {
+    background-color: rgb(var(--accent-soft));
+  }
+
+  .text-app-accent {
+    color: rgb(var(--accent));
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;

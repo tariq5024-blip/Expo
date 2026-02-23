@@ -6,7 +6,8 @@ import {
   LayoutGrid, 
   Trash2,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  Layers
 } from 'lucide-react';
 
 const StatCard = ({ title, value, icon: Icon, color, subText, onClick }) => {
@@ -50,7 +51,8 @@ const DashboardCharts = ({ stats }) => {
     faulty: 0,
     disposed: 0,
     pendingReturns: 0,
-    pendingRequests: 0
+    pendingRequests: 0,
+    assetTypes: 0
   };
 
   // Donut: In Use vs Not In Use (center shows Total)
@@ -183,7 +185,7 @@ const DashboardCharts = ({ stats }) => {
   return (
     <div className="space-y-6">
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6">
         <StatCard 
           title="Total Assets" 
           value={safeOverview.total} 
@@ -223,6 +225,14 @@ const DashboardCharts = ({ stats }) => {
           color="gray" 
           subText="Write-off history"
           onClick={() => navigateToAssets('Disposed')}
+        />
+        <StatCard 
+          title="Asset Types" 
+          value={safeOverview.assetTypes || 0} 
+          icon={Layers} 
+          color="violet" 
+          subText="Unique products"
+          onClick={() => window.open('/products', '_blank', 'noopener,noreferrer')}
         />
       </div>
 

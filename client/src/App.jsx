@@ -23,6 +23,7 @@ const ReceiveProcess = lazy(() => import('./pages/ReceiveProcess'));
 const DisposalProcess = lazy(() => import('./pages/DisposalProcess'));
 const Products = lazy(() => import('./pages/Products'));
 const ProductDetails = lazy(() => import('./pages/ProductDetails'));
+const AssetHistory = lazy(() => import('./pages/AssetHistory'));
 const Setup = lazy(() => import('./pages/Setup'));
 const Permits = lazy(() => import('./pages/Permits'));
 const Passes = lazy(() => import('./pages/Passes'));
@@ -124,6 +125,12 @@ function App() {
           <Route path="/assets" element={
             <ProtectedRoute allowedRoles={['Admin']}>
               <Assets />
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/asset/:id" element={
+            <ProtectedRoute allowedRoles={['Admin']}>
+              <AssetHistory />
             </ProtectedRoute>
           } />
 

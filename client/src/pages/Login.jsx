@@ -45,11 +45,11 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 relative overflow-hidden font-sans">
+    <div className="min-h-screen flex items-center justify-center bg-app-page relative overflow-hidden font-sans text-app-main">
       {/* Decorative Background Elements */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-5%] w-[30%] h-[30%] bg-amber-500/5 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-[-10%] right-[-5%] w-[30%] h-[30%] bg-slate-200/50 rounded-full blur-3xl"></div>
+        <div className="absolute top-[-10%] left-[-5%] w-[30%] h-[30%] bg-app-accent-soft rounded-full blur-3xl opacity-70"></div>
+        <div className="absolute bottom-[-10%] right-[-5%] w-[30%] h-[30%] bg-white/40 rounded-full blur-3xl"></div>
       </div>
 
       <div className="w-full max-w-md px-6 relative z-10">
@@ -57,11 +57,11 @@ const Login = () => {
         <div className="flex flex-col items-center mb-8">
            <img src={branding?.logoUrl || '/logo.svg'} alt="Expo City Dubai" className="h-24 w-auto mb-4 drop-shadow-sm" />
            <div className="text-center">
-             <h1 className="text-2xl font-bold tracking-tight text-slate-900 uppercase">Expo City Dubai</h1>
+             <h1 className="text-2xl font-bold tracking-tight text-app-main uppercase">Expo City Dubai</h1>
              <div className="flex items-center justify-center gap-2 mt-2">
-               <div className="h-0.5 w-8 bg-amber-500 rounded-full"></div>
+               <div className="h-0.5 w-8 bg-app-accent rounded-full"></div>
                <p className="text-xs text-slate-500 tracking-[0.2em] uppercase font-bold">Asset Management</p>
-               <div className="h-0.5 w-8 bg-amber-500 rounded-full"></div>
+               <div className="h-0.5 w-8 bg-app-accent rounded-full"></div>
              </div>
            </div>
         </div>

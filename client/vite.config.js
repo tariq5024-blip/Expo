@@ -18,6 +18,16 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/healthz': {
+        target: `http://${apiHost}:5000`,
+        changeOrigin: true,
+        secure: false,
+      },
+      '/readyz': {
+        target: `http://${apiHost}:5000`,
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
   build: {

@@ -99,9 +99,13 @@ router.get('/storage', protect, admin, async (req, res) => {
 // @access  Public
 router.get('/public-config', async (req, res) => {
   try {
-    const setting = await Setting.findOne({ key: 'logoUrl' }).lean();
-    const logoUrl = setting?.value || '/logo.svg';
-    res.json({ logoUrl });
+    const [logoSetting, themeSetting] = await Promise.all([
+      Setting.findOne({ key: 'logoUrl' }).lean(),
+      Setting.findOne({ key: 'theme' }).lean()
+    ]);
+    const logoUrl = logoSetting?.value || '/logo.svg';
+    const theme = typeof themeSetting?.value === 'string' ? themeSetting.value : 'default';
+    res.json({ logoUrl, theme });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -134,6 +138,27 @@ router.post('/logo', protect, superAdmin, brandingUpload.single('logo'), async (
       { upsert: true }
     );
     res.json({ message: 'Logo updated', logoUrl: relativeUrl });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// @desc    Update application theme (Super Admin only)
+// @route   POST /api/system/theme
+// @access  Private/SuperAdmin
+router.post('/theme', protect, superAdmin, async (req, res) => {
+  try {
+    const { theme } = req.body;
+    const allowed = ['default', 'ocean', 'emerald', 'sunset', 'midnight', 'mono'];
+    if (!allowed.includes(theme)) {
+      return res.status(400).json({ message: 'Invalid theme selected' });
+    }
+    await Setting.updateOne(
+      { key: 'theme' },
+      { $set: { value: theme, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ message: 'Theme updated', theme });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

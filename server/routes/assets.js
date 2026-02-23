@@ -69,11 +69,12 @@ router.get('/recent-activity', protect, async (req, res) => {
   }
 });
 
-// Helper to get store and its children IDs
+// Helper to get store and its children IDs (always ObjectId for aggregations)
 async function getStoreIds(storeId) {
   if (!storeId) return [];
   const children = await Store.find({ parentStore: storeId }).select('_id');
-  return [storeId, ...children.map(c => c._id)];
+  const all = [storeId, ...children.map(c => c._id)];
+  return all.map((id) => new mongoose.Types.ObjectId(id));
 }
 
 async function findProductNameByModelNumber(modelNumber, activeStoreId) {
@@ -86,22 +87,71 @@ async function findProductNameByModelNumber(modelNumber, activeStoreId) {
       { store: { $exists: false } }
     ];
   }
-  const categories = await AssetCategory.find(filter).lean();
-  const matches = [];
-  const traverse = (products) => {
-    (products || []).forEach(p => {
-      if (String(p.model_number || '').trim().toLowerCase() === String(modelNumber).trim().toLowerCase()) {
-        matches.push(p.name);
+  const products = await Product.find(filter).lean();
+  const target = String(modelNumber).trim().toLowerCase();
+  let foundName = null;
+
+  const traverse = (nodes) => {
+    if (!Array.isArray(nodes)) return;
+    for (const node of nodes) {
+      if (!node) continue;
+      const model = String(node.model_number || '').trim().toLowerCase();
+      if (model && model === target && node.name) {
+        foundName = node.name;
+        return;
       }
-      if (p.children && p.children.length > 0) traverse(p.children);
+      if (node.children && node.children.length > 0) {
+        traverse(node.children);
+        if (foundName) return;
+      }
+    }
+  };
+
+  traverse(products);
+  return foundName;
+}
+
+async function resolveProductHierarchyNames(baseName, activeStoreId) {
+  const raw = String(baseName || '').trim();
+  if (!raw) return [];
+
+  const target = raw.toLowerCase();
+  const filter = {};
+  if (activeStoreId) {
+    filter.$or = [
+      { store: activeStoreId },
+      { store: null },
+      { store: { $exists: false } }
+    ];
+  }
+
+  const roots = await Product.find(filter).lean();
+  const collected = new Set();
+
+  const collectSubtree = (node) => {
+    if (!node || !node.name) return;
+    collected.add(node.name);
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      node.children.forEach(collectSubtree);
+    }
+  };
+
+  const traverse = (nodes) => {
+    if (!Array.isArray(nodes)) return;
+    nodes.forEach((node) => {
+      if (!node || !node.name) return;
+      const nameLower = String(node.name).toLowerCase();
+      if (nameLower === target) {
+        collectSubtree(node);
+      }
+      if (Array.isArray(node.children) && node.children.length > 0) {
+        traverse(node.children);
+      }
     });
   };
-  categories.forEach(cat => {
-    (cat.types || []).forEach(t => {
-      traverse(t.products || []);
-    });
-  });
-  return matches.length > 0 ? matches[0] : null;
+
+  traverse(roots);
+  return Array.from(collected);
 }
 
 // @desc    Get assets (paginated, optional filters)
@@ -110,7 +160,7 @@ async function findProductNameByModelNumber(modelNumber, activeStoreId) {
 router.get('/', protect, async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 200);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 5000);
     const q = String(req.query.q || '').trim();
     const status = String(req.query.status || '').trim();
     const storeId = String(req.query.store || '').trim();
@@ -135,16 +185,34 @@ router.get('/', protect, async (req, res) => {
     const filter = {};
     if (q) {
       const rx = new RegExp(q, 'i');
-      filter.$or = [
+      const orClauses = [
         { name: rx },
         { model_number: rx },
         { serial_number: rx },
+        { serial_last_4: rx },
         { mac_address: rx },
         { rfid: rx },
         { qr_code: rx },
         { uniqueId: rx },
-        { manufacturer: rx }
+        { manufacturer: rx },
+        { ticket_number: rx },
+        { po_number: rx },
+        { condition: rx },
+        { status: rx },
+        { previous_status: rx },
+        { location: rx },
+        { vendor_name: rx },
+        { source: rx },
+        { delivered_by_name: rx }
       ];
+
+      const n = Number(q);
+      if (!Number.isNaN(n)) {
+        orClauses.push({ quantity: n });
+        orClauses.push({ price: n });
+      }
+
+      filter.$or = orClauses;
     }
     if (status) {
       if (status === 'In Use') {
@@ -245,8 +313,23 @@ router.get('/', protect, async (req, res) => {
     if (macAddress) filter.mac_address = new RegExp(macAddress, 'i');
     // product_type removed
     if (productName) {
-      const escaped = productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      filter.product_name = new RegExp(`^${escaped}$`, 'i');
+      let names = [];
+      try {
+        names = await resolveProductHierarchyNames(productName, req.activeStore);
+      } catch (e) {
+        names = [];
+      }
+      const list = (names && names.length > 0 ? names : [productName]).filter(Boolean);
+      if (list.length === 1) {
+        const escaped = list[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        filter.product_name = new RegExp(`^${escaped}$`, 'i');
+      } else if (list.length > 1) {
+        const regexes = list.map((n) => {
+          const escaped = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp(`^${escaped}$`, 'i');
+        });
+        filter.product_name = { $in: regexes };
+      }
     }
     if (ticketNumber) filter.ticket_number = new RegExp(ticketNumber, 'i');
     if (rfid) filter.rfid = new RegExp(rfid, 'i');
@@ -278,7 +361,7 @@ router.get('/', protect, async (req, res) => {
         .sort({ updatedAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .select('name model_number serial_number mac_address manufacturer ticket_number rfid qr_code uniqueId store location status condition product_name assigned_to return_pending return_request source vendor_name delivered_by_name history createdAt updatedAt')
+        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request source vendor_name delivered_by_name delivered_at quantity price history createdAt updatedAt')
         .populate({
           path: 'store',
           select: 'name parentStore',
@@ -316,6 +399,32 @@ router.get('/', protect, async (req, res) => {
     });
   } catch (error) {
     console.error('Error in GET /stats:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Get a single asset by ID with full details and history
+// @route   GET /api/assets/:id
+// @access  Private
+router.get('/:id([0-9a-fA-F]{24})', protect, async (req, res) => {
+  try {
+    const asset = await Asset.findById(req.params.id)
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request source vendor_name delivered_by_name delivered_at quantity price history createdAt updatedAt')
+      .populate({
+        path: 'store',
+        select: 'name parentStore',
+        populate: {
+          path: 'parentStore',
+          select: 'name'
+        }
+      })
+      .populate('assigned_to', 'name email')
+      .lean();
+    if (!asset) {
+      return res.status(404).json({ message: 'Asset not found' });
+    }
+    res.json(asset);
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
@@ -386,6 +495,27 @@ router.get('/stats', protect, async (req, res) => {
        requestFilter.store = { $in: storeIds };
     }
 
+    const quantityExpr = {
+      $cond: [
+        { $gt: ['$quantity', 0] },
+        '$quantity',
+        1
+      ]
+    };
+
+    const sumQuantity = async (match) => {
+      const result = await Asset.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: quantityExpr }
+          }
+        }
+      ]);
+      return (result[0] && result[0].total) || 0;
+    };
+
     // Parallel execution for 5x faster stats loading
     const [
       totalAssets,
@@ -404,37 +534,38 @@ router.get('/stats', protect, async (req, res) => {
       locationCounts,
       categoryCounts,
       growthStats,
-      usageBreakdownCounts
+      usageBreakdownCounts,
+      assetTypeCountAgg
     ] = await Promise.all([
-      Asset.countDocuments(filter),
-      Asset.countDocuments({ 
-        ...filter, 
+      sumQuantity(filter),
+      sumQuantity({ 
+        ...filter,
         $or: [
           { status: 'In Use' },
           { assigned_to: { $ne: null } },
           { 'assigned_to_external.name': { $exists: true, $ne: '' } }
         ]
       }),
-      Asset.countDocuments({ 
-        ...filter, 
+      sumQuantity({ 
+        ...filter,
         $or: [
           { status: 'Faulty' },
           { condition: 'Faulty' }
         ]
       }),
-      Asset.countDocuments({ ...filter, status: 'Under Repair' }),
-      Asset.countDocuments({ 
-        ...filter, 
+      sumQuantity({ ...filter, status: 'Under Repair' }),
+      sumQuantity({ 
+        ...filter,
         $or: [
           { status: 'Disposed' },
           { condition: 'Disposed' }
         ]
       }),
-      Asset.countDocuments({ ...filter, status: { $in: ['In Store', 'Faulty'] } }),
+      sumQuantity({ ...filter, status: { $in: ['In Store', 'Faulty'] } }),
       Asset.countDocuments({ ...filter, return_pending: true }),
       Request.countDocuments(requestFilter),
-      Asset.countDocuments({ 
-        ...filter, 
+      sumQuantity({ 
+        ...filter,
         assigned_to: null, 
         condition: { $in: ['New', 'Used'] }, 
         status: { $nin: ['Faulty', 'Under Repair', 'Disposed', 'In Use'] } 
@@ -461,9 +592,9 @@ router.get('/stats', protect, async (req, res) => {
             }
           } 
         },
-        { $group: { _id: '$condBucket', count: { $sum: 1 } } }
+        { $group: { _id: '$condBucket', count: { $sum: quantityExpr } } }
       ]),
-      Asset.aggregate([{ $match: filter }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
+      Asset.aggregate([{ $match: filter }, { $group: { _id: '$status', count: { $sum: quantityExpr } } }]),
       Asset.aggregate([
         { $match: filter },
         {
@@ -475,7 +606,7 @@ router.get('/stats', protect, async (req, res) => {
                 { $toLower: '$product_name' }
               ]
             },
-            count: { $sum: 1 }
+            count: { $sum: quantityExpr }
           }
         },
         { $match: { _id: { $ne: '' } } },
@@ -484,14 +615,14 @@ router.get('/stats', protect, async (req, res) => {
       ]),
       Asset.aggregate([
         { $match: filter },
-        { $group: { _id: { $toLower: '$product_name' }, count: { $sum: 1 } } },
+        { $group: { _id: { $toLower: '$product_name' }, count: { $sum: quantityExpr } } },
         { $match: { _id: { $ne: '' } } },
         { $sort: { count: -1 } },
         { $limit: 10 }
       ]),
       Asset.aggregate([
         { $match: filter },
-        { $group: { _id: { $toLower: '$location' }, count: { $sum: 1 } } },
+        { $group: { _id: { $toLower: '$location' }, count: { $sum: quantityExpr } } },
         { $match: { _id: { $ne: '' } } },
         { $sort: { count: -1 } },
         { $limit: 10 }
@@ -499,7 +630,7 @@ router.get('/stats', protect, async (req, res) => {
       Promise.resolve([]),
       Asset.aggregate([
         { $match: { ...filter, createdAt: { $gte: new Date(new Date().setMonth(new Date().getMonth() - 6)) } } },
-        { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } }, count: { $sum: 1 } } },
+        { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } }, count: { $sum: quantityExpr } } },
         { $sort: { _id: 1 } }
       ]),
       Asset.aggregate([
@@ -536,7 +667,13 @@ router.get('/stats', protect, async (req, res) => {
             }
           }
         },
-        { $group: { _id: '$category', count: { $sum: 1 } } }
+        { $group: { _id: '$category', count: { $sum: quantityExpr } } }
+      ]),
+      Asset.aggregate([
+        { $match: filter },
+        { $group: { _id: { $toLower: '$model_number' } } },
+        { $match: { _id: { $ne: '' } } },
+        { $count: 'count' }
       ])
     ]);
 
@@ -554,7 +691,8 @@ router.get('/stats', protect, async (req, res) => {
         underRepair: underRepairCount,
         disposed: disposedCount,
         pendingReturns: pendingReturnsCount,
-        pendingRequests: pendingRequestsCount
+        pendingRequests: pendingRequestsCount,
+        assetTypes: (assetTypeCountAgg[0] && assetTypeCountAgg[0].count) || 0
       },
       conditions: {
         New: 0,
@@ -679,6 +817,7 @@ router.get('/template', async (req, res) => {
       'Product Name',
       'Model Number',
       'Quantity',
+      'Price',
       'Serial Number',
       'MAC Address',
       'Manufacturer',
@@ -706,6 +845,7 @@ router.get('/template', async (req, res) => {
       'MAGNETIC LOCKS',
       'MEC-1200',
       '1',
+      '100',
       '1584632152',
       '',
       'SIEMENS',
@@ -739,7 +879,7 @@ router.get('/template', async (req, res) => {
 // @route   POST /api/assets
 // @access  Private (Admin or Technician)
 router.post('/', protect, async (req, res) => {
-  const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, product_name, rfid, qr_code, quantity } = req.body;
+  const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, po_number, product_name, rfid, qr_code, quantity } = req.body;
   try {
     const normName = capitalizeWords(name);
     const normProduct = capitalizeWords(product_name || '');
@@ -777,6 +917,7 @@ router.post('/', protect, async (req, res) => {
       mac_address,
       manufacturer: normManufacturer || '',
       ticket_number: ticket_number || '',
+      po_number: po_number || '',
       product_name: finalProductName,
       rfid: rfid || '',
       qr_code: qr_code || '',
@@ -930,6 +1071,154 @@ router.post('/bulk-delete', protect, admin, async (req, res) => {
   } catch (error) {
     console.error('Bulk delete error:', error);
     res.status(500).json({ message: 'Error deleting assets', error: error.message });
+  }
+});
+
+// @desc    Preview bulk upload assets via Excel (no database writes)
+// @route   POST /api/assets/import/preview
+// @access  Private (Admin or Technician)
+router.post('/import/preview', protect, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: 'No file uploaded' });
+  }
+  try {
+    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    if (!workbook || !Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
+      return res.status(400).json({ message: 'Invalid Excel file: no sheets found' });
+    }
+    let rows = [];
+    for (const name of workbook.SheetNames) {
+      const ws = workbook.Sheets[name];
+      if (!ws) continue;
+      const out = xlsx.utils.sheet_to_json(ws, { defval: '', blankrows: false });
+      if (Array.isArray(out) && out.length > 0) {
+        rows = out;
+        break;
+      }
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ message: 'Invalid Excel file: no data rows found' });
+    }
+    const stores = await Store.find().lean();
+    const storeMapLower = {};
+    stores.forEach(s => { if (s.name) storeMapLower[s.name.trim().toLowerCase()] = s._id; });
+    const allProducts = await Product.find().lean();
+    const productLookup = {};
+    const traverse = (list) => {
+      (list || []).forEach(p => {
+        const key = String(p.name).trim().toLowerCase();
+        if (!productLookup[key]) productLookup[key] = p.name;
+        if (p.children && p.children.length > 0) traverse(p.children);
+      });
+    };
+    allProducts.forEach(root => {
+      productLookup[String(root.name).trim().toLowerCase()] = root.name;
+      if (root.children) traverse(root.children);
+    });
+    const normalizeText = (v) => {
+      const s = String(v ?? '').trim();
+      if (!s) return '';
+      if (/^(?:N\/A|NA|-|—)$/i.test(s)) return '';
+      return s;
+    };
+    const preview = [];
+    const invalid_rows = [];
+    for (const item of rows) {
+      const norm = {};
+      Object.keys(item).forEach(k => { norm[String(k).trim().toLowerCase()] = item[k]; });
+      let productName = norm['product name'] || norm['product'] || norm['asset type'] || '';
+      if (productName) {
+        const found = productLookup[String(productName).trim().toLowerCase()];
+        if (found) productName = found;
+      }
+      const name = productName || '-';
+      const model = norm['model number'] || norm['model'] || '-';
+      const qtyRaw = norm['quantity'] || norm['qty'] || '1';
+      let quantity = parseInt(String(qtyRaw).trim(), 10);
+      if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
+      const priceRaw = norm['price'] || norm['unit price'] || '0';
+      let price = parseFloat(String(priceRaw).toString().replace(/[, ]/g, ''));
+      if (!Number.isFinite(price) || price < 0) price = 0;
+      const serial = norm['serial number'] || norm['serial'] || '-';
+      const mac = norm['mac address'] || norm['mac'] || '-';
+      const manufacturer = norm['manufacturer'] || '-';
+      const ticketNumber = norm['ticket number'] || norm['ticket'] || '-';
+      const rfid = norm['rfid'] || '-';
+      const qrCode = norm['qr code'] || norm['qr'] || '-';
+      const storeName = normalizeText(norm['store location'] || norm['storename'] || norm['store'] || '');
+      const locationRawCombined = norm['location'] || norm['physical location'] || norm['room'] || norm['area'] || '';
+      let location = normalizeText(locationRawCombined);
+      if (!location && storeName) location = storeName;
+      const statusRaw = norm['status'];
+      const statusNorm = String(statusRaw || '').trim().toLowerCase();
+      const statusMap = {
+        'available/new': 'New',
+        'new': 'New',
+        'spare': 'New',
+        'spare (new)': 'New',
+        'spare (used)': 'Used',
+        'available/used': 'Used',
+        'used': 'Used',
+        'in store': 'In Store',
+        'in use': 'In Use',
+        'available faulty': 'Faulty',
+        'faulty': 'Faulty',
+        'disposed': 'Disposed',
+        'under repair': 'Under Repair'
+      };
+      const status = statusMap[statusNorm] || 'New';
+      const conditionRaw = norm['condition'];
+      let condition = 'New';
+      if (conditionRaw) {
+        const cNorm = String(conditionRaw).trim().toLowerCase();
+        if (cNorm.includes('new')) condition = 'New';
+        else if (cNorm.includes('used')) condition = 'Used';
+        else if (cNorm.includes('faulty')) condition = 'Faulty';
+        else if (cNorm.includes('repair')) condition = 'Under Repair';
+        else if (cNorm.includes('disposed')) condition = 'Disposed';
+        else if (cNorm.includes('repaired')) condition = 'Repaired';
+      }
+      let storeId = storeMapLower[String(storeName || '').toLowerCase()];
+      if (req.activeStore) {
+        storeId = req.activeStore;
+      }
+      const uniqueId = await generateUniqueId(name);
+      const deliveredByFromRow = norm['delivered by'] || norm['delivered_by'] || norm['deliveredby'] || '';
+      const vendorNameFromRow = norm['vendor name'] || norm['vendor'] || '';
+      const deliveredAtRaw = norm['delivered at'] || norm['delivered_at'] || '';
+      const deliveredAtDate = deliveredAtRaw ? new Date(deliveredAtRaw) : new Date();
+      const assetData = {
+        name: capitalizeWords(name || ''),
+        model_number: model,
+        serial_number: String(serial || '').trim(),
+        serial_last_4: String(serial || '').trim() ? String(serial).slice(-4) : '',
+        mac_address: mac,
+        manufacturer: capitalizeWords(manufacturer || ''),
+        ticket_number: ticketNumber,
+        rfid,
+        qr_code: qrCode,
+        uniqueId,
+        store: storeId,
+        status,
+        condition,
+        product_name: capitalizeWords(productName || ''),
+        source: '',
+        location: capitalizeWords(location || ''),
+        vendor_name: vendorNameFromRow || '',
+        delivered_by_name: deliveredByFromRow || '',
+        delivered_at: deliveredAtDate,
+        quantity,
+        price
+      };
+      if (!assetData.serial_number) {
+        invalid_rows.push({ serial: '', reason: 'Missing serial number' });
+        continue;
+      }
+      preview.push(assetData);
+    }
+    res.json({ assets: preview, invalid_rows });
+  } catch (error) {
+    res.status(500).json({ message: 'Error parsing file', error: error.message });
   }
 });
 
@@ -1135,6 +1424,9 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
       const qtyRaw = norm['quantity'] || norm['qty'] || '1';
       let quantity = parseInt(String(qtyRaw).trim(), 10);
       if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1;
+      const priceRaw = norm['price'] || norm['unit price'] || '0';
+      let price = parseFloat(String(priceRaw).toString().replace(/[, ]/g, ''));
+      if (!Number.isFinite(price) || price < 0) price = 0;
       const serial = norm['serial number'] || norm['serial'] || '-';
       const mac = norm['mac address'] || norm['mac'] || '-';
       const manufacturer = norm['manufacturer'] || '-';
@@ -1252,7 +1544,8 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
           vendor_name: vendorNameFromRow || reqVendorName || '',
           delivered_by_name: deliveredByFromRow || reqDeliveredByName || '',
           delivered_at: deliveredAtDate,
-          quantity
+          quantity,
+          price
         };
 
         try {
@@ -1279,6 +1572,7 @@ router.post('/import', protect, upload.single('file'), async (req, res) => {
                   delivered_by_name: assetData.delivered_by_name,
                   delivered_at: assetData.delivered_at,
                   quantity: assetData.quantity,
+                  price: assetData.price,
                   serial_last_4: assetData.serial_last_4
                 } }
               );
@@ -1416,7 +1710,9 @@ router.get('/import-template', protect, admin, async (req, res) => {
         'Condition': '',
         'Store': '',
         'Location': '',
-        'Status': ''
+        'Status': '',
+        'Quantity': '',
+        'Price': ''
       }
     ];
     const workbook = xlsx.utils.book_new();

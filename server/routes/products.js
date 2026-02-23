@@ -95,21 +95,66 @@ router.post('/:id/children', protect, admin, upload.single('image'), async (req,
 
 router.put('/:id', protect, admin, upload.single('image'), async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: 'Product not found' });
     const { name } = req.body;
-    const oldName = product.name;
-    if (name) product.name = name;
     if (req.file) {
       await resizeImage(req.file.path);
-      product.image = `/uploads/${path.basename(req.file.path)}`;
     }
-    const updated = await product.save();
-    // Update assets if name changed
-    if (name) {
-      await Asset.updateMany({ product_name: oldName }, { $set: { product_name: name } });
+    const imagePath = req.file ? `/uploads/${path.basename(req.file.path)}` : null;
+
+    // First try root-level product document
+    let product = await Product.findById(req.params.id);
+    if (product) {
+      const oldName = product.name;
+      if (name) product.name = name;
+      if (imagePath) product.image = imagePath;
+      const updated = await product.save();
+      if (name) {
+        const query = { product_name: oldName };
+        if (product.store) query.store = product.store;
+        await Asset.updateMany(query, { $set: { product_name: name } });
+      }
+      return res.json(updated);
     }
-    res.json(updated);
+
+    // If not found as root, search nested children
+    const filter = {};
+    if (req.activeStore) {
+      filter.$or = [
+        { store: req.activeStore },
+        { store: null },
+        { store: { $exists: false } }
+      ];
+    }
+    const roots = await Product.find(filter);
+    let rootDoc = null;
+    let found = null;
+    for (const r of roots) {
+      const f = findInTree(r.children || [], String(req.params.id));
+      if (f && f.node) {
+        rootDoc = r;
+        found = f;
+        break;
+      }
+    }
+    if (!rootDoc || !found) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    const node = found.node;
+    const oldName = node.name;
+    if (name) node.name = name;
+    if (imagePath) node.image = imagePath;
+
+    rootDoc.markModified('children');
+    await rootDoc.save();
+
+    if (name && oldName && name !== oldName) {
+      const query = { product_name: oldName };
+      if (rootDoc.store) query.store = rootDoc.store;
+      await Asset.updateMany(query, { $set: { product_name: name } });
+    }
+
+    res.json(rootDoc);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }

@@ -31,6 +31,11 @@ const assetSchema = new mongoose.Schema({
     default: '',
     index: true
   },
+  po_number: {
+    type: String,
+    default: '',
+    index: true
+  },
   rfid: {
     type: String,
     default: '',
@@ -139,6 +144,10 @@ const assetSchema = new mongoose.Schema({
     type: Number,
     default: 1,
     min: 1
+  },
+  price: {
+    type: Number,
+    default: 0
   }
 }, { timestamps: true });
 

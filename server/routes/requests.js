@@ -1,11 +1,45 @@
 const express = require('express');
 const router = express.Router();
 const Request = require('../models/Request');
+const Store = require('../models/Store');
 const xlsx = require('xlsx');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, admin, adminOrViewer, restrictViewer } = require('../middleware/authMiddleware');
 const sendEmail = require('../utils/sendEmail');
 
-router.post('/', protect, async (req, res) => {
+async function applyViewerStoreFilter(req, filter) {
+  if (req.user?.role !== 'Viewer') {
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+    return;
+  }
+
+  const scope = req.user.accessScope || 'All';
+  if (scope === 'All') {
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+    return;
+  }
+
+  const mainStores = await Store.find({
+    isMainStore: true,
+    name: { $regex: scope, $options: 'i' }
+  }).select('_id').lean();
+
+  const mainIds = mainStores.map(s => s._id);
+  const childStores = await Store.find({ parentStore: { $in: mainIds } }).select('_id').lean();
+  const allowedIds = [...mainIds, ...childStores.map(s => s._id)];
+
+  if (req.activeStore) {
+    const isAllowed = allowedIds.some(id => String(id) === String(req.activeStore));
+    filter.store = isAllowed ? req.activeStore : { $in: [] };
+  } else {
+    filter.store = { $in: allowedIds };
+  }
+}
+
+router.post('/', protect, restrictViewer, async (req, res) => {
   try {
     const { item_name, quantity, description, store } = req.body;
     const request = await Request.create({
@@ -44,12 +78,12 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
-router.get('/', protect, admin, async (req, res) => {
+router.get('/', protect, adminOrViewer, async (req, res) => {
   try {
     const { status, q } = req.query;
     const filter = {};
     if (status) filter.status = status;
-    if (req.activeStore) filter.store = req.activeStore;
+    await applyViewerStoreFilter(req, filter);
     
     let requests = await Request.find(filter)
       .populate('requester', 'name email phone username')
@@ -114,12 +148,12 @@ router.put('/:id', protect, admin, async (req, res) => {
 module.exports = router;
 
 // Export requests to Excel
-router.get('/export', protect, admin, async (req, res) => {
+router.get('/export', protect, adminOrViewer, async (req, res) => {
   try {
     const { status, q } = req.query;
     const filter = {};
     if (status) filter.status = status;
-    if (req.activeStore) filter.store = req.activeStore;
+    await applyViewerStoreFilter(req, filter);
     
     let requests = await Request.find(filter)
       .populate('requester', 'name email phone username')

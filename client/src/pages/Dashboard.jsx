@@ -107,7 +107,7 @@ const Dashboard = () => {
       </div>
 
       {/* Action Center (Notifications) - Top Left Priority */}
-      {(stats?.overview?.pendingRequests > 0 || stats?.overview?.pendingReturns > 0) && (
+      {(stats?.overview?.pendingRequests > 0 || (user?.role !== 'Viewer' && stats?.overview?.pendingReturns > 0)) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
           
           {/* Technician Request Notification */}
@@ -134,7 +134,7 @@ const Dashboard = () => {
           )}
 
           {/* Return Request Notification */}
-          {stats.overview.pendingReturns > 0 && (
+          {user?.role !== 'Viewer' && stats.overview.pendingReturns > 0 && (
             <div className="bg-white border-l-4 border-blue-500 p-5 rounded-lg shadow-sm flex items-start justify-between group hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                  <div className="p-2 bg-blue-50 text-blue-600 rounded-full mt-1">
@@ -159,35 +159,39 @@ const Dashboard = () => {
       )}
 
       {/* Quick Actions Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Link to="/assets?action=add" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-100 transition-colors">
-            <Plus className="w-6 h-6" />
-          </div>
-          <span className="font-semibold text-gray-700 text-sm">Add New Asset</span>
-        </Link>
-        
-        <Link to="/receive-process" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
-          <div className="p-3 bg-purple-50 text-purple-600 rounded-xl group-hover:bg-purple-100 transition-colors">
-            <ArrowDownLeft className="w-6 h-6" />
-          </div>
-          <span className="font-semibold text-gray-700 text-sm">Receive / Return</span>
-        </Link>
-        
-        <Link to="/assets" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
-           <div className="p-3 bg-green-50 text-green-600 rounded-xl group-hover:bg-green-100 transition-colors">
-            <Search className="w-6 h-6" />
-          </div>
-          <span className="font-semibold text-gray-700 text-sm">Search Assets</span>
-        </Link>
-        
-        <Link to="/stores" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
-           <div className="p-3 bg-orange-50 text-orange-600 rounded-xl group-hover:bg-orange-100 transition-colors">
-            <MapPin className="w-6 h-6" />
-          </div>
-          <span className="font-semibold text-gray-700 text-sm">Manage Locations</span>
-        </Link>
-      </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {user?.role !== 'Viewer' && (
+            <>
+              <Link to="/assets?action=add" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
+                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-100 transition-colors">
+                  <Plus className="w-6 h-6" />
+                </div>
+                <span className="font-semibold text-gray-700 text-sm">Add New Asset</span>
+              </Link>
+              
+              <Link to="/receive-process" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
+                <div className="p-3 bg-purple-50 text-purple-600 rounded-xl group-hover:bg-purple-100 transition-colors">
+                  <ArrowDownLeft className="w-6 h-6" />
+                </div>
+                <span className="font-semibold text-gray-700 text-sm">Receive / Return</span>
+              </Link>
+            </>
+          )}
+          
+          <Link to="/assets" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
+             <div className="p-3 bg-green-50 text-green-600 rounded-xl group-hover:bg-green-100 transition-colors">
+              <Search className="w-6 h-6" />
+            </div>
+            <span className="font-semibold text-gray-700 text-sm">Search Assets</span>
+          </Link>
+          
+          <Link to="/stores" className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center gap-3 hover:shadow-md hover:-translate-y-1 transition-all group">
+             <div className="p-3 bg-orange-50 text-orange-600 rounded-xl group-hover:bg-orange-100 transition-colors">
+              <MapPin className="w-6 h-6" />
+            </div>
+            <span className="font-semibold text-gray-700 text-sm">Manage Locations</span>
+          </Link>
+        </div>
 
       {/* Main Charts & Stats */}
       <DashboardCharts stats={stats} />

@@ -25,9 +25,14 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['Super Admin', 'Admin', 'Technician'],
+    enum: ['Super Admin', 'Admin', 'Technician', 'Viewer'],
     default: 'Technician',
     index: true
+  },
+  accessScope: {
+    type: String,
+    enum: ['All', 'SCY', 'NOC', 'IT'],
+    default: 'All'
   },
   assignedStore: {
     type: mongoose.Schema.Types.ObjectId,

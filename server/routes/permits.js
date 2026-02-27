@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Permit = require('../models/Permit');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, admin } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -38,7 +38,7 @@ const upload = multer({
 // @desc    Get all permits
 // @route   GET /api/permits
 // @access  Private
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, admin, async (req, res) => {
   try {
     const { type } = req.query;
     const filter = {};
@@ -58,7 +58,7 @@ router.get('/', protect, async (req, res) => {
 // @desc    Create a permit
 // @route   POST /api/permits
 // @access  Private
-router.post('/', protect, upload.single('file'), async (req, res) => {
+router.post('/', protect, admin, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'Please upload a file' });
@@ -85,7 +85,7 @@ router.post('/', protect, upload.single('file'), async (req, res) => {
 // @desc    Delete a permit
 // @route   DELETE /api/permits/:id
 // @access  Private
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, admin, async (req, res) => {
   try {
     const permit = await Permit.findById(req.params.id);
 

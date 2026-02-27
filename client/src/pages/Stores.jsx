@@ -3,7 +3,7 @@ import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
 const Stores = () => {
-  const { activeStore } = useAuth();
+  const { activeStore, user } = useAuth();
   const [stores, setStores] = useState([]);
   const [newName, setNewName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -85,6 +85,7 @@ const Stores = () => {
         />
       </div>
       
+      {user?.role !== 'Viewer' && (
       <form onSubmit={handleAdd} className="mb-8 flex flex-wrap gap-4 items-end bg-white p-4 rounded shadow">
         <div>
           <label className="block text-sm font-medium text-gray-700">Location Name</label>
@@ -99,6 +100,7 @@ const Stores = () => {
         </div>
         <button type="submit" className="bg-amber-600 hover:bg-amber-700 text-black px-4 py-2 rounded h-10">Add Location</button>
       </form>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {stores.filter(s => {
@@ -128,10 +130,12 @@ const Stores = () => {
                   <div className="mt-1 text-sm text-gray-600">
                     Total available in store: <span className="font-semibold">{store.availableAssetCount ?? 0}</span>
                   </div>
+                  {user?.role !== 'Viewer' && (
                   <div className="flex gap-2 justify-end border-t pt-2">
                     <button onClick={() => startEdit(store)} className="text-amber-600 text-sm hover:underline">Edit</button>
                     <button onClick={() => handleDelete(store._id)} className="text-red-500 text-sm hover:underline">Delete</button>
                   </div>
+                  )}
                 </>
               )}
             </div>

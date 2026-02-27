@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import api from '../api/axios';
+import { useAuth } from '../context/AuthContext';
 import { Plus, Edit, Trash2, Eye, Printer, Paperclip, Download, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const PurchaseOrders = ({ onImportClick, headerActions }) => {
+  const { user } = useAuth();
   const [pos, setPos] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [view, setView] = useState('list'); // list, form
@@ -288,10 +290,11 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
   );
 
   if (view === 'form') {
+    const isReadOnly = user?.role === 'Viewer';
     return (
       <div className="container mx-auto p-4 max-w-4xl">
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">{editingId ? 'Edit Purchase Order' : 'New Purchase Order'}</h1>
+          <h1 className="text-2xl font-bold">{editingId ? (isReadOnly ? 'View Purchase Order' : 'Edit Purchase Order') : 'New Purchase Order'}</h1>
           <button
             onClick={() => { setView('list'); resetForm(); }}
             className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
@@ -301,6 +304,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white p-6 rounded shadow-lg space-y-6">
+          <fieldset disabled={isReadOnly} className="contents">
           {/* Header Info */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
@@ -367,13 +371,15 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
           <div>
             <div className="flex justify-between items-center mb-2">
               <h3 className="text-lg font-medium">Items</h3>
-              <button
-                type="button"
-                onClick={addItem}
-                className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
-              >
-                + Add Item
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={addItem}
+                  className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
+                >
+                  + Add Item
+                </button>
+              )}
             </div>
             <table className="min-w-full divide-y divide-gray-200 border">
               <thead className="bg-gray-50">
@@ -433,9 +439,11 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                       {item.total.toFixed(2)}
                     </td>
                     <td className="px-4 py-2 text-center">
-                      <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-700">
-                        <Trash2 size={16} />
-                      </button>
+                      {!isReadOnly && (
+                        <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-700">
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -447,12 +455,14 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Attachments (Slips, Bills, Hardcopies)</label>
             <div className="border border-gray-300 rounded-md p-4">
-              <input
-                type="file"
-                multiple
-                onChange={handleFileChange}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100"
-              />
+              {!isReadOnly && (
+                <input
+                  type="file"
+                  multiple
+                  onChange={handleFileChange}
+                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100"
+                />
+              )}
               
               {/* Existing Attachments */}
               {existingAttachments.length > 0 && (
@@ -508,6 +518,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                 value={formData.status}
                 onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                 className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                disabled={isReadOnly}
               >
                 <option value="Draft">Draft</option>
                 <option value="Submitted">Submitted</option>
@@ -521,17 +532,20 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                 onClick={() => { setView('list'); resetForm(); }}
                 className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
               >
-                Cancel
+                {isReadOnly ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="bg-amber-600 text-white px-6 py-2 rounded hover:bg-amber-700 disabled:opacity-50"
-              >
-                {loading ? 'Saving...' : 'Save Purchase Order'}
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-amber-600 text-white px-6 py-2 rounded hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {loading ? 'Saving...' : 'Save Purchase Order'}
+                </button>
+              )}
             </div>
           </div>
+          </fieldset>
         </form>
         {passwordModal}
       </div>
@@ -544,7 +558,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
         <h1 className="text-2xl font-bold">Purchase Orders</h1>
         <div className="flex gap-2">
           {headerActions}
-          {onImportClick && (
+          {onImportClick && user?.role !== 'Viewer' && (
             <button
               onClick={onImportClick}
               className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-green-700 shadow-sm transition-all"
@@ -558,18 +572,22 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
           >
             <Download size={20} /> Export POs
           </button>
-          <button
-            onClick={downloadPOTemplate}
-            className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded flex items-center gap-2 shadow-sm transition-all"
-          >
-            <FileSpreadsheet size={20} /> PO Template
-          </button>
-          <button
-            onClick={() => { resetForm(); setView('form'); }}
-            className="bg-amber-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-amber-700 shadow-sm transition-all"
-          >
-            <Plus size={20} /> New PO
-          </button>
+          {user?.role !== 'Viewer' && (
+            <>
+              <button
+                onClick={downloadPOTemplate}
+                className="bg-gray-900 hover:bg-gray-800 text-white px-4 py-2 rounded flex items-center gap-2 shadow-sm transition-all"
+              >
+                <FileSpreadsheet size={20} /> PO Template
+              </button>
+              <button
+                onClick={() => { resetForm(); setView('form'); }}
+                className="bg-amber-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-amber-700 shadow-sm transition-all"
+              >
+                <Plus size={20} /> New PO
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -610,12 +628,20 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <button onClick={() => handleEdit(po)} className="text-indigo-600 hover:text-indigo-900 mr-4" title="Edit/View">
-                    <Edit size={18} />
-                  </button>
-                  <button onClick={() => handleDelete(po._id)} className="text-red-600 hover:text-red-900" title="Delete">
-                    <Trash2 size={18} />
-                  </button>
+                  {user?.role !== 'Viewer' ? (
+                    <>
+                      <button onClick={() => handleEdit(po)} className="text-indigo-600 hover:text-indigo-900 mr-4" title="Edit/View">
+                        <Edit size={18} />
+                      </button>
+                      <button onClick={() => handleDelete(po._id)} className="text-red-600 hover:text-red-900" title="Delete">
+                        <Trash2 size={18} />
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => handleEdit(po)} className="text-indigo-600 hover:text-indigo-900" title="View">
+                      <Eye size={18} />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

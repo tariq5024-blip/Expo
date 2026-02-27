@@ -12,7 +12,7 @@ const ProductDetails = () => {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [limit] = useState(5000);
+  const [limit] = useState(250);
   
   // Client-side pagination
   const [currentPage, setCurrentPage] = useState(1);

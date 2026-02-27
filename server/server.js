@@ -175,33 +175,30 @@ const fs = require('fs');
 const clientDist = path.resolve(__dirname, '../client/dist');
 const indexHtml = path.join(clientDist, 'index.html');
 
-// 1. Debug Route (Always available)
-app.get('/debug-fs', (req, res) => {
-  const debugInfo = {
-    cwd: process.cwd(),
-    __dirname: __dirname,
-    clientDistPath: clientDist,
-    clientDistExists: fs.existsSync(clientDist),
-    indexHtmlExists: fs.existsSync(indexHtml),
-    rootDirContents: [],
-    clientDirContents: [],
-    distDirContents: []
-  };
-
-  try {
-    const rootDir = path.resolve(__dirname, '..');
-    if (fs.existsSync(rootDir)) debugInfo.rootDirContents = fs.readdirSync(rootDir);
-    
-    const clientDir = path.resolve(rootDir, 'client');
-    if (fs.existsSync(clientDir)) debugInfo.clientDirContents = fs.readdirSync(clientDir);
-    
-    if (fs.existsSync(clientDist)) debugInfo.distDirContents = fs.readdirSync(clientDist);
-  } catch (error) {
-    debugInfo.error = error.message;
-  }
-
-  res.json(debugInfo);
-});
+if (String(process.env.ENABLE_DEBUG_ROUTES || '').toLowerCase() === 'true') {
+  app.get('/debug-fs', (req, res) => {
+    const debugInfo = {
+      cwd: process.cwd(),
+      __dirname: __dirname,
+      clientDistPath: clientDist,
+      clientDistExists: fs.existsSync(clientDist),
+      indexHtmlExists: fs.existsSync(indexHtml),
+      rootDirContents: [],
+      clientDirContents: [],
+      distDirContents: []
+    };
+    try {
+      const rootDir = path.resolve(__dirname, '..');
+      if (fs.existsSync(rootDir)) debugInfo.rootDirContents = fs.readdirSync(rootDir);
+      const clientDir = path.resolve(rootDir, 'client');
+      if (fs.existsSync(clientDir)) debugInfo.clientDirContents = fs.readdirSync(clientDir);
+      if (fs.existsSync(clientDist)) debugInfo.distDirContents = fs.readdirSync(clientDist);
+    } catch (error) {
+      debugInfo.error = error.message;
+    }
+    res.json(debugInfo);
+  });
+}
 
 // 2. Version Route (Always available)
 app.get('/version', (req, res) => {
@@ -261,7 +258,9 @@ const connectDB = async () => {
     });
     console.log('MongoDB Connected');
     
-    await seedStoresAndUsers();
+    if (String(process.env.SEED_DEFAULTS || '').toLowerCase() === 'true') {
+      await seedStoresAndUsers();
+    }
     dropSerialUniqueIndex();
 
     if (!backupJobStarted) {
@@ -370,5 +369,19 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+const serverInstance = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const shutdown = async (signal) => {
+  try {
+    await mongoose.connection.close();
+  } catch {}
+  try {
+    serverInstance.close(() => {
+      process.exit(0);
+    });
+  } catch {
+    process.exit(0);
+  }
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

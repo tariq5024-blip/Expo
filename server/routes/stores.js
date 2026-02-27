@@ -47,15 +47,40 @@ router.get('/', protect, async (req, res) => {
         // If just requesting all stores generally (fallback)
         else {
              // Show assigned store OR children of assigned store
-             // This is complex for a simple query.
-             // Let's assume most queries are targeted.
-             // If no specific query, maybe restrict to assigned store ID?
-             // Or allow finding children of assigned store.
-             // For safety, let's just force the scope.
              filter.$or = [
                  { _id: req.user.assignedStore },
                  { parentStore: req.user.assignedStore }
              ];
+        }
+    } else if (req.user.role === 'Viewer') {
+        const scope = req.user.accessScope || 'All';
+        
+        if (scope !== 'All') {
+            // Filter Main Stores by name
+            if (req.query.main === 'true') {
+                 filter.name = { $regex: scope, $options: 'i' };
+            }
+            // Filter Locations (child stores)
+            else if (req.query.parent) {
+                 // Verify parent store matches scope
+                 const parent = await Store.findById(req.query.parent);
+                 if (!parent || !parent.name.toUpperCase().includes(scope)) {
+                     return res.json([]);
+                 }
+            }
+            // Fallback: restrict to allowed main stores and their children
+            else {
+                 const allowedMainStores = await Store.find({ 
+                     isMainStore: true, 
+                     name: { $regex: scope, $options: 'i' } 
+                 }).select('_id');
+                 const allowedIds = allowedMainStores.map(s => s._id);
+                 
+                 filter.$or = [
+                     { _id: { $in: allowedIds } },
+                     { parentStore: { $in: allowedIds } }
+                 ];
+            }
         }
     }
 

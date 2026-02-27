@@ -49,8 +49,8 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/login" />;
   }
 
-  // Super Admin Logic: Must have active store selected, unless on /portal
-  if (user.role === 'Super Admin' && !activeStore && location.pathname !== '/portal') {
+  // Super Admin / Viewer Logic: Must have active store selected, unless on /portal
+  if ((user.role === 'Super Admin' || user.role === 'Viewer') && !activeStore && location.pathname !== '/portal') {
     return <Navigate to="/portal" />;
   }
 
@@ -98,7 +98,7 @@ function App() {
           <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/portal" element={
-            <ProtectedRoute allowedRoles={['Super Admin']}>
+            <ProtectedRoute allowedRoles={['Super Admin', 'Viewer']}>
               <Portal />
             </ProtectedRoute>
           } />
@@ -123,13 +123,13 @@ function App() {
           } />
           
           <Route path="/assets" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <Assets />
             </ProtectedRoute>
           } />
           
           <Route path="/asset/:id" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <AssetHistory />
             </ProtectedRoute>
           } />
@@ -153,7 +153,7 @@ function App() {
           } />
 
           <Route path="/stores" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <Stores />
             </ProtectedRoute>
           } />
@@ -177,7 +177,7 @@ function App() {
           } />
           
           <Route path="/admin-requests" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <AdminRequests />
             </ProtectedRoute>
           } />
@@ -189,13 +189,13 @@ function App() {
           } />
 
           <Route path="/vendors" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <Vendors />
             </ProtectedRoute>
           } />
 
           <Route path="/purchase-orders" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <PurchaseOrders />
             </ProtectedRoute>
           } />
@@ -219,13 +219,13 @@ function App() {
           } />
 
           <Route path="/products" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <Products readOnly={true} />
             </ProtectedRoute>
           } />
 
           <Route path="/products/:productName" element={
-            <ProtectedRoute allowedRoles={['Admin']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer']}>
               <ProductDetails />
             </ProtectedRoute>
           } />

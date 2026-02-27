@@ -112,7 +112,7 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
       }
     };
 
-    if (user?.role === 'Admin') {
+    if (user?.role === 'Admin' || user?.role === 'Viewer' || user?.role === 'Super Admin') {
       fetchProducts();
     }
   }, [user, location.pathname]);
@@ -122,7 +122,7 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
   };
 
   const navItems = [
-    { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={20} />, roles: ['Admin'] },
+    { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={20} />, roles: ['Admin', 'Viewer'] },
     {
       name: 'Events',
       icon: <Calendar size={20} />,
@@ -135,7 +135,7 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
     { 
       name: 'Assets', 
       icon: <Box size={20} />, 
-      roles: ['Admin'],
+      roles: ['Admin', 'Viewer'],
       subItems: [
         { name: 'All Assets', path: '/assets', uniqueKey: 'all-assets' },
         ...productsTree.map(root => ({
@@ -157,9 +157,9 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
     },
     { name: 'Tech Assets', path: '/admin-tech-assets', icon: <Box size={20} />, roles: ['Admin'] },
     { name: 'Add Members', path: '/add-members', icon: <Users size={20} />, roles: ['Admin'] },
-    { name: 'Locations', path: '/stores', icon: <Store size={20} />, roles: ['Admin'] },
+    { name: 'Locations', path: '/stores', icon: <Store size={20} />, roles: ['Admin', 'Viewer'] },
     { name: 'Gate Passes', path: '/passes', icon: <Ticket size={20} />, roles: ['Admin'] },
-    { name: 'Products', path: '/products', icon: <Box size={20} />, roles: ['Admin'] },
+    { name: 'Products', path: '/products', icon: <Box size={20} />, roles: ['Admin', 'Viewer'] },
     { name: 'Scanner', path: '/scanner', icon: <Box size={20} />, roles: ['Technician'] },
     { name: 'My Assets', path: '/my-assets', icon: <Box size={20} />, roles: ['Technician'] },
     { name: 'Request Tools', path: '/tech-request', icon: <Box size={20} />, roles: ['Technician'] },
@@ -326,7 +326,7 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
       </nav>
 
       <div className={`p-2 border-t ${theme.divider} bg-black/20`}>
-        {user?.role === 'Super Admin' && (
+        {(user?.role === 'Super Admin' || user?.role === 'Viewer') && (
           <Link
             to="/portal"
             className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 px-4'} w-full py-3 ${theme.storeText} hover:bg-black/10 rounded-lg transition-colors mb-2`}

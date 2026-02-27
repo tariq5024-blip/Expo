@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../api/axios';
+import { useAuth } from '../context/AuthContext';
 
 const AdminRequests = () => {
+  const { user } = useAuth();
   const [requests, setRequests] = useState([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -99,7 +101,9 @@ const AdminRequests = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Technician</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                {user?.role !== 'Viewer' && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                )}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -116,21 +120,23 @@ const AdminRequests = () => {
                   </td>
                   <td className="px-6 py-4">{r.status}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{new Date(r.updatedAt).toLocaleString()}</td>
-                  <td className="px-6 py-4">
-                    {r.status === 'Approved' ? (
-                      <span className="text-green-600 font-semibold">Approved</span>
-                    ) : r.status === 'Ordered' ? (
-                      <span className="text-amber-600 font-semibold">Ordered</span>
-                    ) : r.status === 'Rejected' ? (
-                      <span className="text-red-600 font-semibold">Rejected</span>
-                    ) : (
-                      <div className="flex gap-2">
-                        <button onClick={() => updateStatus(r._id, 'Approved')} className="text-green-600">Approve</button>
-                        <button onClick={() => updateStatus(r._id, 'Ordered')} className="text-amber-600">Mark Ordered</button>
-                        <button onClick={() => updateStatus(r._id, 'Rejected')} className="text-red-600">Reject</button>
-                      </div>
-                    )}
-                  </td>
+                  {user?.role !== 'Viewer' && (
+                    <td className="px-6 py-4">
+                      {r.status === 'Approved' ? (
+                        <span className="text-green-600 font-semibold">Approved</span>
+                      ) : r.status === 'Ordered' ? (
+                        <span className="text-amber-600 font-semibold">Ordered</span>
+                      ) : r.status === 'Rejected' ? (
+                        <span className="text-red-600 font-semibold">Rejected</span>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button onClick={() => updateStatus(r._id, 'Approved')} className="text-green-600">Approve</button>
+                          <button onClick={() => updateStatus(r._id, 'Ordered')} className="text-amber-600">Mark Ordered</button>
+                          <button onClick={() => updateStatus(r._id, 'Rejected')} className="text-red-600">Reject</button>
+                        </div>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

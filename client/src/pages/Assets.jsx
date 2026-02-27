@@ -24,7 +24,7 @@ const Assets = () => {
   const productParam = searchParams.get('product');
   const statusParam = searchParams.get('status');
   const actionParam = searchParams.get('action');
-  const { activeStore } = useAuth();
+  const { user, activeStore } = useAuth();
 
   const [assets, setAssets] = useState([]);
   const [stores, setStores] = useState([]);
@@ -814,35 +814,39 @@ const Assets = () => {
           {productParam ? `${productParam} Management` : 'Assets Management'}
         </h1>
         <div className="flex flex-wrap gap-2 items-center">
-           <button 
-             onClick={() => {
-               setSelectedProduct('');
-               setAddForm(prev => ({ ...prev, store: activeStore?._id || prev.store, status: prev.status || 'In Store', condition: prev.condition || 'New' }));
-               setShowAddModal(true);
-             }} 
-             className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-           >
-             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-               <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-             </svg>
-             Add New Asset
-           </button>
-           <button
-             onClick={() => setShowBulkEditModal(true)}
-             disabled={selectedIds.length === 0}
-             className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg border text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
-           >
-             Bulk Edit ({selectedIds.length})
-           </button>
-           <button
-             onClick={handleBulkDelete}
-             disabled={selectedIds.length === 0 || bulkLoading}
-             className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg border text-sm ${selectedIds.length === 0 || bulkLoading ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
-           >
-             {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedIds.length})`}
-           </button>
-          <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Bulk Import</button>
-          <button onClick={handleDownloadTemplate} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Download Sample</button>
+           {user?.role !== 'Viewer' && (
+             <>
+               <button 
+                 onClick={() => {
+                   setSelectedProduct('');
+                   setAddForm(prev => ({ ...prev, store: activeStore?._id || prev.store, status: prev.status || 'In Store', condition: prev.condition || 'New' }));
+                   setShowAddModal(true);
+                 }} 
+                 className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+               >
+                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                   <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                 </svg>
+                 Add New Asset
+               </button>
+               <button
+                 onClick={() => setShowBulkEditModal(true)}
+                 disabled={selectedIds.length === 0}
+                 className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg border text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
+               >
+                 Bulk Edit ({selectedIds.length})
+               </button>
+               <button
+                 onClick={handleBulkDelete}
+                 disabled={selectedIds.length === 0 || bulkLoading}
+                 className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg border text-sm ${selectedIds.length === 0 || bulkLoading ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
+               >
+                 {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedIds.length})`}
+               </button>
+               <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Bulk Import</button>
+               <button onClick={handleDownloadTemplate} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Download Sample</button>
+             </>
+           )}
           <button onClick={handleExport} className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">Export</button>
         </div>
       </div>
@@ -1146,33 +1150,37 @@ const Assets = () => {
               Download Selected
             </button>
             <div className="ml-auto flex gap-2">
-              <button
-                onClick={handleTopEdit}
-                disabled={selectedIds.length === 0}
-                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
-                title="Edit selected (single = Edit; multiple = Bulk Edit)"
-              >
-                <Edit size={16} />
-                {selectedIds.length > 1 ? 'Bulk Edit' : 'Edit'}
-              </button>
-              <button
-                onClick={handleTopAssign}
-                disabled={selectedIds.length !== 1}
-                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length !== 1 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
-                title="Assign selected asset"
-              >
-                <UserCheck size={16} />
-                Assign
-              </button>
-              <button
-                onClick={handleTopDelete}
-                disabled={selectedIds.length === 0}
-                className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
-                title="Delete selected"
-              >
-                <Trash2 size={16} />
-                Delete
-              </button>
+              {user?.role !== 'Viewer' && (
+                <>
+                  <button
+                    onClick={handleTopEdit}
+                    disabled={selectedIds.length === 0}
+                    className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+                    title="Edit selected (single = Edit; multiple = Bulk Edit)"
+                  >
+                    <Edit size={16} />
+                    {selectedIds.length > 1 ? 'Bulk Edit' : 'Edit'}
+                  </button>
+                  <button
+                    onClick={handleTopAssign}
+                    disabled={selectedIds.length !== 1}
+                    className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length !== 1 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+                    title="Assign selected asset"
+                  >
+                    <UserCheck size={16} />
+                    Assign
+                  </button>
+                  <button
+                    onClick={handleTopDelete}
+                    disabled={selectedIds.length === 0}
+                    className={`inline-flex items-center gap-2 h-10 px-4 rounded-lg text-sm ${selectedIds.length === 0 ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'} border`}
+                    title="Delete selected"
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1270,9 +1278,11 @@ const Assets = () => {
         <table className="min-w-full">
           <thead>
             <tr className="bg-gray-50 border-b">
-              <th className="px-3 py-2 md:px-4 md:py-3 text-center">
-                <input onClick={(e) => e.stopPropagation()} type="checkbox" checked={selectedIds.length === assets.length && assets.length > 0} onChange={toggleSelectAll} />
-              </th>
+              {user?.role !== 'Viewer' && (
+                <th className="px-3 py-2 md:px-4 md:py-3 text-center">
+                  <input onClick={(e) => e.stopPropagation()} type="checkbox" checked={selectedIds.length === assets.length && assets.length > 0} onChange={toggleSelectAll} />
+                </th>
+              )}
               {visibleColumns.uniqueId && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Unique ID</th>}
               {visibleColumns.name && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>}
               {visibleColumns.model && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Model</th>}
@@ -1297,15 +1307,17 @@ const Assets = () => {
               {visibleColumns.assignedTo && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Assigned To</th>}
               {visibleColumns.dateTime && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Date & Time</th>}
               {visibleColumns.price && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Price</th>}
-              {visibleColumns.action && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>}
+              {(visibleColumns.action && user?.role !== 'Viewer') && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {assets.map((asset) => (
               <tr key={asset._id} className={`hover:bg-gray-50 ${asset.isDuplicate ? 'bg-yellow-100' : ''} cursor-pointer`} onClick={() => window.open(`/asset/${asset._id}`, '_blank')}>
-                <td className="px-3 py-2 md:px-4 md:py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                  <input type="checkbox" checked={selectedIds.includes(asset._id)} onChange={() => toggleSelect(asset._id)} />
-                </td>
+                {user?.role !== 'Viewer' && (
+                  <td className="px-3 py-2 md:px-4 md:py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={selectedIds.includes(asset._id)} onChange={() => toggleSelect(asset._id)} />
+                  </td>
+                )}
                 {visibleColumns.uniqueId && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap font-mono text-xs text-gray-600 text-center hidden lg:table-cell">{asset.uniqueId || '-'}</td>}
                 {visibleColumns.name && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.name}</td>}
                 {visibleColumns.model && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.model_number}</td>}
@@ -1346,7 +1358,7 @@ const Assets = () => {
                   </td>
                 )}
                 {visibleColumns.price && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{typeof asset.price === 'number' ? asset.price : '-'}</td>}
-                {visibleColumns.action && (
+                {(visibleColumns.action && user?.role !== 'Viewer') && (
                   <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm" onClick={(e) => e.stopPropagation()}>
                     <div className="flex flex-col gap-1 sm:flex-row justify-center">
                       <button 
@@ -1449,45 +1461,47 @@ const Assets = () => {
               </div>
             </div>
 
-            <div className="flex gap-3 pt-3 border-t border-gray-100">
-              <button 
-                onClick={(e) => { e.stopPropagation(); handleEditClick(asset); }}
-                className="flex-1 flex items-center justify-center gap-2 bg-gray-50 text-gray-700 py-2 rounded-md text-sm font-medium hover:bg-gray-100 transition-colors border border-gray-200"
-              >
-                <Edit size={16} /> Edit
-              </button>
-              {asset.quantity > 1 && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleSplitClick(asset); }}
-                  className="flex-none flex items-center justify-center bg-purple-50 text-purple-700 p-2 rounded-md hover:bg-purple-100 transition-colors border border-purple-200"
-                  aria-label="Split"
-                >
-                  <Scissors size={16} />
-                </button>
-              )}
-              {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
+            {user?.role !== 'Viewer' && (
+              <div className="flex gap-3 pt-3 border-t border-gray-100">
                 <button 
-                  onClick={(e) => { e.stopPropagation(); handleUnassign(asset); }}
-                  className="flex-1 flex items-center justify-center gap-2 bg-orange-50 text-orange-700 py-2 rounded-md text-sm font-medium hover:bg-orange-100 transition-colors border border-orange-200"
+                  onClick={(e) => { e.stopPropagation(); handleEditClick(asset); }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-gray-50 text-gray-700 py-2 rounded-md text-sm font-medium hover:bg-gray-100 transition-colors border border-gray-200"
                 >
-                  <UserX size={16} /> Unassign
+                  <Edit size={16} /> Edit
                 </button>
-              ) : (
+                {user?.role !== 'Viewer' && asset.quantity > 1 && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleSplitClick(asset); }}
+                    className="flex-none flex items-center justify-center bg-purple-50 text-purple-700 p-2 rounded-md hover:bg-purple-100 transition-colors border border-purple-200"
+                    aria-label="Split"
+                  >
+                    <Scissors size={16} />
+                  </button>
+                )}
+                {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleUnassign(asset); }}
+                    className="flex-1 flex items-center justify-center gap-2 bg-orange-50 text-orange-700 py-2 rounded-md text-sm font-medium hover:bg-orange-100 transition-colors border border-orange-200"
+                  >
+                    <UserX size={16} /> Unassign
+                  </button>
+                ) : (
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleAssignClick(asset); }}
+                    className="flex-1 flex items-center justify-center gap-2 bg-green-50 text-green-700 py-2 rounded-md text-sm font-medium hover:bg-green-100 transition-colors border border-green-200"
+                  >
+                    <UserCheck size={16} /> Assign
+                  </button>
+                )}
                 <button 
-                  onClick={(e) => { e.stopPropagation(); handleAssignClick(asset); }}
-                  className="flex-1 flex items-center justify-center gap-2 bg-green-50 text-green-700 py-2 rounded-md text-sm font-medium hover:bg-green-100 transition-colors border border-green-200"
+                  onClick={(e) => { e.stopPropagation(); handleDelete(asset._id); }}
+                  className="flex-none flex items-center justify-center bg-red-50 text-red-700 p-2 rounded-md hover:bg-red-100 transition-colors border border-red-200"
+                  aria-label="Delete"
                 >
-                  <UserCheck size={16} /> Assign
+                  <Trash2 size={16} />
                 </button>
-              )}
-              <button 
-                onClick={(e) => { e.stopPropagation(); handleDelete(asset._id); }}
-                className="flex-none flex items-center justify-center bg-red-50 text-red-700 p-2 rounded-md hover:bg-red-100 transition-colors border border-red-200"
-                aria-label="Delete"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

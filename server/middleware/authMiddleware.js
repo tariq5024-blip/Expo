@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Session = require('../models/Session');
+const Store = require('../models/Store');
 
 const protect = async (req, res, next) => {
   try {
@@ -18,13 +19,35 @@ const protect = async (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ message: 'User not found' });
     }
-    if (req.user.role === 'Super Admin') {
+    if (req.user.role === 'Super Admin' || req.user.role === 'Viewer') {
       const activeStoreId = req.headers['x-active-store'];
       if (activeStoreId && activeStoreId !== 'undefined' && activeStoreId !== 'null' && activeStoreId !== 'all') {
         req.activeStore = activeStoreId;
       }
     } else if (req.user.assignedStore) {
       req.activeStore = req.user.assignedStore.toString();
+    }
+
+    if (req.user.role === 'Viewer' && req.activeStore) {
+      const scope = req.user.accessScope || 'All';
+      if (scope !== 'All') {
+        const selected = await Store.findById(req.activeStore).select('name isMainStore parentStore').lean();
+        if (!selected) {
+          return res.status(400).json({ message: 'Invalid active store' });
+        }
+        if (selected.isMainStore) {
+          if (!String(selected.name || '').toUpperCase().includes(String(scope).toUpperCase())) {
+            return res.status(403).json({ message: 'Store out of scope' });
+          }
+        } else if (selected.parentStore) {
+          const parent = await Store.findById(selected.parentStore).select('name').lean();
+          if (!String(parent?.name || '').toUpperCase().includes(String(scope).toUpperCase())) {
+            return res.status(403).json({ message: 'Store out of scope' });
+          }
+        } else if (!String(selected.name || '').toUpperCase().includes(String(scope).toUpperCase())) {
+          return res.status(403).json({ message: 'Store out of scope' });
+        }
+      }
     }
     next();
   } catch (error) {
@@ -41,6 +64,14 @@ const admin = (req, res, next) => {
   }
 };
 
+const adminOrViewer = (req, res, next) => {
+  if (req.user && (req.user.role === 'Admin' || req.user.role === 'Super Admin' || req.user.role === 'Viewer')) {
+    next();
+  } else {
+    res.status(401).json({ message: 'Not authorized' });
+  }
+};
+
 const superAdmin = (req, res, next) => {
   if (req.user && req.user.role === 'Super Admin') {
     next();
@@ -49,4 +80,11 @@ const superAdmin = (req, res, next) => {
   }
 };
 
-module.exports = { protect, admin, superAdmin };
+const restrictViewer = (req, res, next) => {
+  if (req.user && req.user.role === 'Viewer') {
+    return res.status(403).json({ message: 'Viewer account is read-only' });
+  }
+  next();
+};
+
+module.exports = { protect, admin, adminOrViewer, superAdmin, restrictViewer };

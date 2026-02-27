@@ -26,19 +26,36 @@ const Portal = () => {
   const [themeSaving, setThemeSaving] = useState(false);
 
   useEffect(() => {
-    if (user?.role !== 'Super Admin') {
+    const isGlobalViewer = user?.role === 'Viewer' && !user?.assignedStore;
+    if (user?.role !== 'Super Admin' && !isGlobalViewer) {
       navigate('/');
       return;
     }
 
     const fetchStores = async () => {
       try {
-        const [storesRes, requestsRes] = await Promise.all([
-          api.get('/stores?main=true'),
-          api.get('/stores?deletionRequested=true')
-        ]);
-        setStores(storesRes.data);
-        setDeletionRequests(requestsRes.data);
+        const promises = [api.get('/stores?main=true')];
+        // Only Super Admin can see deletion requests
+        if (user?.role === 'Super Admin') {
+          promises.push(api.get('/stores?deletionRequested=true'));
+        }
+        
+        const [storesRes, requestsRes] = await Promise.all(promises);
+        
+        let availableStores = storesRes.data || [];
+        
+        // Filter stores for Viewers based on accessScope
+        if (user?.role === 'Viewer' && user?.accessScope && user.accessScope !== 'All') {
+          availableStores = availableStores.filter(store => 
+            store.name.toUpperCase().includes(user.accessScope.toUpperCase()) || 
+            store.code?.toUpperCase() === user.accessScope.toUpperCase()
+          );
+        }
+        
+        setStores(availableStores);
+        if (requestsRes) {
+          setDeletionRequests(requestsRes.data);
+        }
       } catch (error) {
         console.error('Error fetching stores:', error);
       } finally {
@@ -213,7 +230,9 @@ const Portal = () => {
               <div className="text-sm font-bold text-slate-800 tracking-wide">{user?.name}</div>
               <div className="flex items-center justify-end gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                <div className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">Super Admin Access</div>
+                <div className="text-[10px] text-amber-600 font-bold uppercase tracking-widest">
+                  {user?.role === 'Super Admin' ? 'Super Admin Access' : 'Viewer Access'}
+                </div>
               </div>
             </div>
             
@@ -225,9 +244,11 @@ const Portal = () => {
               <Lock size={16} className="md:w-[18px] md:h-[18px]" />
             </div>
 
-            <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-all cursor-pointer shadow-sm">
-              <ShieldCheck size={18} className="md:w-[20px] md:h-[20px]" />
-            </div>
+            {user?.role === 'Super Admin' && (
+              <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-all cursor-pointer shadow-sm">
+                <ShieldCheck size={18} className="md:w-[20px] md:h-[20px]" />
+              </div>
+            )}
 
             <button
               onClick={() => {
@@ -257,7 +278,7 @@ const Portal = () => {
         </div>
 
         {/* Pending Deletion Requests - Moved to Top for Visibility */}
-        {deletionRequests.length > 0 && (
+        {user?.role === 'Super Admin' && deletionRequests.length > 0 && (
           <div className="mb-10 animate-fade-in-up">
             <div className="bg-red-50 border border-red-100 rounded-xl p-4 md:p-6">
               <h3 className="text-lg font-bold text-red-800 mb-4 flex items-center gap-2">
@@ -379,6 +400,7 @@ const Portal = () => {
         </div>
 
         {/* Quick Actions Grid - Admin Tools */}
+        {user?.role === 'Super Admin' && (
         <div className="mb-8">
            <h3 className="text-xs md:text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 md:mb-6 border-b border-slate-200 pb-2">
              Admin Utilities
@@ -507,6 +529,7 @@ const Portal = () => {
             </div>
           </div>
         </div>
+        )}
       </main>
 
       {/* Footer */}

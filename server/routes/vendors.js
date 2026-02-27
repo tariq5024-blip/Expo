@@ -1,17 +1,49 @@
 const express = require('express');
 const router = express.Router();
 const Vendor = require('../models/Vendor');
-const { protect, admin } = require('../middleware/authMiddleware');
+const Store = require('../models/Store');
+const { protect, admin, adminOrViewer } = require('../middleware/authMiddleware');
+
+async function applyViewerStoreFilter(req, filter) {
+  if (req.user?.role !== 'Viewer') {
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+    return;
+  }
+
+  const scope = req.user.accessScope || 'All';
+  if (scope === 'All') {
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+    return;
+  }
+
+  const mainStores = await Store.find({
+    isMainStore: true,
+    name: { $regex: scope, $options: 'i' }
+  }).select('_id').lean();
+
+  const mainIds = mainStores.map(s => s._id);
+  const childStores = await Store.find({ parentStore: { $in: mainIds } }).select('_id').lean();
+  const allowedIds = [...mainIds, ...childStores.map(s => s._id)];
+
+  if (req.activeStore) {
+    const isAllowed = allowedIds.some(id => String(id) === String(req.activeStore));
+    filter.store = isAllowed ? req.activeStore : { $in: [] };
+  } else {
+    filter.store = { $in: allowedIds };
+  }
+}
 
 // @desc    Get all vendors
 // @route   GET /api/vendors
 // @access  Private/Admin
-router.get('/', protect, admin, async (req, res) => {
+router.get('/', protect, adminOrViewer, async (req, res) => {
   try {
     const filter = {};
-    if (req.activeStore) {
-      filter.store = req.activeStore;
-    }
+    await applyViewerStoreFilter(req, filter);
     const vendors = await Vendor.find(filter).sort({ createdAt: -1 }).lean();
     res.json(vendors);
   } catch (error) {
@@ -22,14 +54,13 @@ router.get('/', protect, admin, async (req, res) => {
 // @desc    Get single vendor
 // @route   GET /api/vendors/:id
 // @access  Private/Admin
-router.get('/:id', protect, admin, async (req, res) => {
+router.get('/:id', protect, adminOrViewer, async (req, res) => {
   try {
-    const vendor = await Vendor.findById(req.params.id);
+    const filter = { _id: req.params.id };
+    await applyViewerStoreFilter(req, filter);
+
+    const vendor = await Vendor.findOne(filter).lean();
     if (!vendor) {
-      return res.status(404).json({ message: 'Vendor not found' });
-    }
-    // Check isolation
-    if (req.activeStore && vendor.store && vendor.store.toString() !== req.activeStore.toString()) {
       return res.status(404).json({ message: 'Vendor not found' });
     }
     res.json(vendor);

@@ -17,7 +17,8 @@ const AddMembers = () => {
     email: '',
     phone: '',
     password: '',
-    assignedStore: ''
+    assignedStore: '',
+    accessScope: 'All'
   });
 
   const [loading, setLoading] = useState(false);
@@ -27,7 +28,10 @@ const AddMembers = () => {
   const fetchMembers = useCallback(async () => {
     setFetching(true);
     try {
-      const endpoint = activeTab === 'technician' ? '/users' : '/users/admins';
+      let endpoint = '/users';
+      if (activeTab === 'admin') endpoint = '/users/admins';
+      if (activeTab === 'viewer') endpoint = '/users/viewers';
+      
       const res = await api.get(endpoint);
       setMembers(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
@@ -68,7 +72,8 @@ const AddMembers = () => {
       email: member.email,
       phone: member.phone,
       password: '', // Leave empty to keep unchanged
-      assignedStore: member.assignedStore?._id || member.assignedStore || ''
+      assignedStore: member.assignedStore?._id || member.assignedStore || '',
+      accessScope: member.accessScope || 'All'
     });
     setMessage({ type: '', text: '' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -82,7 +87,8 @@ const AddMembers = () => {
       email: '',
       phone: '',
       password: '',
-      assignedStore: ''
+      assignedStore: '',
+      accessScope: 'All'
     });
     setMessage({ type: '', text: '' });
   };
@@ -110,9 +116,17 @@ const AddMembers = () => {
     try {
       const payload = { ...formData };
       
-      // Remove assignedStore only if empty (Admin MUST have assignedStore)
-      if (!payload.assignedStore) {
+      // Clean payload based on role
+      if (activeTab === 'viewer') {
         delete payload.assignedStore;
+        // ensure accessScope is present (default All)
+        if (!payload.accessScope) payload.accessScope = 'All';
+      } else {
+        delete payload.accessScope;
+        // Remove assignedStore only if empty (Admin MUST have assignedStore)
+        if (!payload.assignedStore) {
+          delete payload.assignedStore;
+        }
       }
 
       // Remove password if empty during edit
@@ -122,11 +136,14 @@ const AddMembers = () => {
 
       if (editingId) {
         await api.put(`/users/${editingId}`, payload);
-        setMessage({ type: 'success', text: `${activeTab === 'technician' ? 'Technician' : 'Admin'} updated successfully!` });
+        setMessage({ type: 'success', text: 'User updated successfully!' });
       } else {
-        const endpoint = activeTab === 'technician' ? '/users' : '/users/admins';
+        let endpoint = '/users';
+        if (activeTab === 'admin') endpoint = '/users/admins';
+        if (activeTab === 'viewer') endpoint = '/users/viewers';
+        
         await api.post(endpoint, payload);
-        setMessage({ type: 'success', text: `${activeTab === 'technician' ? 'Technician' : 'Admin'} created successfully!` });
+        setMessage({ type: 'success', text: 'User created successfully!' });
       }
 
       handleCancelEdit(); // Reset form
@@ -134,7 +151,7 @@ const AddMembers = () => {
     } catch (err) {
       setMessage({ 
         type: 'error', 
-        text: err.response?.data?.message || `Error ${editingId ? 'updating' : 'creating'} ${activeTab}` 
+        text: err.response?.data?.message || `Error ${editingId ? 'updating' : 'creating'} user` 
       });
     } finally {
       setLoading(false);
@@ -161,19 +178,34 @@ const AddMembers = () => {
           Technicians
         </button>
         {user?.role === 'Super Admin' && (
-          <button
-            className={`px-4 py-2 font-medium ${
-              activeTab === 'admin' 
-                ? 'border-b-2 border-amber-600 text-amber-600' 
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-            onClick={() => {
-              setActiveTab('admin');
-              handleCancelEdit();
-            }}
-          >
-            Admins
-          </button>
+          <>
+            <button
+              className={`px-4 py-2 font-medium ${
+                activeTab === 'admin' 
+                  ? 'border-b-2 border-amber-600 text-amber-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => {
+                setActiveTab('admin');
+                handleCancelEdit();
+              }}
+            >
+              Admins
+            </button>
+            <button
+              className={`px-4 py-2 font-medium ${
+                activeTab === 'viewer' 
+                  ? 'border-b-2 border-amber-600 text-amber-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => {
+                setActiveTab('viewer');
+                handleCancelEdit();
+              }}
+            >
+              Viewers
+            </button>
+          </>
         )}
       </div>
 
@@ -266,20 +298,39 @@ const AddMembers = () => {
                 />
               </div>
 
-              {(activeTab === 'technician' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
+              {(activeTab === 'technician' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Assigned Store {activeTab === 'admin' ? '(Required)' : '(Optional)'}</label>
-                  <select
-                    name="assignedStore"
-                    value={formData.assignedStore}
-                    onChange={handleChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                  >
-                    <option value="">Select Store</option>
-                    {stores.map(store => (
-                      <option key={store._id} value={store._id}>{store.name}</option>
-                    ))}
-                  </select>
+                  <label className="block text-sm font-medium text-gray-700">
+                    {activeTab === 'viewer' ? 'Access Scope' : `Assigned Store ${activeTab === 'admin' ? '(Required)' : '(Optional)'}`}
+                  </label>
+                  
+                  {activeTab === 'viewer' ? (
+                    <select
+                      name="accessScope"
+                      value={formData.accessScope}
+                      onChange={handleChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    >
+                      <option value="All">All Stores</option>
+                      <option value="SCY">SCY Stores Only</option>
+                      <option value="NOC">NOC Stores Only</option>
+                      <option value="IT">IT Store Only</option>
+                    </select>
+                  ) : (
+                    <select
+                      name="assignedStore"
+                      value={formData.assignedStore}
+                      onChange={handleChange}
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    >
+                      <option value="">Select Store</option>
+                      {stores.map(store => (
+                        <option key={store._id} value={store._id}>
+                          {store.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               )}
 
@@ -312,7 +363,8 @@ const AddMembers = () => {
           <div className="bg-white rounded-lg shadow-md overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-800">
-                {activeTab === 'technician' ? 'Technicians List' : 'Admins List'}
+                {activeTab === 'technician' ? 'Technicians List' : 
+                 activeTab === 'admin' ? 'Admins List' : 'Viewers List'}
               </h2>
             </div>
             
@@ -322,8 +374,10 @@ const AddMembers = () => {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
-                    {(activeTab === 'technician' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Store</th>
+                    {(activeTab === 'technician' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        {activeTab === 'viewer' ? 'Access Scope' : 'Store'}
+                      </th>
                     )}
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
@@ -348,9 +402,11 @@ const AddMembers = () => {
                           <div className="text-sm text-gray-900">{member.email}</div>
                           <div className="text-sm text-gray-500">{member.phone}</div>
                         </td>
-                        {(activeTab === 'technician' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
+                        {(activeTab === 'technician' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {member.assignedStore?.name || '-'}
+                            {activeTab === 'viewer' 
+                              ? (member.accessScope === 'All' ? 'All Stores' : `${member.accessScope} Stores`)
+                              : (member.assignedStore?.name || '-')}
                           </td>
                         )}
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">

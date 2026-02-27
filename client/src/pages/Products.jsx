@@ -2,9 +2,13 @@ import { useState, useEffect } from 'react';
 import { Search, Edit2, Trash2, Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../api/axios';
+import { useAuth } from '../context/AuthContext';
 import PropTypes from 'prop-types';
 
 const Products = ({ readOnly = false }) => {
+  const { user } = useAuth();
+  const isReadOnly = readOnly || user?.role === 'Viewer';
+  
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -217,15 +221,15 @@ const Products = ({ readOnly = false }) => {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">
-            {readOnly ? 'Products View' : 'Products Management'}
+            {isReadOnly ? 'Products View' : 'Products Management'}
           </h1>
           <p className="text-sm text-gray-500">
-            {readOnly 
+            {isReadOnly 
               ? 'View all product categories and inventory statistics' 
               : 'Manage product images and view inventory statistics'}
           </p>
         </div>
-        {!readOnly && (
+        {!isReadOnly && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
             <h2 className="font-semibold mb-2">Bulk Product Assignment</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -297,7 +301,7 @@ const Products = ({ readOnly = false }) => {
             <div className="text-center py-12 text-gray-500">Loading...</div>
           ) : filteredProducts.length === 0 ? (
             <div className="text-center py-12 text-gray-500 bg-white rounded-xl shadow-sm border border-gray-100">
-              No products found. Use Bulk Product Assignment to add new products.
+              {isReadOnly ? 'No products found.' : 'No products found. Use Bulk Product Assignment to add new products.'}
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -319,7 +323,7 @@ const Products = ({ readOnly = false }) => {
                       >
                         View Details
                       </Link>
-                      {!readOnly && (
+                      {!isReadOnly && (
                         <div className="flex gap-2">
                           <button 
                             onClick={(e) => { e.stopPropagation(); setEditingProduct(product); setProductName(product.name); setShowEditModal(true); }}

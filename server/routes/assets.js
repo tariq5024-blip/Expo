@@ -7,14 +7,10 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const ActivityLog = require('../models/ActivityLog');
 const Request = require('../models/Request');
-const { protect, admin } = require('../middleware/authMiddleware');
-const multer = require('multer');
+const { protect, admin, restrictViewer } = require('../middleware/authMiddleware');
 const xlsx = require('xlsx');
-const sendEmail = require('../utils/sendEmail');
-const AssetCategory = require('../models/AssetCategory');
 
-// Multer setup for memory storage
-const upload = multer({ storage: multer.memoryStorage() });
+ 
 
 function capitalizeWords(s) {
   if (!s) return s;
@@ -42,32 +38,50 @@ async function generateUniqueId(assetType) {
   return `${prefix}${Date.now().toString().slice(-4)}`;
 }
 
-// @desc    Get recent activity logs
-// @route   GET /api/assets/recent-activity
-// @access  Private (Admin/Technician)
-router.get('/recent-activity', protect, async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
-    const query = {};
+    // @desc    Get recent activity logs
+    // @route   GET /api/assets/recent-activity
+    // @access  Private (Admin/Technician/Viewer)
+    router.get('/recent-activity', protect, async (req, res) => {
+      try {
+        const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
+        const query = {};
+        
+        if (req.activeStore) {
+          query.store = req.activeStore;
+        } else if (req.user.role === 'Viewer') {
+          // Enforcement for Viewer with no active store (Portal view)
+          const scope = req.user.accessScope || 'All';
+          if (scope !== 'All') {
+            const allowedMainStores = await Store.find({ 
+              isMainStore: true, 
+              name: { $regex: scope, $options: 'i' } 
+            }).select('_id');
+            const allowedMainIds = allowedMainStores.map(s => s._id);
+            
+            const childStores = await Store.find({
+              parentStore: { $in: allowedMainIds }
+            }).select('_id');
+            const childIds = childStores.map(s => s._id);
+            
+            const allAllowedIds = [...allowedMainIds, ...childIds];
+            query.store = { $in: allAllowedIds };
+          }
+        }
     
-    if (req.activeStore) {
-      query.store = req.activeStore;
-    }
-
-    if (req.query.source) {
-      query.source = req.query.source;
-    }
-
-    const logs = await ActivityLog.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-    res.json(logs);
-  } catch (error) {
-    console.error('Error fetching recent activity:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
+        if (req.query.source) {
+          query.source = req.query.source;
+        }
+    
+        const logs = await ActivityLog.find(query)
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .lean();
+        res.json(logs);
+      } catch (error) {
+        console.error('Error fetching recent activity:', error);
+        res.status(500).json({ message: error.message });
+      }
+    });
 
 // Helper to get store and its children IDs (always ObjectId for aggregations)
 async function getStoreIds(storeId) {
@@ -288,7 +302,31 @@ router.get('/', protect, async (req, res) => {
          filter.store = { $in: allowedIds };
       }
     } else {
-      // No restricted context (Super Admin global)
+      // No restricted context (Super Admin global or Viewer Global)
+      
+      // Viewer Global Scope Enforcement
+      if (req.user.role === 'Viewer') {
+        const scope = req.user.accessScope || 'All';
+        if (scope !== 'All') {
+          // Find all allowed store IDs
+          const allowedMainStores = await Store.find({ 
+            isMainStore: true, 
+            name: { $regex: scope, $options: 'i' } 
+          }).select('_id');
+          const allowedMainIds = allowedMainStores.map(s => s._id);
+          
+          const childStores = await Store.find({
+            parentStore: { $in: allowedMainIds }
+          }).select('_id');
+          const childIds = childStores.map(s => s._id);
+          
+          const allAllowedIds = [...allowedMainIds, ...childIds];
+          
+          // Apply filter
+          filter.store = { $in: allAllowedIds };
+        }
+      }
+
       if (storeId) {
          const ids = await getStoreIds(storeId);
          const selectedStore = await Store.findById(storeId);
@@ -879,7 +917,7 @@ router.get('/template', async (req, res) => {
 // @desc    Create an asset
 // @route   POST /api/assets
 // @access  Private (Admin or Technician)
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, restrictViewer, async (req, res) => {
   const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, po_number, product_name, rfid, qr_code, quantity } = req.body;
   try {
     const normName = capitalizeWords(name);
@@ -1078,7 +1116,7 @@ router.post('/bulk-delete', protect, admin, async (req, res) => {
 // @desc    Split asset quantity (e.g., report faulty items from a batch)
 // @route   POST /api/assets/split
 // @access  Private (Admin/Technician)
-router.post('/split', protect, async (req, res) => {
+router.post('/split', protect, restrictViewer, async (req, res) => {
   const { assetId, splitQuantity, newStatus, newCondition } = req.body;
   const qtyToSplit = parseInt(splitQuantity, 10);
 
@@ -1145,7 +1183,7 @@ router.post('/split', protect, async (req, res) => {
 // @desc    Preview bulk upload assets via Excel (no database writes)
 // @route   POST /api/assets/import/preview
 // @access  Private (Admin or Technician)
-router.post('/import/preview', protect, upload.single('file'), async (req, res) => {
+router.post('/import/preview', protect, restrictViewer, upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' });
   }
@@ -1293,7 +1331,7 @@ router.post('/import/preview', protect, upload.single('file'), async (req, res) 
 // @desc    Bulk upload assets via Excel
 // @route   POST /api/assets/import
 // @access  Private (Admin or Technician)
-router.post('/import', protect, upload.single('file'), async (req, res) => {
+router.post('/import', protect, restrictViewer, upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' });
   }
@@ -1984,7 +2022,7 @@ router.post('/unassign', protect, admin, async (req, res) => {
 // @desc    Collect Material (Technician)
 // @route   POST /api/assets/collect
 // @access  Private/Technician
-router.post('/collect', protect, async (req, res) => {
+router.post('/collect', protect, restrictViewer, async (req, res) => {
   const { assetId, ticketNumber, installationLocation } = req.body;
   try {
     const asset = await Asset.findById(assetId);
@@ -2044,7 +2082,7 @@ router.post('/collect', protect, async (req, res) => {
 // @desc    Report Faulty (Technician)
 // @route   POST /api/assets/faulty
 // @access  Private/Technician
-router.post('/faulty', protect, async (req, res) => {
+router.post('/faulty', protect, restrictViewer, async (req, res) => {
   const { assetId, ticketNumber } = req.body;
   try {
     const asset = await Asset.findById(assetId);
@@ -2079,7 +2117,7 @@ router.post('/faulty', protect, async (req, res) => {
 // @desc    Mark asset as In Use (Technician)
 // @route   POST /api/assets/in-use
 // @access  Private/Technician
-router.post('/in-use', protect, async (req, res) => {
+router.post('/in-use', protect, restrictViewer, async (req, res) => {
   const { assetId, ticketNumber, location } = req.body;
   try {
     const asset = await Asset.findById(assetId);
@@ -2125,7 +2163,7 @@ router.post('/in-use', protect, async (req, res) => {
 // @desc    Return asset (Technician)
 // @route   POST /api/assets/return
 // @access  Private/Technician
-router.post('/return', protect, async (req, res) => {
+router.post('/return', protect, restrictViewer, async (req, res) => {
   const { assetId, condition, ticketNumber } = req.body;
   try {
     const asset = await Asset.findById(assetId);
@@ -2177,7 +2215,7 @@ router.post('/return', protect, async (req, res) => {
 // @desc    Return request (Technician) - My Assets quick action
 // @route   POST /api/assets/return-request
 // @access  Private/Technician
-router.post('/return-request', protect, async (req, res) => {
+router.post('/return-request', protect, restrictViewer, async (req, res) => {
   const { assetId, condition, ticketNumber } = req.body;
   try {
     const asset = await Asset.findById(assetId);

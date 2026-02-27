@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import api from '../api/axios';
 import { Plus, Edit, Trash2, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useAuth } from '../context/AuthContext';
 
 const Vendors = () => {
+  const { user } = useAuth();
+  const isViewer = user?.role === 'Viewer';
   const [vendors, setVendors] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
@@ -117,12 +120,14 @@ const Vendors = () => {
           >
             <Download size={20} /> Export Vendors
           </button>
-          <button
-            onClick={() => { resetForm(); setShowModal(true); }}
-            className="bg-amber-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-amber-700"
-          >
-            <Plus size={20} /> Add Vendor
-          </button>
+          {!isViewer && (
+            <button
+              onClick={() => { resetForm(); setShowModal(true); }}
+              className="bg-amber-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-amber-700"
+            >
+              <Plus size={20} /> Add Vendor
+            </button>
+          )}
         </div>
       </div>
 
@@ -134,7 +139,9 @@ const Vendors = () => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              {!isViewer && (
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              )}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -153,21 +160,23 @@ const Vendors = () => {
                     {vendor.status}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <button onClick={() => handleEdit(vendor)} className="text-indigo-600 hover:text-indigo-900 mr-4">
-                    <Edit size={18} />
-                  </button>
-                  <button onClick={() => handleDelete(vendor._id)} className="text-red-600 hover:text-red-900">
-                    <Trash2 size={18} />
-                  </button>
-                </td>
+                {!isViewer && (
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <button onClick={() => handleEdit(vendor)} className="text-indigo-600 hover:text-indigo-900 mr-4">
+                      <Edit size={18} />
+                    </button>
+                    <button onClick={() => handleDelete(vendor._id)} className="text-red-600 hover:text-red-900">
+                      <Trash2 size={18} />
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {showModal && (
+      {showModal && !isViewer && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">{editingId ? 'Edit Vendor' : 'Add Vendor'}</h2>

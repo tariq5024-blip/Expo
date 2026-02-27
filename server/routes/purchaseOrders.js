@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const PurchaseOrder = require('../models/PurchaseOrder');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, admin, adminOrViewer } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
 const xlsx = require('xlsx');
@@ -20,17 +20,48 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+async function applyViewerStoreFilter(req, filter) {
+  if (req.user?.role !== 'Viewer') {
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+    return;
+  }
+
+  const scope = req.user.accessScope || 'All';
+  if (scope === 'All') {
+    if (req.activeStore) {
+      filter.store = req.activeStore;
+    }
+    return;
+  }
+
+  const mainStores = await Store.find({
+    isMainStore: true,
+    name: { $regex: scope, $options: 'i' }
+  }).select('_id').lean();
+
+  const mainIds = mainStores.map(s => s._id);
+  const childStores = await Store.find({ parentStore: { $in: mainIds } }).select('_id').lean();
+  const allowedIds = [...mainIds, ...childStores.map(s => s._id)];
+
+  if (req.activeStore) {
+    const isAllowed = allowedIds.some(id => String(id) === String(req.activeStore));
+    filter.store = isAllowed ? req.activeStore : { $in: [] };
+  } else {
+    filter.store = { $in: allowedIds };
+  }
+}
+
 // @desc    Get all POs
 // @route   GET /api/purchase-orders
 // @access  Private/Admin
-router.get('/', protect, admin, async (req, res) => {
+router.get('/', protect, adminOrViewer, async (req, res) => {
   try {
     const { vendor, status, startDate, endDate } = req.query;
     const filter = {};
 
-    if (req.activeStore) {
-      filter.store = req.activeStore;
-    }
+    await applyViewerStoreFilter(req, filter);
 
     if (vendor) filter.vendor = vendor;
     if (status) filter.status = status;
@@ -53,18 +84,13 @@ router.get('/', protect, admin, async (req, res) => {
 // @desc    Get single PO
 // @route   GET /api/purchase-orders/:id
 // @access  Private/Admin
-router.get('/:id', protect, admin, async (req, res) => {
+router.get('/:id', protect, adminOrViewer, async (req, res) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id).populate('vendor');
-    if (po) {
-      // Enforce Isolation
-      if (req.activeStore && po.store && po.store.toString() !== req.activeStore.toString()) {
-        return res.status(404).json({ message: 'Purchase Order not found' });
-      }
-      res.json(po);
-    } else {
-      res.status(404).json({ message: 'Purchase Order not found' });
-    }
+    const filter = { _id: req.params.id };
+    await applyViewerStoreFilter(req, filter);
+    const po = await PurchaseOrder.findOne(filter).populate('vendor');
+    if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
+    res.json(po);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -180,7 +206,7 @@ router.delete('/:id', protect, admin, async (req, res) => {
 });
 
 module.exports = router;
-router.get('/export', protect, admin, async (req, res) => {
+router.get('/export', protect, adminOrViewer, async (req, res) => {
   try {
     const { vendor, status, startDate, endDate } = req.query;
     const filter = {};
@@ -189,7 +215,7 @@ router.get('/export', protect, admin, async (req, res) => {
     if (startDate && endDate) {
       filter.orderDate = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
-    if (req.activeStore) filter.store = req.activeStore;
+    await applyViewerStoreFilter(req, filter);
 
     const pos = await PurchaseOrder.find(filter)
       .populate('vendor', 'name')

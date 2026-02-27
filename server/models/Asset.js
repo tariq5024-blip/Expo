@@ -105,7 +105,6 @@ const assetSchema = new mongoose.Schema({
   },
   source: {
     type: String,
-    enum: ['Vendor', 'Contractor', 'Technician', 'Initial Setup', 'Other'],
     default: 'Initial Setup',
     index: true
   },

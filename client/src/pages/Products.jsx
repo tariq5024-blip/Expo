@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Search, Edit2, Trash2, Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../api/axios';
@@ -105,7 +105,7 @@ const Products = ({ readOnly = false }) => {
   };
   const flatProducts = flatten(products);
   const filteredProducts = flatProducts.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
-  const loadAssetsFor = async (product) => {
+  const loadAssetsFor = useCallback(async (product) => {
     setSelectedProduct(product);
     setPanelLoading(true);
     try {
@@ -120,7 +120,7 @@ const Products = ({ readOnly = false }) => {
     } finally {
       setPanelLoading(false);
     }
-  };
+  }, [selectedAssetsLimit]);
 
   const loadMoreAssetsForSelected = async () => {
     if (!selectedProduct) return;
@@ -143,7 +143,7 @@ const Products = ({ readOnly = false }) => {
       const firstLeaf = filteredProducts.find(p => !p.children || p.children.length === 0) || filteredProducts[0];
       loadAssetsFor(firstLeaf);
     }
-  }, [filteredProducts, selectedProduct]);
+  }, [filteredProducts, selectedProduct, loadAssetsFor]);
 
   const ProductModal = ({ title, onClose }) => (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">

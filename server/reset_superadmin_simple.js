@@ -18,7 +18,7 @@ const resetSuperAdmin = async () => {
     console.log('MongoDB Connected');
 
     const email = 'superadmin@expo.com';
-    const password = '123456';
+    const password = 'superadmin123';
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);

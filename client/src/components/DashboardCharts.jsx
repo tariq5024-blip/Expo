@@ -10,21 +10,50 @@ import {
   Layers
 } from 'lucide-react';
 
+const themeChartMap = {
+  default: { primary: '#3b82f6', secondary: '#f59e0b', tertiary: '#8b5cf6' },
+  ocean: { primary: '#0284c7', secondary: '#0ea5e9', tertiary: '#22d3ee' },
+  emerald: { primary: '#059669', secondary: '#10b981', tertiary: '#34d399' },
+  sunset: { primary: '#ea580c', secondary: '#f97316', tertiary: '#fb923c' },
+  midnight: { primary: '#38bdf8', secondary: '#6366f1', tertiary: '#22d3ee' },
+  mono: { primary: '#374151', secondary: '#6b7280', tertiary: '#9ca3af' }
+};
+
+const statColorMap = {
+  blue: 'text-blue-500 bg-blue-50 group-hover:bg-blue-100',
+  emerald: 'text-emerald-500 bg-emerald-50 group-hover:bg-emerald-100',
+  amber: 'text-amber-500 bg-amber-50 group-hover:bg-amber-100',
+  red: 'text-red-500 bg-red-50 group-hover:bg-red-100',
+  gray: 'text-slate-500 bg-slate-100 group-hover:bg-slate-200',
+  violet: 'text-violet-500 bg-violet-50 group-hover:bg-violet-100'
+};
+
+const barColorMap = {
+  blue: 'bg-blue-500',
+  emerald: 'bg-emerald-500',
+  amber: 'bg-amber-500',
+  red: 'bg-red-500',
+  gray: 'bg-slate-500',
+  violet: 'bg-violet-500'
+};
+
 const StatCard = ({ title, value, icon: Icon, color, subText, onClick }) => {
+  const iconClasses = statColorMap[color] || statColorMap.blue;
+  const barClass = barColorMap[color] || barColorMap.blue;
   return (
   <div
-    className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center justify-between relative overflow-hidden group hover:shadow-md transition-shadow cursor-pointer"
+    className="bg-app-card rounded-xl p-6 flex items-center justify-between relative overflow-hidden group hover:shadow-lg transition-all cursor-pointer"
     onClick={onClick}
   >
-    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-${color}-500`}></div>
+    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${barClass}`}></div>
     <div>
-      <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">{title}</h3>
+      <h3 className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{title}</h3>
       <div className="flex items-baseline space-x-2">
-        <p className="text-3xl font-bold text-gray-800">{value}</p>
-        {subText && <span className="text-xs text-gray-400">{subText}</span>}
+        <p className="text-3xl font-bold text-app-main">{value}</p>
+        {subText && <span className="text-xs text-slate-400">{subText}</span>}
       </div>
     </div>
-    <div className={`p-3 rounded-lg bg-${color}-50 text-${color}-500 group-hover:bg-${color}-100 transition-colors`}>
+    <div className={`p-3 rounded-xl transition-colors ${iconClasses}`}>
       <Icon className="w-6 h-6" />
     </div>
   </div>
@@ -55,6 +84,9 @@ const DashboardCharts = ({ stats }) => {
     assetTypes: 0
   };
 
+  const selectedTheme = document?.documentElement?.dataset?.theme || 'default';
+  const palette = themeChartMap[selectedTheme] || themeChartMap.default;
+
   // Donut: In Use vs Not In Use (center shows Total)
   const donutOptions = {
     chart: {
@@ -62,7 +94,7 @@ const DashboardCharts = ({ stats }) => {
       fontFamily: 'inherit'
     },
     labels: ['In Use', 'Not In Use'],
-    colors: ['#3b82f6', '#f59e0b'],
+    colors: [palette.primary, palette.secondary],
     plotOptions: {
       pie: {
         donut: {
@@ -122,12 +154,12 @@ const DashboardCharts = ({ stats }) => {
       },
       offsetX: 0,
     },
-    colors: ['#3b82f6'],
+    colors: [palette.primary],
     xaxis: {
       categories: ['Spare', 'Faulty', 'Disposed'],
     },
     grid: {
-      borderColor: '#f3f4f6',
+      borderColor: '#e2e8f0',
       xaxis: { lines: { show: true } }
     },
     tooltip: {
@@ -162,7 +194,7 @@ const DashboardCharts = ({ stats }) => {
     },
     yaxis: { show: false },
     grid: { show: false, padding: { left: 0, right: 0 } },
-    colors: ['#3b82f6'],
+    colors: [palette.primary],
     fill: {
       type: 'gradient',
       gradient: {
@@ -238,22 +270,22 @@ const DashboardCharts = ({ stats }) => {
 
       {/* Main Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-gray-800 font-bold mb-4">Total vs In Use</h3>
+        <div className="bg-app-card p-6 rounded-xl">
+          <h3 className="text-app-main font-bold mb-4">Total vs In Use</h3>
           <Chart options={donutOptions} series={donutSeries} type="donut" height={300} />
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-gray-800 font-bold mb-4">Spare vs Faulty vs Disposed</h3>
+        <div className="bg-app-card p-6 rounded-xl">
+          <h3 className="text-app-main font-bold mb-4">Spare vs Faulty vs Disposed</h3>
           <Chart options={barOptions} series={barSeries} type="bar" height={300} />
         </div>
       </div>
 
       {/* Growth Trend Chart (Powerful Feature) */}
       {(growth || []).length > 0 && (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <div className="bg-app-card p-6 rounded-xl">
           <div className="flex items-center justify-between mb-4">
-             <h3 className="text-gray-800 font-bold flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-blue-500" />
+             <h3 className="text-app-main font-bold flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-app-accent" />
                 Asset Acquisition Trend (Last 6 Months)
              </h3>
           </div>

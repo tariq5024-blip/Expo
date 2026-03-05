@@ -175,6 +175,59 @@ const Portal = () => {
     }
   };
 
+  const themeOptions = [
+    {
+      value: 'default',
+      label: 'Default (Expo Amber)',
+      surface: 'from-slate-50 to-white',
+      swatches: ['bg-amber-500', 'bg-slate-900', 'bg-slate-200']
+    },
+    {
+      value: 'ocean',
+      label: 'Ocean Glass (Blue)',
+      surface: 'from-sky-100 to-blue-50',
+      swatches: ['bg-blue-500', 'bg-cyan-400', 'bg-slate-100']
+    },
+    {
+      value: 'emerald',
+      label: 'Emerald Glow (Green)',
+      surface: 'from-emerald-100 to-green-50',
+      swatches: ['bg-emerald-500', 'bg-teal-400', 'bg-slate-100']
+    },
+    {
+      value: 'sunset',
+      label: 'Sunset Flow (Warm)',
+      surface: 'from-orange-100 to-amber-50',
+      swatches: ['bg-orange-500', 'bg-amber-400', 'bg-rose-200']
+    },
+    {
+      value: 'midnight',
+      label: 'Midnight Neon (Dark)',
+      surface: 'from-slate-900 to-slate-800',
+      swatches: ['bg-sky-400', 'bg-indigo-500', 'bg-slate-600']
+    },
+    {
+      value: 'mono',
+      label: 'Mono Pro (Minimal)',
+      surface: 'from-slate-100 to-gray-50',
+      swatches: ['bg-slate-800', 'bg-gray-500', 'bg-gray-200']
+    }
+  ];
+
+  const applyTheme = async (newTheme) => {
+    if (!newTheme || themeSaving || (branding?.theme || 'default') === newTheme) return;
+    try {
+      setThemeSaving(true);
+      await api.post('/system/theme', { theme: newTheme });
+      await refreshBranding();
+      alert('Theme updated successfully.');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update theme');
+    } finally {
+      setThemeSaving(false);
+    }
+  };
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-app-page">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
@@ -496,33 +549,47 @@ const Portal = () => {
                   <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
                     <select
                       value={branding?.theme || 'default'}
-                      onChange={async (e) => {
-                        const newTheme = e.target.value;
-                        try {
-                          setThemeSaving(true);
-                          await api.post('/system/theme', { theme: newTheme });
-                          await refreshBranding();
-                          alert('Theme updated successfully.');
-                        } catch (err) {
-                          alert(err.response?.data?.message || 'Failed to update theme');
-                        } finally {
-                          setThemeSaving(false);
-                        }
-                      }}
+                      onChange={(e) => applyTheme(e.target.value)}
                       className="w-full sm:w-64 border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white text-slate-900"
                     >
-                      <option value="default">Default (Expo Amber)</option>
-                      <option value="ocean">Ocean Blue</option>
-                      <option value="emerald">Emerald Green</option>
-                      <option value="sunset">Sunset Orange</option>
-                      <option value="midnight">Midnight Dark</option>
-                      <option value="mono">Minimal Monochrome</option>
+                      {themeOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                     {themeSaving && (
                       <span className="text-xs text-slate-400">
                         Applying theme…
                       </span>
                     )}
+                  </div>
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
+                    {themeOptions.map((opt) => {
+                      const isActive = (branding?.theme || 'default') === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => applyTheme(opt.value)}
+                          disabled={themeSaving}
+                          className={`text-left rounded-xl border p-3 transition-all shadow-sm ${
+                            isActive
+                              ? 'border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50/60'
+                              : 'border-slate-200 hover:border-indigo-300 hover:shadow-md bg-white'
+                          } ${themeSaving ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          title={opt.label}
+                        >
+                          <div className={`h-12 rounded-lg bg-gradient-to-br ${opt.surface} border border-white/40 mb-2 relative overflow-hidden`}>
+                            <div className="absolute inset-0 opacity-70 bg-[radial-gradient(circle_at_80%_20%,rgba(255,255,255,0.7),transparent_45%)]"></div>
+                          </div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            {opt.swatches.map((sw, idx) => (
+                              <span key={`${opt.value}-${idx}`} className={`w-3.5 h-3.5 rounded-full border border-white shadow-sm ${sw}`}></span>
+                            ))}
+                          </div>
+                          <p className="text-xs font-semibold text-slate-800 leading-tight">{opt.label}</p>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

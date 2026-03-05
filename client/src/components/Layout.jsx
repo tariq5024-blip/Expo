@@ -35,7 +35,7 @@ const Layout = () => {
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile Header */}
-        <header className="flex items-center justify-between p-4 bg-slate-900 text-white shadow md:hidden z-30">
+        <header className="flex items-center justify-between p-4 bg-app-sidebar text-app-sidebar shadow md:hidden z-30 border-b border-app-sidebar">
             <button onClick={() => setSidebarOpen(true)} className="text-white p-1">
                 <Menu size={24} />
             </button>
@@ -53,13 +53,13 @@ const Layout = () => {
         </header>
 
         {/* Desktop Header */}
-        <header className="hidden md:flex items-center justify-between p-4 bg-white shadow-sm z-30 px-8">
-            <h2 className="text-xl font-semibold text-gray-800">
+        <header className="hidden md:flex items-center justify-between p-4 bg-app-header z-30 px-8">
+            <h2 className="text-xl font-semibold text-app-main">
               {/* Dynamic Title could go here, for now empty or Breadcrumb */}
             </h2>
             <div className="flex items-center gap-4">
               {user?.role === 'Admin' && (
-                <Link to="/setup" className="text-gray-600 hover:text-amber-600 transition-colors p-2 rounded-full hover:bg-gray-100" title="Setup">
+                <Link to="/setup" className="text-slate-600 hover:text-app-accent transition-colors p-2 rounded-full hover:bg-slate-100" title="Setup">
                   <Settings size={24} />
                 </Link>
               )}

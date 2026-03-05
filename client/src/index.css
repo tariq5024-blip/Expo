@@ -9,56 +9,142 @@
     --bg-page: 248 250 252;    /* slate-50 */
     --bg-card: 255 255 255;    /* white */
     --text-main: 15 23 42;     /* slate-900 */
+    --page-grad-start: 248 250 252;
+    --page-grad-end: 248 250 252;
+    --page-glow: 0 0 0;
+    --card-border: 226 232 240; /* slate-200 */
+    --card-shadow: 15 23 42;    /* slate-900 (very low alpha in usage) */
+    --sidebar-bg: 15 23 42;
+    --sidebar-text: 226 232 240;
+    --sidebar-border: 255 255 255;
+    --header-bg: 255 255 255;
+    --shape-card: 14px;
+    --shape-soft: 10px;
   }
 
   :root[data-theme='ocean'] {
-    --accent: 37 99 235;       /* blue-600 */
-    --accent-soft: 219 234 254;/* blue-100 */
-    --bg-page: 239 246 255;    /* indigo-50 */
+    --accent: 59 130 246;       /* blue-500 */
+    --accent-soft: 219 234 254; /* blue-100 */
+    --bg-page: 241 248 255;     /* soft azure */
     --bg-card: 255 255 255;
     --text-main: 15 23 42;
+    --page-grad-start: 239 246 255;
+    --page-grad-end: 224 242 254;
+    --page-glow: 125 211 252;   /* sky-300 */
+    --card-border: 191 219 254; /* blue-200 */
+    --card-shadow: 59 130 246;
+    --sidebar-bg: 12 74 110;
+    --sidebar-text: 224 242 254;
+    --sidebar-border: 125 211 252;
+    --header-bg: 239 246 255;
+    --shape-card: 18px;
+    --shape-soft: 12px;
   }
 
   :root[data-theme='emerald'] {
-    --accent: 5 150 105;       /* emerald-600 */
-    --accent-soft: 209 250 229;/* emerald-100 */
-    --bg-page: 240 253 244;    /* emerald-50 */
+    --accent: 16 185 129;       /* emerald-500 */
+    --accent-soft: 209 250 229; /* emerald-100 */
+    --bg-page: 236 253 245;     /* emerald-50 */
     --bg-card: 255 255 255;
-    --text-main: 6 78 59;      /* emerald-800 */
+    --text-main: 6 78 59;       /* emerald-800 */
+    --page-grad-start: 240 253 244;
+    --page-grad-end: 220 252 231;
+    --page-glow: 52 211 153;    /* emerald-400 */
+    --card-border: 167 243 208; /* emerald-200 */
+    --card-shadow: 16 185 129;
+    --sidebar-bg: 6 78 59;
+    --sidebar-text: 209 250 229;
+    --sidebar-border: 52 211 153;
+    --header-bg: 240 253 244;
+    --shape-card: 16px;
+    --shape-soft: 10px;
   }
 
   :root[data-theme='sunset'] {
-    --accent: 249 115 22;      /* orange-500 */
-    --accent-soft: 255 237 213;/* orange-100 */
-    --bg-page: 255 247 237;    /* orange-50 */
+    --accent: 234 88 12;        /* orange-600 */
+    --accent-soft: 255 237 213; /* orange-100 */
+    --bg-page: 255 247 237;     /* orange-50 */
     --bg-card: 255 255 255;
-    --text-main: 30 64 175;    /* blue-800 for contrast */
+    --text-main: 67 20 7;       /* warm brown for readability */
+    --page-grad-start: 255 247 237;
+    --page-grad-end: 255 237 213;
+    --page-glow: 251 146 60;    /* orange-400 */
+    --card-border: 254 215 170; /* orange-200 */
+    --card-shadow: 249 115 22;
+    --sidebar-bg: 124 45 18;
+    --sidebar-text: 255 237 213;
+    --sidebar-border: 251 146 60;
+    --header-bg: 255 247 237;
+    --shape-card: 20px;
+    --shape-soft: 12px;
   }
 
   :root[data-theme='midnight'] {
-    --accent: 56 189 248;      /* sky-400 */
-    --accent-soft: 15 23 42;   /* slate-900 panels */
-    --bg-page: 15 23 42;       /* dark */
-    --bg-card: 30 41 59;       /* slate-800 */
-    --text-main: 226 232 240;  /* slate-200 */
+    --accent: 56 189 248;       /* sky-400 */
+    --accent-soft: 30 41 59;    /* slate-800 */
+    --bg-page: 2 6 23;          /* slate-950 */
+    --bg-card: 15 23 42;        /* slate-900 */
+    --text-main: 226 232 240;   /* slate-200 */
+    --page-grad-start: 2 6 23;
+    --page-grad-end: 15 23 42;
+    --page-glow: 14 165 233;    /* sky-500 */
+    --card-border: 51 65 85;    /* slate-700 */
+    --card-shadow: 14 165 233;
+    --sidebar-bg: 2 6 23;
+    --sidebar-text: 186 230 253;
+    --sidebar-border: 14 165 233;
+    --header-bg: 15 23 42;
+    --shape-card: 14px;
+    --shape-soft: 10px;
   }
 
   :root[data-theme='mono'] {
-    --accent: 55 65 81;        /* gray-700 */
-    --accent-soft: 243 244 246;/* gray-100 */
-    --bg-page: 249 250 251;    /* gray-50 */
+    --accent: 31 41 55;         /* gray-800 */
+    --accent-soft: 243 244 246; /* gray-100 */
+    --bg-page: 249 250 251;     /* gray-50 */
     --bg-card: 255 255 255;
-    --text-main: 17 24 39;     /* gray-900 */
+    --text-main: 17 24 39;      /* gray-900 */
+    --page-grad-start: 249 250 251;
+    --page-grad-end: 243 244 246;
+    --page-glow: 156 163 175;   /* gray-400 */
+    --card-border: 229 231 235; /* gray-200 */
+    --card-shadow: 55 65 81;
+    --sidebar-bg: 31 41 55;
+    --sidebar-text: 243 244 246;
+    --sidebar-border: 156 163 175;
+    --header-bg: 249 250 251;
+    --shape-card: 8px;
+    --shape-soft: 8px;
+  }
+
+  body {
+    color: rgb(var(--text-main));
+    background-color: rgb(var(--bg-page));
+  }
+
+  ::selection {
+    background: rgb(var(--accent-soft));
+    color: rgb(var(--text-main));
+  }
+
+  *:focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
   }
 }
 
 @layer utilities {
   .bg-app-page {
-    background-color: rgb(var(--bg-page));
+    background:
+      radial-gradient(1000px 500px at 100% -20%, rgb(var(--page-glow) / 0.16), transparent 60%),
+      linear-gradient(145deg, rgb(var(--page-grad-start)), rgb(var(--page-grad-end)));
   }
 
   .bg-app-card {
     background-color: rgb(var(--bg-card));
+    border: 1px solid rgb(var(--card-border));
+    box-shadow: 0 10px 30px -20px rgb(var(--card-shadow) / 0.45);
+    border-radius: var(--shape-card);
   }
 
   .text-app-main {
@@ -77,6 +163,29 @@
     color: rgb(var(--accent));
   }
 
+  .bg-app-header {
+    background-color: rgb(var(--header-bg));
+    border-bottom: 1px solid rgb(var(--card-border));
+  }
+
+  .bg-app-sidebar {
+    background:
+      radial-gradient(900px 260px at -10% 0%, rgb(var(--sidebar-border) / 0.22), transparent 55%),
+      linear-gradient(165deg, rgb(var(--sidebar-bg)), rgb(var(--sidebar-bg) / 0.92));
+  }
+
+  .text-app-sidebar {
+    color: rgb(var(--sidebar-text));
+  }
+
+  .border-app-sidebar {
+    border-color: rgb(var(--sidebar-border) / 0.28);
+  }
+
+  .shape-soft {
+    border-radius: var(--shape-soft);
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -87,11 +196,11 @@
   }
   
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background-color: #e5e7eb;
+    background-color: rgb(var(--accent) / 0.35);
     border-radius: 20px;
   }
   
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background-color: #d1d5db;
+    background-color: rgb(var(--accent) / 0.55);
   }
 }

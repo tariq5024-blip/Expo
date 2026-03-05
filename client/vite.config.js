@@ -9,22 +9,22 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: `http://${apiHost}:5000`,
+        target: `http://${apiHost}:5001`,
         changeOrigin: true,
         secure: false,
       },
       '/uploads': {
-        target: `http://${apiHost}:5000`,
+        target: `http://${apiHost}:5001`,
         changeOrigin: true,
         secure: false,
       },
       '/healthz': {
-        target: `http://${apiHost}:5000`,
+        target: `http://${apiHost}:5001`,
         changeOrigin: true,
         secure: false,
       },
       '/readyz': {
-        target: `http://${apiHost}:5000`,
+        target: `http://${apiHost}:5001`,
         changeOrigin: true,
         secure: false,
       },

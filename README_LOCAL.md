@@ -1,36 +1,79 @@
-# Local Single-Tier Setup
+# Expo Asset Management - Single Linux Installation Guide
 
-This setup allows you to run the Frontend, Backend, and MongoDB on a single Linux machine without VMs.
+Use this guide when running the full stack on one Linux machine (no k3s).
 
 ## Prerequisites
-- Node.js (v18+)
-- MongoDB (running locally on port 27017)
 
-## Quick Start
+- Ubuntu/Linux machine
+- Node.js 18+
+- npm
+- MongoDB installed locally and running
 
-1. **Install & Run (Development Mode)**
-   This runs React (Vite) on port 5173 and Node API on port 5000.
-   ```bash
-   chmod +x run_locally.sh
-   ./run_locally.sh
-   ```
-   Or manually:
-   ```bash
-   npm run install:all
-   npm run dev
-   ```
+## 1) Install dependencies
 
-2. **Run in Production Mode (Monolithic)**
-   This builds the React app and serves it from the Node server on port 5000.
-   ```bash
-   npm run build
-   npm start
-   ```
-   Access the app at: http://localhost:5000
+From project root:
 
-## Configuration
-- The backend connects to `mongodb://127.0.0.1:27017/expo-stores` by default.
-- Configuration is in `server/.env`.
+```bash
+npm install
+cd server && npm install
+cd ../client && npm install
+cd ..
+```
 
-## Notes
-- The `deploy/` folder contains legacy VM deployment scripts and can be ignored.
+## 2) Configure backend environment
+
+```bash
+cp server/.env.example server/.env
+```
+
+Edit `server/.env` and set at minimum:
+
+```env
+MONGO_URI=mongodb://127.0.0.1:27017/expo-stores
+PORT=5000
+JWT_SECRET=change_to_random_secret
+COOKIE_SECRET=change_to_random_secret
+COOKIE_SECURE=false
+```
+
+## 3) Start MongoDB
+
+If installed as a service:
+
+```bash
+sudo systemctl start mongod || sudo systemctl start mongodb
+```
+
+## 4) Run backend and frontend
+
+Open terminal 1:
+
+```bash
+cd server
+npm run dev
+```
+
+Open terminal 2:
+
+```bash
+cd client
+npm run dev -- --host --port 5173
+```
+
+## 5) Access application
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:5000`
+
+If your backend is configured to another port, use that port.
+
+## Common fixes
+
+- Port already in use:
+  - change `PORT` in `server/.env`
+  - or stop old process using that port
+- Login fails:
+  - verify MongoDB is running
+  - verify `MONGO_URI` database exists and is reachable
+- Frontend not opening:
+  - ensure `npm run dev -- --host --port 5173` is running in `client/`

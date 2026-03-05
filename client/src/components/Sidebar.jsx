@@ -162,6 +162,7 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
     { name: 'Products', path: '/products', icon: <Box size={20} />, roles: ['Admin', 'Viewer'] },
     { name: 'Scanner', path: '/scanner', icon: <Box size={20} />, roles: ['Technician'] },
     { name: 'My Assets', path: '/my-assets', icon: <Box size={20} />, roles: ['Technician'] },
+    { name: 'Unregistered Assets', path: '/assets/no-serial', icon: <Box size={20} />, roles: ['Admin', 'Viewer', 'Technician'] },
     { name: 'Request Tools', path: '/tech-request', icon: <Box size={20} />, roles: ['Technician'] },
   ];
 
@@ -211,56 +212,88 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
   };
 
   const getTheme = () => {
-    const name = activeStore?.name?.toUpperCase() || '';
-    
-    // IT Store - Professional Tech Theme (Dark Slate with Cyan/Sky Accents)
-    if (name.includes('IT')) {
-      return {
-        sidebarBg: 'bg-slate-950', // Very dark slate (almost black)
-        sidebarText: 'text-slate-300', // Muted text for reduced eye strain
-        divider: 'border-cyan-900/30',
+    const selectedTheme = branding?.theme || 'default';
+    const map = {
+      default: {
+        sidebarBg: 'bg-app-sidebar',
+        sidebarText: 'text-app-sidebar',
+        divider: 'border-app-sidebar',
         item: {
-          activeDepth0: 'bg-cyan-950/50 text-cyan-400 border-r-2 border-cyan-400', // Tech glow effect
-          inactiveDepth0: 'text-slate-400 hover:bg-slate-900 hover:text-cyan-200',
-          activeDepth1: 'text-cyan-400 font-bold',
-          inactiveDepth1: 'text-slate-500 hover:text-cyan-200'
+          activeDepth0: 'bg-amber-500 text-black shadow-md',
+          inactiveDepth0: 'text-slate-200 hover:bg-white/10 hover:text-white',
+          activeDepth1: 'text-amber-300 font-bold',
+          inactiveDepth1: 'text-slate-300 hover:text-white'
         },
         logoText: 'text-slate-200',
-        storeText: 'text-cyan-500'
-      };
-    }
-    
-    // NOC Store - Professional Monitoring Theme (Deep Neutral/Black with Emerald Accents)
-    if (name.includes('NOC')) {
-      return {
-        sidebarBg: 'bg-neutral-950', // Deep neutral black
-        sidebarText: 'text-neutral-400',
-        divider: 'border-emerald-900/30',
-        item: {
-          activeDepth0: 'bg-emerald-950/40 text-emerald-400 border-l-2 border-emerald-500', // Status indicator style
-          inactiveDepth0: 'text-neutral-400 hover:bg-neutral-900 hover:text-emerald-200',
-          activeDepth1: 'text-emerald-400 font-bold',
-          inactiveDepth1: 'text-neutral-500 hover:text-emerald-200'
-        },
-        logoText: 'text-neutral-200',
-        storeText: 'text-emerald-500'
-      };
-    }
-
-    // Default SCY - Original Slate & Amber
-    return {
-      sidebarBg: 'bg-slate-900',
-      sidebarText: 'text-white',
-      divider: 'border-white/10',
-      item: {
-        activeDepth0: 'bg-amber-500 text-black',
-        inactiveDepth0: 'text-slate-300 hover:bg-slate-800',
-        activeDepth1: 'text-amber-500',
-        inactiveDepth1: 'text-slate-400 hover:text-white'
+        storeText: 'text-amber-400'
       },
-      logoText: 'text-slate-300',
-      storeText: 'text-amber-500'
+      ocean: {
+        sidebarBg: 'bg-app-sidebar',
+        sidebarText: 'text-app-sidebar',
+        divider: 'border-app-sidebar',
+        item: {
+          activeDepth0: 'bg-sky-400/20 text-sky-100 border border-sky-300/40 shadow-lg',
+          inactiveDepth0: 'text-sky-100/85 hover:bg-sky-200/10 hover:text-white',
+          activeDepth1: 'text-cyan-200 font-bold',
+          inactiveDepth1: 'text-sky-100/70 hover:text-white'
+        },
+        logoText: 'text-sky-100',
+        storeText: 'text-cyan-300'
+      },
+      emerald: {
+        sidebarBg: 'bg-app-sidebar',
+        sidebarText: 'text-app-sidebar',
+        divider: 'border-app-sidebar',
+        item: {
+          activeDepth0: 'bg-emerald-400/20 text-emerald-50 border border-emerald-300/35 shadow-lg',
+          inactiveDepth0: 'text-emerald-100/90 hover:bg-emerald-200/10 hover:text-white',
+          activeDepth1: 'text-emerald-200 font-bold',
+          inactiveDepth1: 'text-emerald-100/75 hover:text-white'
+        },
+        logoText: 'text-emerald-100',
+        storeText: 'text-emerald-300'
+      },
+      sunset: {
+        sidebarBg: 'bg-app-sidebar',
+        sidebarText: 'text-app-sidebar',
+        divider: 'border-app-sidebar',
+        item: {
+          activeDepth0: 'bg-orange-300/20 text-orange-50 border border-orange-200/40 shadow-lg',
+          inactiveDepth0: 'text-orange-100/90 hover:bg-orange-100/10 hover:text-white',
+          activeDepth1: 'text-amber-200 font-bold',
+          inactiveDepth1: 'text-orange-100/75 hover:text-white'
+        },
+        logoText: 'text-orange-100',
+        storeText: 'text-amber-300'
+      },
+      midnight: {
+        sidebarBg: 'bg-app-sidebar',
+        sidebarText: 'text-app-sidebar',
+        divider: 'border-app-sidebar',
+        item: {
+          activeDepth0: 'bg-sky-400/20 text-sky-100 border border-sky-300/35 shadow-lg',
+          inactiveDepth0: 'text-slate-200 hover:bg-slate-700/40 hover:text-white',
+          activeDepth1: 'text-cyan-200 font-bold',
+          inactiveDepth1: 'text-slate-300 hover:text-white'
+        },
+        logoText: 'text-slate-100',
+        storeText: 'text-sky-300'
+      },
+      mono: {
+        sidebarBg: 'bg-app-sidebar',
+        sidebarText: 'text-app-sidebar',
+        divider: 'border-app-sidebar',
+        item: {
+          activeDepth0: 'bg-white/15 text-white border border-white/25 shadow-md',
+          inactiveDepth0: 'text-slate-200 hover:bg-white/10 hover:text-white',
+          activeDepth1: 'text-slate-100 font-bold',
+          inactiveDepth1: 'text-slate-300 hover:text-white'
+        },
+        logoText: 'text-slate-100',
+        storeText: 'text-slate-300'
+      }
     };
+    return map[selectedTheme] || map.default;
   };
 
   const theme = getTheme();

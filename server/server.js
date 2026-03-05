@@ -18,6 +18,7 @@ const authRoutes = require('./routes/auth');
 const storeRoutes = require('./routes/stores');
 const userRoutes = require('./routes/users');
 const assetRoutes = require('./routes/assets');
+const noSerialAssetsRoutes = require('./routes/noSerialAssets');
 const requestRoutes = require('./routes/requests');
 const passRoutes = require('./routes/passes');
 const vendorRoutes = require('./routes/vendors');
@@ -165,6 +166,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/stores', storeRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/assets/no-serial', noSerialAssetsRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/passes', passRoutes);

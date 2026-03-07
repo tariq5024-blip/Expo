@@ -26,6 +26,7 @@ const poRoutes = require('./routes/purchaseOrders');
 const productRoutes = require('./routes/products');
 const permitRoutes = require('./routes/permits');
 const systemRoutes = require('./routes/system');
+const toolRoutes = require('./routes/tools');
 const { backupDatabase } = require('./backup_db');
 
 // Models for seeding
@@ -175,6 +176,7 @@ app.use('/api/purchase-orders', poRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/permits', permitRoutes);
 app.use('/api/system', systemRoutes);
+app.use('/api/tools', toolRoutes);
 
 const User = require('./models/User');
 const bcrypt = require('bcryptjs');

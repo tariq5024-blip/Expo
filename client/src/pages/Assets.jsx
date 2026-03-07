@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock } from 'lucide-react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
@@ -20,10 +20,13 @@ const flattenProducts = (list, level = 0, ancestors = []) => {
 
 const Assets = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
   const productParam = searchParams.get('product');
   const statusParam = searchParams.get('status');
   const actionParam = searchParams.get('action');
+  const locationParam = searchParams.get('location');
+  const storeParam = searchParams.get('store');
   const { user, activeStore } = useAuth();
 
   const [assets, setAssets] = useState([]);
@@ -226,6 +229,7 @@ const Assets = () => {
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState('');
+  const [filterStoreId, setFilterStoreId] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCondition, setFilterCondition] = useState('');
   const [filterProductName, setFilterProductName] = useState('');
@@ -346,8 +350,10 @@ const Assets = () => {
   useEffect(() => {
     setFilterProductName(productParam || '');
     setFilterStatus(statusParam || '');
+    setFilterLocation(locationParam || '');
+    setFilterStoreId(storeParam || '');
     if (actionParam === 'add') setShowAddModal(true);
-  }, [productParam, statusParam, actionParam]);
+  }, [productParam, statusParam, actionParam, locationParam, storeParam]);
 
 
   // Hierarchical State for Add/Import
@@ -384,6 +390,7 @@ const Assets = () => {
           recent_upload: showRecentUploads,
           q: searchTerm || undefined,
           status: filterStatus || undefined,
+          store: filterStoreId || undefined,
           location: filterLocation || undefined,
           condition: filterCondition || undefined, // Add condition filter
           // category removed
@@ -417,6 +424,7 @@ const Assets = () => {
     showRecentUploads,
     searchTerm,
     filterStatus,
+    filterStoreId,
     filterLocation,
     filterCondition,
     filterManufacturer,
@@ -1222,11 +1230,15 @@ const Assets = () => {
             <button
               onClick={() => {
                 setSearchTerm(''); setFilterLocation(''); setFilterStatus(''); setFilterCondition('');
+                setFilterStoreId('');
                 setFilterManufacturer(''); setFilterProductName('');
                 setFilterModelNumber(''); setFilterSerialNumber(''); setFilterMacAddress('');
                 setFilterTicket(''); setFilterRfid(''); setFilterQr('');
                 setFilterDateFrom(''); setFilterDateTo('');
                 setShowRecentUploads(false);
+                if (location.search) {
+                  navigate('/assets', { replace: true });
+                }
               }}
               className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-sm"
             >

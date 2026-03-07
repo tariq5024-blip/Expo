@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 const Stores = () => {
   const { activeStore, user } = useAuth();
+  const navigate = useNavigate();
   const [stores, setStores] = useState([]);
   const [newName, setNewName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -71,6 +73,14 @@ const Stores = () => {
     }
   };
 
+  const openAssetsForLocation = (store) => {
+    if (!store?._id) return;
+    const params = new URLSearchParams();
+    params.set('store', store._id);
+    if (store.name) params.set('location', store.name);
+    navigate(`/assets?${params.toString()}`);
+  };
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Locations</h1>
@@ -108,7 +118,21 @@ const Stores = () => {
           return (s.name || '').toLowerCase().includes(searchTerm.toLowerCase());
         }).map(store => {
           return (
-            <div key={store._id} className="bg-white p-4 rounded shadow">
+            <div
+              key={store._id}
+              className="bg-white p-4 rounded shadow transition hover:shadow-md cursor-pointer"
+              onClick={() => {
+                if (editingId !== store._id) openAssetsForLocation(store);
+              }}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && editingId !== store._id) {
+                  e.preventDefault();
+                  openAssetsForLocation(store);
+                }
+              }}
+            >
               {editingId === store._id ? (
                 <div className="flex flex-col gap-2">
                   <input
@@ -118,8 +142,8 @@ const Stores = () => {
                     className="border p-2 rounded"
                   />
                   <div className="flex gap-2 justify-end mt-2">
-                    <button onClick={saveEdit} className="bg-green-600 text-white px-3 py-1 rounded text-sm">Save</button>
-                    <button onClick={cancelEdit} className="bg-gray-500 text-white px-3 py-1 rounded text-sm">Cancel</button>
+                    <button onClick={(e) => { e.stopPropagation(); saveEdit(); }} className="bg-green-600 text-white px-3 py-1 rounded text-sm">Save</button>
+                    <button onClick={(e) => { e.stopPropagation(); cancelEdit(); }} className="bg-gray-500 text-white px-3 py-1 rounded text-sm">Cancel</button>
                   </div>
                 </div>
               ) : (
@@ -130,10 +154,11 @@ const Stores = () => {
                   <div className="mt-1 text-sm text-gray-600">
                     Total available in store: <span className="font-semibold">{store.availableAssetCount ?? 0}</span>
                   </div>
+                  <div className="mt-2 text-xs text-indigo-600 font-medium">Click to view all assets in this location</div>
                   {user?.role !== 'Viewer' && (
                   <div className="flex gap-2 justify-end border-t pt-2">
-                    <button onClick={() => startEdit(store)} className="text-amber-600 text-sm hover:underline">Edit</button>
-                    <button onClick={() => handleDelete(store._id)} className="text-red-500 text-sm hover:underline">Delete</button>
+                    <button onClick={(e) => { e.stopPropagation(); startEdit(store); }} className="text-amber-600 text-sm hover:underline">Edit</button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(store._id); }} className="text-red-500 text-sm hover:underline">Delete</button>
                   </div>
                   )}
                 </>

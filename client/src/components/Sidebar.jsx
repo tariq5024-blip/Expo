@@ -11,7 +11,8 @@ import {
   ChevronRight,
   Menu,
   Calendar,
-  Lock
+  Lock,
+  Wrench
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -188,10 +189,20 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
     { name: 'Locations', path: '/stores', icon: <Store size={18} strokeWidth={1.5} />, roles: ['Admin', 'Viewer'] },
     { name: 'Gate Passes', path: '/passes', icon: <Ticket size={18} strokeWidth={1.5} />, roles: ['Admin'] },
     { name: 'Products', path: '/products', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Admin', 'Viewer'] },
+    {
+      name: 'Tools',
+      icon: <Wrench size={18} strokeWidth={1.5} />,
+      roles: ['Admin', 'Viewer', 'Technician'],
+      subItems: [
+        { name: 'Register Tools', path: '/tools', uniqueKey: 'tools-register', roles: ['Admin', 'Viewer'] },
+        { name: 'Technician Panel', path: '/tools/panel', uniqueKey: 'tools-panel', roles: ['Technician', 'Admin'] },
+        { name: 'Request Tools', path: '/tech-request', uniqueKey: 'tools-request', roles: ['Technician'] }
+      ]
+    },
     { name: 'Scanner', path: '/scanner', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Technician'] },
     { name: 'My Assets', path: '/my-assets', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Technician'] },
     { name: 'Unregistered Assets', path: '/assets/no-serial', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Admin', 'Viewer', 'Technician'] },
-    { name: 'Request Tools', path: '/tech-request', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Technician'] }
+    
   ];
 
   const filterItems = (items) => {

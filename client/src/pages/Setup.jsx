@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Truck, FileText, Box, CheckSquare, RefreshCw, Trash2, Database, AlertTriangle } from 'lucide-react';
+import { Truck, FileText, Box, CheckSquare, RefreshCw, Trash2, Database, AlertTriangle, Mail, Send } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -11,7 +11,30 @@ const Setup = () => {
   const [globalResetLoading, setGlobalResetLoading] = useState(false);
   const [backupLoading, setBackupLoading] = useState(false);
   const [deletionRequests, setDeletionRequests] = useState([]);
+  const [stores, setStores] = useState([]);
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [emailConfig, setEmailConfig] = useState({
+    smtpHost: '',
+    smtpPort: 587,
+    username: '',
+    password: '',
+    encryption: 'TLS',
+    fromEmail: '',
+    fromName: '',
+    enabled: true
+  });
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [testEmail, setTestEmail] = useState('');
+  const [testingEmail, setTestingEmail] = useState(false);
   const isMainAdmin = user?.role === 'Super Admin';
+  const canManageEmail = user?.role === 'Super Admin' || user?.role === 'Admin';
+
+  const resolveUserStoreId = () => {
+    const raw = user?.assignedStore;
+    if (!raw) return '';
+    return typeof raw === 'string' ? raw : raw?._id || '';
+  };
 
   useEffect(() => {
     if (isMainAdmin) {
@@ -22,17 +45,95 @@ const Setup = () => {
             api.get('/system/stores')
           ]);
           setStorage(storageRes.data);
+          setStores(storesRes.data || []);
           
           // Filter for deletion requests
           const requests = storesRes.data.filter(s => s.deletionRequested);
           setDeletionRequests(requests);
+          if (!selectedStoreId && storesRes.data?.length > 0) {
+            setSelectedStoreId(storesRes.data[0]._id);
+          }
         } catch (e) {
           console.error(e);
         }
       };
       fetchData();
     }
-  }, [isMainAdmin]);
+  }, [isMainAdmin, selectedStoreId]);
+
+  useEffect(() => {
+    if (!canManageEmail) return;
+    if (user?.role === 'Admin') {
+      const ownStoreId = resolveUserStoreId();
+      if (ownStoreId && selectedStoreId !== ownStoreId) {
+        setSelectedStoreId(ownStoreId);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role, user?.assignedStore]);
+
+  useEffect(() => {
+    if (!canManageEmail) return;
+    const storeId = user?.role === 'Super Admin' ? selectedStoreId : resolveUserStoreId();
+    if (!storeId) return;
+
+    const fetchEmailConfig = async () => {
+      try {
+        setEmailLoading(true);
+        const res = await api.get('/system/email-config', { params: { storeId } });
+        if (res.data?.emailConfig) {
+          setEmailConfig({
+            smtpHost: res.data.emailConfig.smtpHost || '',
+            smtpPort: res.data.emailConfig.smtpPort || 587,
+            username: res.data.emailConfig.username || '',
+            password: res.data.emailConfig.password || '',
+            encryption: res.data.emailConfig.encryption || 'TLS',
+            fromEmail: res.data.emailConfig.fromEmail || '',
+            fromName: res.data.emailConfig.fromName || '',
+            enabled: Boolean(res.data.emailConfig.enabled)
+          });
+          setTestEmail(user?.email || '');
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setEmailLoading(false);
+      }
+    };
+
+    fetchEmailConfig();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageEmail, selectedStoreId, user?.role]);
+
+  const handleEmailField = (field, value) => {
+    setEmailConfig((prev) => ({ ...prev, [field]: value }));
+  };
+  const effectiveEmailStoreId = user?.role === 'Super Admin' ? selectedStoreId : resolveUserStoreId();
+
+  const handleSaveEmailConfig = async () => {
+    try {
+      setEmailSaving(true);
+      await api.put('/system/email-config', { storeId: effectiveEmailStoreId, ...emailConfig });
+      alert('Email configuration saved successfully.');
+    } catch (error) {
+      alert('Save failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const handleTestEmail = async () => {
+    if (!testEmail) return alert('Enter recipient email for test message.');
+    try {
+      setTestingEmail(true);
+      await api.post('/system/email-config/test', { storeId: effectiveEmailStoreId, to: testEmail });
+      alert('Test email sent successfully.');
+    } catch (error) {
+      alert('Test failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setTestingEmail(false);
+    }
+  };
 
   return (
     <div className="container mx-auto p-8">
@@ -341,6 +442,95 @@ const Setup = () => {
                 Request Data Deletion
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {canManageEmail && (
+        <div className="mt-12 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center">
+              <Mail className="w-6 h-6 text-blue-600 mr-2" />
+              <h2 className="text-xl font-bold text-gray-800">Store Email Configuration</h2>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {user?.role === 'Super Admin' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Store</label>
+                <select
+                  value={selectedStoreId}
+                  onChange={(e) => setSelectedStoreId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select store</option>
+                  {stores.map((store) => (
+                    <option key={store._id} value={store._id}>
+                      {store.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {emailLoading ? (
+              <p className="text-sm text-gray-500">Loading email configuration...</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">SMTP Host</label>
+                    <input className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.smtpHost} onChange={(e) => handleEmailField('smtpHost', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">SMTP Port</label>
+                    <input type="number" className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.smtpPort} onChange={(e) => handleEmailField('smtpPort', Number(e.target.value || 0))} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Username</label>
+                    <input className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.username} onChange={(e) => handleEmailField('username', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Password</label>
+                    <input type="password" className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.password} onChange={(e) => handleEmailField('password', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Encryption</label>
+                    <select className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.encryption} onChange={(e) => handleEmailField('encryption', e.target.value)}>
+                      <option value="TLS">TLS</option>
+                      <option value="SSL">SSL</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">From Email</label>
+                    <input className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.fromEmail} onChange={(e) => handleEmailField('fromEmail', e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">From Name</label>
+                  <input className="w-full border border-gray-300 rounded-lg px-3 py-2" value={emailConfig.fromName} onChange={(e) => handleEmailField('fromName', e.target.value)} />
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <input type="checkbox" checked={emailConfig.enabled} onChange={(e) => handleEmailField('enabled', e.target.checked)} />
+                  Enable this store email configuration
+                </label>
+
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end pt-2">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Test Email Recipient</label>
+                    <input className="w-full border border-gray-300 rounded-lg px-3 py-2" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} />
+                  </div>
+                  <button onClick={handleTestEmail} disabled={testingEmail || !effectiveEmailStoreId} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                    <Send size={16} />
+                    {testingEmail ? 'Sending...' : 'Test Email'}
+                  </button>
+                  <button onClick={handleSaveEmailConfig} disabled={emailSaving || !effectiveEmailStoreId} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    {emailSaving ? 'Saving...' : 'Save Configuration'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

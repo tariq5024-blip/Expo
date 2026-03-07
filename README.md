@@ -2,22 +2,57 @@
 
 This guide is for production deployment using IP addresses only (no domain).
 For single-machine setup, use `README_LOCAL.md`.
+For step-by-step server installation, use `README_SERVER_INSTALL.md`.
 
-## VLAN and VM Layout
+## IP-Only Access (Final)
+
+- End users must access the app via Web VM IP: `http://10.96.133.181`
+- Do not use a domain name in production for this setup.
+- Do not expose App VM (`10.96.133.197`) or DB VM (`10.96.133.213`) to end users.
+- App VM API is private behind Nginx and must be reachable only from Web VM.
+
+## VLAN and VM Layout (Your Production Design)
 
 - Management VLAN `10.96.133.160/28` (VLAN 1746)
 - Web VLAN `10.96.133.176/28` (VLAN 1747): Web VM `10.96.133.181`
 - App VLAN `10.96.133.192/28` (VLAN 1748): App VM `10.96.133.197`
 - DB VLAN `10.96.133.208/28` (VLAN 1749): DB VM `10.96.133.213`
 
+Each `/28` provides 14 usable IPs.  
+Gateways (ACI anycast):
+- Mgmt GW: `10.96.133.161`
+- Web GW: `10.96.133.177`
+- App GW: `10.96.133.193`
+- DB GW: `10.96.133.209`
+
+Detailed allocation:
+
+- Management EPG `EPG-ECD-PHY-SCY-HV3-MGMT`, VLAN `1746`
+  - Subnet: `10.96.133.160/28`
+  - Assigned: `10.96.133.165` (HV3 management)
+  - Usable: `10.96.133.162 - 10.96.133.174`
+- Web EPG `EPG-ECD-PHY-SCY-WE1`, VLAN `1747`
+  - Subnet: `10.96.133.176/28`
+  - Assigned: `10.96.133.181` (Web VM)
+  - Usable: `10.96.133.178 - 10.96.133.190`
+- App EPG `EPG-ECD-PHY-SCY-JA1`, VLAN `1748`
+  - Subnet: `10.96.133.192/28`
+  - Assigned: `10.96.133.197` (App VM)
+  - Usable: `10.96.133.194 - 10.96.133.206`
+- DB EPG `EPG-ECD-PHY-SCY-DB1`, VLAN `1749`
+  - Subnet: `10.96.133.208/28`
+  - Assigned: `10.96.133.213` (DB VM)
+  - Usable: `10.96.133.210 - 10.96.133.222`
+
 ## Traffic Flow
 
 `User -> Web(10.96.133.181) -> App(10.96.133.197:5000) -> DB(10.96.133.213:27017)`
 
-## Security Policy
+## Security Policy (Mandatory)
 
 Allow:
 - Internet -> Web: `80`
+- Internet -> Web: `443`
 - Web -> App: `5000`
 - App -> DB: `27017`
 - Mgmt -> Servers: `22`
@@ -27,6 +62,18 @@ Deny:
 - Internet -> App direct
 - Internet -> DB direct
 - App -> Mgmt VLAN
+- Application VLANs -> Mgmt VLAN
+
+Management VLAN policy:
+- Only admin workstation access is allowed.
+- No application traffic is allowed into management subnet.
+
+## ACI Contracts (Recommended)
+
+- `Web -> App`: Permit TCP `5000` only
+- `App -> DB`: Permit TCP `27017` only
+- `Mgmt -> All`: Permit TCP `22` only
+- Deny all other east-west traffic by default
 
 ## App VM Setup (`10.96.133.197`)
 
@@ -50,6 +97,14 @@ CORS_ORIGIN=http://10.96.133.181
 SEED_DEFAULTS=true
 ```
 
+If HTTPS is configured at Web tier, set:
+
+```env
+CORS_ORIGIN=https://10.96.133.181
+```
+
+Important: `CORS_ORIGIN` must exactly match the URL users open in browser.
+
 ### Default Login Accounts (deployment-safe)
 
 With `SEED_DEFAULTS=true`, backend startup ensures these users always exist with these credentials:
@@ -65,7 +120,7 @@ Run backend:
 
 ```bash
 cd /path/to/Expo/server
-npm install
+npm ci
 npm run dev
 ```
 
@@ -89,7 +144,7 @@ Build frontend:
 
 ```bash
 cd /path/to/Expo/client
-npm install
+npm ci
 npm run build
 ```
 
@@ -116,6 +171,13 @@ nc -zv 10.96.133.213 27017
 
 From browser:
 - open `http://10.96.133.181`
+- do not use `localhost` or domain URL for production access
+
+From Web VM, validate App API path:
+
+```bash
+curl -I http://10.96.133.197:5000/healthz
+```
 
 Credential verification checklist:
 
@@ -145,6 +207,13 @@ Then re-test the same logins to confirm persisted availability.
 - CORS error: ensure `CORS_ORIGIN=http://10.96.133.181`.
 - 502 from Nginx: backend not reachable at `10.96.133.197:5000`.
 - Login failed: verify MongoDB service, firewall rules, and `MONGO_URI`.
+- Deployment dependency errors: run preflight script:
+
+```bash
+ROLE=app ./scripts/check-deploy-readiness.sh
+ROLE=web APP_IP=10.96.133.197 APP_PORT=5000 ./scripts/check-deploy-readiness.sh
+ROLE=db ./scripts/check-deploy-readiness.sh
+```
 
 ## One-Shot Rollback-Safe Updates
 

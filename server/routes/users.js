@@ -1,8 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Store = require('../models/Store');
 const bcrypt = require('bcryptjs');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
+const { sendStoreEmail } = require('../utils/storeEmail');
+
+const sendWelcomeEmail = async (userDoc) => {
+  if (!userDoc?.email) return;
+  try {
+    const store = userDoc.assignedStore ? await Store.findById(userDoc.assignedStore).lean() : null;
+    const storeName = store?.name || 'All Stores';
+    await sendStoreEmail({
+      storeId: userDoc.assignedStore || null,
+      to: userDoc.email,
+      subject: 'Welcome to Expo IT Asset Management',
+      text: `Hello ${userDoc.name}, your ${userDoc.role} account has been created for ${storeName}.`,
+      html: `<p>Hello <strong>${userDoc.name}</strong>,</p><p>Your <strong>${userDoc.role}</strong> account has been created for <strong>${storeName}</strong>.</p><p>You can now log in to the Expo IT Asset Management portal.</p>`
+    });
+  } catch (error) {
+    // Account creation should not fail if email service fails
+    console.error('Welcome email error:', error.message);
+  }
+};
 
 // @desc    Get all users (technicians)
 // @route   GET /api/users
@@ -62,6 +82,7 @@ router.post('/', protect, admin, async (req, res) => {
     const user = await User.create(payload);
 
     if (user) {
+      await sendWelcomeEmail(user);
       res.status(201).json({
         _id: user.id,
         name: user.name,
@@ -208,6 +229,7 @@ router.post('/admins', protect, superAdmin, async (req, res) => {
     });
 
     if (user) {
+      await sendWelcomeEmail(user);
       res.status(201).json({
         _id: user.id,
         name: user.name,
@@ -262,6 +284,7 @@ router.post('/viewers', protect, superAdmin, async (req, res) => {
     });
 
     if (user) {
+      await sendWelcomeEmail(user);
       res.status(201).json({
         _id: user.id,
         name: user.name,

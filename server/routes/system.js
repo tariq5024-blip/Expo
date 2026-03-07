@@ -15,11 +15,26 @@ const Vendor = require('../models/Vendor');
 const Pass = require('../models/Pass');
 const Permit = require('../models/Permit');
 const AssetCategory = require('../models/AssetCategory');
+const EmailLog = require('../models/EmailLog');
 const bcrypt = require('bcryptjs');
 const { backupDatabase } = require('../backup_db');
 const Setting = require('../models/Setting');
+const { sendStoreEmail, buildTransport } = require('../utils/storeEmail');
 
 const upload = multer({ storage: multer.memoryStorage() });
+const bulkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    const okType = file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json');
+    if (!okType) {
+      return cb(new Error(`Invalid file type for ${file.originalname}. Only .json backups are allowed.`));
+    }
+    cb(null, true);
+  }
+});
 
 // Branding logo upload (disk storage)
 const brandingDir = path.join(__dirname, '../uploads/branding');
@@ -49,6 +64,44 @@ const brandingUpload = multer({
 
 // Simple in-process lock to prevent concurrent resets
 let RESET_LOCK = false;
+const RESTORE_SCANS = new Map();
+const SCAN_TTL_MS = 30 * 60 * 1000;
+
+const normalizeIdentity = (value) => String(value || '').trim().toLowerCase();
+const toPlain = (doc) => (doc && typeof doc.toObject === 'function' ? doc.toObject() : doc);
+
+const pickDuplicateKeys = (assetLike = {}) => {
+  const uniqueId = String(assetLike.uniqueId || assetLike.asset_id || '').trim();
+  const serialNumber = String(assetLike.serial_number || assetLike.serialNumber || '').trim();
+  const assetTag = String(
+    assetLike.asset_tag || assetLike.assetTag || assetLike.tag || assetLike.rfid || assetLike.qr_code || ''
+  ).trim();
+  return { uniqueId, serialNumber, assetTag };
+};
+
+const sanitizeBackupAsset = (asset) => {
+  const cleaned = { ...asset };
+  delete cleaned._id;
+  delete cleaned.__v;
+  delete cleaned.createdAt;
+  delete cleaned.updatedAt;
+  if (!cleaned.uniqueId && cleaned.asset_id) cleaned.uniqueId = cleaned.asset_id;
+  if (!cleaned.serial_number && cleaned.serialNumber) cleaned.serial_number = cleaned.serialNumber;
+  if (!cleaned.name && cleaned.asset_name) cleaned.name = cleaned.asset_name;
+  cleaned.name = cleaned.name || 'Unnamed Asset';
+  return cleaned;
+};
+
+const generateForceAddUniqueId = async (seed = 'AST') => {
+  const base = String(seed || 'AST').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6) || 'AST';
+  for (let i = 0; i < 12; i += 1) {
+    const candidate = `${base}-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 9999)}`;
+    // eslint-disable-next-line no-await-in-loop
+    const exists = await Asset.findOne({ uniqueId: candidate }).lean();
+    if (!exists) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+};
 
 // Helper to get directory size
 const getDirSize = (dirPath) => {
@@ -278,6 +331,376 @@ router.post('/restore-from-file', protect, superAdmin, upload.single('backup'), 
   } catch (error) {
     console.error('Error restoring from backup file:', error);
     res.status(500).json({ message: error.message || 'Failed to restore from backup file' });
+  }
+});
+
+// @desc    Scan backup file and detect duplicate conflicts
+// @route   POST /api/system/backup-upload/scan
+// @access  Private/SuperAdmin
+router.post('/backup-upload/scan', protect, superAdmin, bulkUpload.single('backup'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: 'Backup file is required' });
+  }
+
+  try {
+    const content = req.file.buffer.toString('utf8');
+    const payload = JSON.parse(content);
+    const assets = Array.isArray(payload?.collections?.assets) ? payload.collections.assets : [];
+    const fileName = req.file.originalname || `backup-${Date.now()}.json`;
+
+    if (assets.length === 0) {
+      return res.status(400).json({ message: `No assets found in ${fileName}` });
+    }
+
+    const prepared = [];
+    const conflicts = [];
+    const duplicateQueries = [];
+
+    for (const raw of assets) {
+      const asset = sanitizeBackupAsset(raw);
+      const keys = pickDuplicateKeys(asset);
+      const clauses = [];
+      if (keys.uniqueId) clauses.push({ uniqueId: keys.uniqueId });
+      if (keys.serialNumber) clauses.push({ serial_number: keys.serialNumber });
+      if (keys.assetTag) clauses.push({ $or: [{ asset_tag: keys.assetTag }, { rfid: keys.assetTag }, { qr_code: keys.assetTag }] });
+      if (clauses.length > 0) duplicateQueries.push({ $or: clauses });
+      prepared.push({ asset, keys });
+    }
+
+    let existingMatches = [];
+    if (duplicateQueries.length > 0) {
+      existingMatches = await Asset.find({ $or: duplicateQueries }).lean();
+    }
+
+    const byUnique = new Map();
+    const bySerial = new Map();
+    const byTag = new Map();
+    existingMatches.forEach((doc) => {
+      if (doc.uniqueId) byUnique.set(normalizeIdentity(doc.uniqueId), doc);
+      if (doc.serial_number) bySerial.set(normalizeIdentity(doc.serial_number), doc);
+      if (doc.asset_tag) byTag.set(normalizeIdentity(doc.asset_tag), doc);
+      if (doc.rfid) byTag.set(normalizeIdentity(doc.rfid), doc);
+      if (doc.qr_code) byTag.set(normalizeIdentity(doc.qr_code), doc);
+    });
+
+    const normalizedAssets = [];
+    prepared.forEach(({ asset, keys }, idx) => {
+      const existing =
+        (keys.uniqueId && byUnique.get(normalizeIdentity(keys.uniqueId))) ||
+        (keys.serialNumber && bySerial.get(normalizeIdentity(keys.serialNumber))) ||
+        (keys.assetTag && byTag.get(normalizeIdentity(keys.assetTag)));
+
+      const row = {
+        rowId: `${fileName}-${idx}`,
+        fileName,
+        backupAsset: asset,
+        duplicateKeys: keys
+      };
+      normalizedAssets.push(row);
+
+      if (existing) {
+        conflicts.push({
+          rowId: row.rowId,
+          fileName,
+          assetName: asset.name || 'Unnamed Asset',
+          serialNumber: asset.serial_number || '',
+          existingRecord: {
+            _id: existing._id,
+            name: existing.name,
+            uniqueId: existing.uniqueId || '',
+            serial_number: existing.serial_number || '',
+            status: existing.status || '',
+            store: existing.store || null
+          },
+          backupRecord: {
+            name: asset.name || '',
+            uniqueId: asset.uniqueId || '',
+            serial_number: asset.serial_number || '',
+            status: asset.status || '',
+            store: asset.store || null
+          },
+          suggestedAction: 'skip'
+        });
+      }
+    });
+
+    const scanId = `scan-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    RESTORE_SCANS.set(scanId, {
+      createdAt: Date.now(),
+      fileName,
+      assets: normalizedAssets,
+      conflicts
+    });
+
+    res.json({
+      message: `Scanned ${fileName}`,
+      scanId,
+      fileName,
+      totals: {
+        processed: normalizedAssets.length,
+        conflicts: conflicts.length,
+        readyToInsert: normalizedAssets.length - conflicts.length
+      },
+      conflicts
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to parse backup file' });
+  }
+});
+
+// @desc    Apply conflict resolution for scanned backups
+// @route   POST /api/system/backup-upload/apply
+// @access  Private/SuperAdmin
+router.post('/backup-upload/apply', protect, superAdmin, async (req, res) => {
+  try {
+    const {
+      scanIds = [],
+      actions = {},
+      defaultAction = 'skip',
+      applyActionToAll = false
+    } = req.body || {};
+
+    if (!Array.isArray(scanIds) || scanIds.length === 0) {
+      return res.status(400).json({ message: 'scanIds is required' });
+    }
+
+    const now = Date.now();
+    for (const [id, scan] of RESTORE_SCANS.entries()) {
+      if (now - scan.createdAt > SCAN_TTL_MS) {
+        RESTORE_SCANS.delete(id);
+      }
+    }
+
+    const scans = scanIds.map((id) => RESTORE_SCANS.get(id)).filter(Boolean);
+    if (scans.length === 0) {
+      return res.status(404).json({ message: 'No valid scanned backup sessions found' });
+    }
+
+    const allRows = scans.flatMap((scan) => scan.assets || []);
+    const summary = {
+      totalProcessed: allRows.length,
+      added: 0,
+      updated: 0,
+      skipped: 0,
+      conflictsResolved: 0
+    };
+
+    for (const row of allRows) {
+      const assetData = sanitizeBackupAsset(row.backupAsset || {});
+      const keys = row.duplicateKeys || pickDuplicateKeys(assetData);
+
+      const clauses = [];
+      if (keys.uniqueId) clauses.push({ uniqueId: keys.uniqueId });
+      if (keys.serialNumber) clauses.push({ serial_number: keys.serialNumber });
+      if (keys.assetTag) clauses.push({ $or: [{ asset_tag: keys.assetTag }, { rfid: keys.assetTag }, { qr_code: keys.assetTag }] });
+      // eslint-disable-next-line no-await-in-loop
+      const existing = clauses.length ? await Asset.findOne({ $or: clauses }) : null;
+
+      if (!existing) {
+        // eslint-disable-next-line no-await-in-loop
+        await Asset.create(assetData);
+        summary.added += 1;
+        continue;
+      }
+
+      const explicit = actions[row.rowId];
+      const action = (applyActionToAll ? defaultAction : (explicit?.action || defaultAction || 'skip')).toLowerCase();
+      const mergeData = explicit?.mergeData || {};
+
+      if (action === 'skip') {
+        summary.skipped += 1;
+      } else if (action === 'replace') {
+        Object.assign(existing, assetData, { _id: existing._id });
+        // eslint-disable-next-line no-await-in-loop
+        await existing.save();
+        summary.updated += 1;
+        summary.conflictsResolved += 1;
+      } else if (action === 'edit' || action === 'merge') {
+        Object.assign(existing, assetData, mergeData, { _id: existing._id });
+        // eslint-disable-next-line no-await-in-loop
+        await existing.save();
+        summary.updated += 1;
+        summary.conflictsResolved += 1;
+      } else if (action === 'force_add') {
+        const forced = { ...assetData };
+        forced.uniqueId = await generateForceAddUniqueId(assetData.uniqueId || assetData.name || 'AST');
+        // eslint-disable-next-line no-await-in-loop
+        await Asset.create(forced);
+        summary.added += 1;
+        summary.conflictsResolved += 1;
+      } else {
+        summary.skipped += 1;
+      }
+    }
+
+    scanIds.forEach((id) => RESTORE_SCANS.delete(id));
+
+    await ActivityLog.create({
+      user: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      action: 'Bulk Backup Restore',
+      details: `Processed ${summary.totalProcessed}, Added ${summary.added}, Updated ${summary.updated}, Skipped ${summary.skipped}`,
+      store: null
+    });
+
+    res.json({
+      message: 'Bulk backup restore completed',
+      summary
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to apply restore actions' });
+  }
+});
+
+const resolveEmailConfigStoreId = (req, inputStoreId) => {
+  if (req.user.role === 'Super Admin') {
+    return inputStoreId || req.query.storeId || req.activeStore || req.user.assignedStore || null;
+  }
+  return req.user.assignedStore || null;
+};
+
+// @desc    Get store email configuration
+// @route   GET /api/system/email-config
+// @access  Private/Admin
+router.get('/email-config', protect, admin, async (req, res) => {
+  try {
+    const storeId = resolveEmailConfigStoreId(req, req.query.storeId);
+    if (!storeId) return res.status(400).json({ message: 'Store context is required' });
+
+    const store = await Store.findById(storeId).lean();
+    if (!store) return res.status(404).json({ message: 'Store not found' });
+
+    const cfg = store.emailConfig || {};
+    res.json({
+      storeId: store._id,
+      storeName: store.name,
+      emailConfig: {
+        smtpHost: cfg.smtpHost || '',
+        smtpPort: cfg.smtpPort || 587,
+        username: cfg.username || '',
+        password: cfg.password || '',
+        encryption: cfg.encryption || 'TLS',
+        fromEmail: cfg.fromEmail || '',
+        fromName: cfg.fromName || '',
+        enabled: Boolean(cfg.enabled)
+      },
+      canOverrideAllStores: req.user.role === 'Super Admin'
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Save store email configuration
+// @route   PUT /api/system/email-config
+// @access  Private/Admin
+router.put('/email-config', protect, admin, async (req, res) => {
+  try {
+    const storeId = resolveEmailConfigStoreId(req, req.body.storeId);
+    if (!storeId) return res.status(400).json({ message: 'Store context is required' });
+
+    const {
+      smtpHost,
+      smtpPort,
+      username,
+      password,
+      encryption = 'TLS',
+      fromEmail,
+      fromName,
+      enabled
+    } = req.body;
+
+    if (!smtpHost || !smtpPort || !username || !password) {
+      return res.status(400).json({ message: 'SMTP host, port, username and password are required' });
+    }
+    if (!['TLS', 'SSL'].includes(String(encryption).toUpperCase())) {
+      return res.status(400).json({ message: 'Encryption must be TLS or SSL' });
+    }
+
+    const update = {
+      emailConfig: {
+        smtpHost: String(smtpHost).trim(),
+        smtpPort: Number(smtpPort),
+        username: String(username).trim(),
+        password: String(password),
+        encryption: String(encryption).toUpperCase(),
+        fromEmail: String(fromEmail || username).trim(),
+        fromName: String(fromName || '').trim(),
+        enabled: Boolean(enabled !== false),
+        updatedBy: req.user._id,
+        updatedAt: new Date()
+      }
+    };
+
+    const store = await Store.findByIdAndUpdate(storeId, { $set: update }, { new: true });
+    if (!store) return res.status(404).json({ message: 'Store not found' });
+
+    res.json({ message: 'Email configuration saved', storeId: store._id, storeName: store.name });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// @desc    Send test email with store configuration
+// @route   POST /api/system/email-config/test
+// @access  Private/Admin
+router.post('/email-config/test', protect, admin, async (req, res) => {
+  try {
+    const storeId = resolveEmailConfigStoreId(req, req.body.storeId);
+    const recipient = String(req.body?.to || req.user.email || '').trim();
+    if (!recipient) return res.status(400).json({ message: 'Recipient email is required' });
+    if (!storeId) return res.status(400).json({ message: 'Store context is required' });
+
+    const store = await Store.findById(storeId).lean();
+    if (!store) return res.status(404).json({ message: 'Store not found' });
+    const cfg = store.emailConfig || {};
+    if (!cfg.enabled) return res.status(400).json({ message: 'Email config is disabled for this store' });
+
+    const forceConfig = {
+      smtpHost: cfg.smtpHost,
+      smtpPort: cfg.smtpPort,
+      username: cfg.username,
+      password: cfg.password,
+      encryption: cfg.encryption,
+      fromEmail: cfg.fromEmail || cfg.username,
+      fromName: cfg.fromName || store.name || 'Expo Asset',
+      storeName: store.name
+    };
+    const transporter = buildTransport(forceConfig);
+    await transporter.verify();
+
+    await sendStoreEmail({
+      storeId,
+      to: recipient,
+      subject: `Test Email - ${store.name}`,
+      text: `This is a test email from ${store.name} SMTP configuration.`,
+      html: `<p>This is a test email from <strong>${store.name}</strong> SMTP configuration.</p>`,
+      forceConfig
+    });
+
+    res.json({ message: `Test email sent to ${recipient}` });
+  } catch (error) {
+    res.status(400).json({ message: error.message || 'Failed to send test email' });
+  }
+});
+
+// @desc    Get email logs
+// @route   GET /api/system/email-logs
+// @access  Private/Admin
+router.get('/email-logs', protect, admin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '100', 10), 300);
+    const query = {};
+    if (req.user.role !== 'Super Admin' && req.user.assignedStore) {
+      query.store = req.user.assignedStore;
+    } else if (req.query.storeId) {
+      query.store = req.query.storeId;
+    }
+    const logs = await EmailLog.find(query).sort({ createdAt: -1 }).limit(limit).populate('store', 'name').lean();
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 });
 

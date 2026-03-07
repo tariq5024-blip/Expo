@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
-import { Users, ArrowLeft, Database, AlertTriangle, X, Store, Building2, ChevronRight, Settings, ShieldCheck, Activity, Search, Lock, LogOut, Palette } from 'lucide-react';
+import { Users, ArrowLeft, Database, AlertTriangle, X, Store, Building2, ChevronRight, Settings, ShieldCheck, Activity, Search, Lock, LogOut, Palette, UploadCloud, CheckCircle2 } from 'lucide-react';
 import AddMembers from './AddMembers';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 
@@ -21,6 +21,15 @@ const Portal = () => {
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreFileName, setRestoreFileName] = useState('');
+  const [bulkFiles, setBulkFiles] = useState([]);
+  const [uploadProgress, setUploadProgress] = useState({});
+  const [bulkConflicts, setBulkConflicts] = useState([]);
+  const [bulkScanIds, setBulkScanIds] = useState([]);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [defaultConflictAction, setDefaultConflictAction] = useState('skip');
+  const [conflictActions, setConflictActions] = useState({});
+  const [bulkSummary, setBulkSummary] = useState(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [lastBackupTime, setLastBackupTime] = useState(null);
   const [themeSaving, setThemeSaving] = useState(false);
@@ -172,6 +181,104 @@ const Portal = () => {
       alert('Restore failed: ' + (error.response?.data?.message || error.message));
     } finally {
       setRestoreLoading(false);
+    }
+  };
+
+  const allowedBackupTypes = ['application/json'];
+  const maxBackupFileSize = 10 * 1024 * 1024;
+
+  const validateBackupFiles = (files) => {
+    const valid = [];
+    const errors = [];
+    files.forEach((file) => {
+      const byName = file.name.toLowerCase().endsWith('.json');
+      const byMime = allowedBackupTypes.includes(file.type) || file.type === '';
+      if (!byName && !byMime) {
+        errors.push(`${file.name}: invalid type`);
+        return;
+      }
+      if (file.size > maxBackupFileSize) {
+        errors.push(`${file.name}: exceeds 10MB limit`);
+        return;
+      }
+      valid.push(file);
+    });
+    return { valid, errors };
+  };
+
+  const handleBulkFilePick = (files) => {
+    const fileList = Array.from(files || []);
+    const { valid, errors } = validateBackupFiles(fileList);
+    if (errors.length > 0) {
+      alert(`Some files were rejected:\n${errors.join('\n')}`);
+    }
+    setBulkFiles(valid);
+    setBulkConflicts([]);
+    setConflictActions({});
+    setBulkScanIds([]);
+    setBulkSummary(null);
+    const initialProgress = {};
+    valid.forEach((f) => { initialProgress[f.name] = 0; });
+    setUploadProgress(initialProgress);
+  };
+
+  const handleBulkScanUpload = async () => {
+    if (bulkUploading || bulkFiles.length === 0) return;
+    if (!window.confirm('Scan selected backup files for duplicates?')) return;
+
+    try {
+      setBulkUploading(true);
+      const allConflicts = [];
+      const scanIds = [];
+      for (const file of bulkFiles) {
+        const formData = new FormData();
+        formData.append('backup', file);
+        const res = await api.post('/system/backup-upload/scan', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (event) => {
+            const percent = event.total ? Math.round((event.loaded * 100) / event.total) : 0;
+            setUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
+          }
+        });
+        if (res.data?.scanId) scanIds.push(res.data.scanId);
+        if (Array.isArray(res.data?.conflicts)) {
+          allConflicts.push(...res.data.conflicts);
+        }
+      }
+      setBulkScanIds(scanIds);
+      setBulkConflicts(allConflicts);
+      if (allConflicts.length === 0) {
+        alert('No conflicts detected. You can now apply restore directly.');
+      }
+    } catch (error) {
+      alert('Bulk scan failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setBulkUploading(false);
+    }
+  };
+
+  const setConflictAction = (rowId, action) => {
+    setConflictActions((prev) => ({ ...prev, [rowId]: { ...(prev[rowId] || {}), action } }));
+  };
+
+  const handleApplyBulkRestore = async () => {
+    if (bulkApplying || bulkScanIds.length === 0) return;
+    if (!window.confirm('Apply backup restore with selected conflict actions?')) return;
+
+    try {
+      setBulkApplying(true);
+      const res = await api.post('/system/backup-upload/apply', {
+        scanIds: bulkScanIds,
+        actions: conflictActions,
+        defaultAction: defaultConflictAction,
+        applyActionToAll: false
+      });
+      setBulkSummary(res.data?.summary || null);
+      alert('Bulk restore completed successfully.');
+    } catch (error) {
+      alert('Bulk restore failed: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setBulkApplying(false);
     }
   };
 
@@ -695,6 +802,110 @@ const Portal = () => {
                         </span>
                       )}
                     </label>
+
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-800">Bulk Backup Upload (Super Admin)</span>
+                        <UploadCloud size={14} className="text-slate-500" />
+                      </div>
+                      <input
+                        type="file"
+                        multiple
+                        accept="application/json,.json"
+                        onChange={(e) => {
+                          handleBulkFilePick(e.target.files);
+                          e.target.value = '';
+                        }}
+                        className="block w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
+                      />
+                      {bulkFiles.length > 0 && (
+                        <div className="space-y-2">
+                          {bulkFiles.map((file) => (
+                            <div key={file.name} className="text-[11px] text-slate-600">
+                              <div className="flex justify-between">
+                                <span>{file.name}</span>
+                                <span>{uploadProgress[file.name] || 0}%</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-indigo-500 transition-all"
+                                  style={{ width: `${uploadProgress[file.name] || 0}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          onClick={handleBulkScanUpload}
+                          disabled={bulkUploading || bulkFiles.length === 0}
+                          className="px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-600 text-white disabled:opacity-50"
+                        >
+                          {bulkUploading ? 'Scanning...' : 'Scan for Duplicates'}
+                        </button>
+                        <select
+                          value={defaultConflictAction}
+                          onChange={(e) => setDefaultConflictAction(e.target.value)}
+                          className="px-2 py-1.5 text-xs rounded-md border border-slate-300 bg-white"
+                        >
+                          <option value="skip">Skip All</option>
+                          <option value="replace">Replace All</option>
+                          <option value="merge">Merge All</option>
+                          <option value="force_add">Force Add All</option>
+                        </select>
+                        <button
+                          onClick={handleApplyBulkRestore}
+                          disabled={bulkApplying || bulkScanIds.length === 0}
+                          className="px-3 py-1.5 rounded-md text-xs font-medium bg-emerald-600 text-white disabled:opacity-50"
+                        >
+                          {bulkApplying ? 'Applying...' : 'Apply Restore'}
+                        </button>
+                      </div>
+                      {bulkSummary && (
+                        <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-2">
+                          <div className="flex items-center gap-1 font-semibold mb-1"><CheckCircle2 size={12} /> Restore Summary</div>
+                          Processed: {bulkSummary.totalProcessed}, Added: {bulkSummary.added}, Updated: {bulkSummary.updated}, Skipped: {bulkSummary.skipped}, Conflicts Resolved: {bulkSummary.conflictsResolved}
+                        </div>
+                      )}
+                      {bulkConflicts.length > 0 && (
+                        <div className="max-h-56 overflow-auto border border-slate-200 rounded-md bg-white">
+                          <table className="min-w-full text-[11px]">
+                            <thead className="bg-slate-50 sticky top-0">
+                              <tr className="text-left text-slate-600">
+                                <th className="px-2 py-1">Asset</th>
+                                <th className="px-2 py-1">Serial</th>
+                                <th className="px-2 py-1">Existing</th>
+                                <th className="px-2 py-1">Backup</th>
+                                <th className="px-2 py-1">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {bulkConflicts.map((row) => (
+                                <tr key={row.rowId} className="border-t border-slate-100">
+                                  <td className="px-2 py-1 text-slate-800">{row.assetName || '-'}</td>
+                                  <td className="px-2 py-1 text-slate-600">{row.serialNumber || '-'}</td>
+                                  <td className="px-2 py-1 text-slate-600">{row.existingRecord?.uniqueId || row.existingRecord?._id}</td>
+                                  <td className="px-2 py-1 text-slate-600">{row.backupRecord?.uniqueId || '-'}</td>
+                                  <td className="px-2 py-1">
+                                    <select
+                                      value={conflictActions[row.rowId]?.action || defaultConflictAction}
+                                      onChange={(e) => setConflictAction(row.rowId, e.target.value)}
+                                      className="px-2 py-1 rounded border border-slate-300 bg-white"
+                                    >
+                                      <option value="skip">Skip</option>
+                                      <option value="replace">Replace</option>
+                                      <option value="merge">Edit / Merge</option>
+                                      <option value="force_add">Force Add</option>
+                                    </select>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div>

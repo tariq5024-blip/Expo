@@ -12,6 +12,7 @@ const xlsx = require('xlsx');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { sendStoreEmail } = require('../utils/storeEmail');
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -44,6 +45,22 @@ async function generateUniqueId(assetType) {
   }
   // Fallback: use timestamp if random fails
   return `${prefix}${Date.now().toString().slice(-4)}`;
+}
+
+async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [] }) {
+  if (!recipientEmail) return;
+  try {
+    const safeLines = lines.filter(Boolean).map((line) => String(line));
+    await sendStoreEmail({
+      storeId: asset?.store || null,
+      to: recipientEmail,
+      subject,
+      text: safeLines.join('\n'),
+      html: `<div>${safeLines.map((line) => `<p>${line}</p>`).join('')}</div>`
+    });
+  } catch (error) {
+    console.error('Asset notification email error:', error.message);
+  }
 }
 
     // @desc    Get recent activity logs
@@ -1960,6 +1977,18 @@ router.post('/assign', protect, admin, async (req, res) => {
         details: `Assigned asset ${asset.name} (SN: ${asset.serial_number}) to ${technician.name} (Ticket: ${ticketNumber || 'N/A'})`,
         store: asset.store
       });
+      await notifyAssetEvent({
+        asset,
+        recipientEmail: technician.email,
+        subject: 'Asset Assigned to You',
+        lines: [
+          `Asset assignment update for ${technician.name}.`,
+          `Asset: ${asset.name}`,
+          `Serial: ${asset.serial_number || 'N/A'}`,
+          `Ticket: ${ticketNumber || 'N/A'}`,
+          `Action: Assigned by ${req.user.name}`
+        ]
+      });
       return res.json(asset);
     } else if (otherRecipient && otherRecipient.name) {
       // Assign to external person without linking to a User
@@ -2048,6 +2077,19 @@ router.post('/unassign', protect, admin, async (req, res) => {
       details: `Unassigned asset ${asset.name} (SN: ${asset.serial_number}) from ${previousUser}`,
       store: asset.store
     });
+    if (asset.assigned_to?.email) {
+      await notifyAssetEvent({
+        asset,
+        recipientEmail: asset.assigned_to.email,
+        subject: 'Asset Unassigned',
+        lines: [
+          'An asset assigned to you has been returned to store.',
+          `Asset: ${asset.name}`,
+          `Serial: ${asset.serial_number || 'N/A'}`,
+          `Action: Unassigned by ${req.user.name}`
+        ]
+      });
+    }
 
     res.json(asset);
   } catch (error) {
@@ -2095,19 +2137,19 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
       store: asset.store
     });
 
-    // Send Email to Technician
-    if (req.user.email) {
-      try {
-        await sendEmail({
-          email: req.user.email,
-          subject: 'Asset Collected Successfully',
-          message: `You have successfully collected the asset:\n\nName: ${asset.name}\nSerial: ${asset.serial_number}\nTicket: ${ticketNumber}\nInstallation Location: ${installationLocation || 'N/A'}\n\nDate: ${new Date().toLocaleString()}`
-        });
-      } catch (emailErr) {
-        console.error('Email sending failed:', emailErr);
-        // Don't fail the request if email fails, just log it
-      }
-    }
+    await notifyAssetEvent({
+      asset,
+      recipientEmail: req.user.email,
+      subject: 'Asset Collected Successfully',
+      lines: [
+        `You have successfully collected an asset.`,
+        `Asset: ${asset.name}`,
+        `Serial: ${asset.serial_number || 'N/A'}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `Location: ${installationLocation || 'N/A'}`,
+        `Date: ${new Date().toLocaleString()}`
+      ]
+    });
 
     res.json(asset);
   } catch (error) {
@@ -2189,6 +2231,19 @@ router.post('/in-use', protect, restrictViewer, async (req, res) => {
       details: `Asset ${asset.name} (SN: ${asset.serial_number}) marked as In Use by ${req.user.name}`,
       store: asset.store
     });
+    await notifyAssetEvent({
+      asset,
+      recipientEmail: req.user.email,
+      subject: 'Asset Marked In Use',
+      lines: [
+        `Asset movement event completed.`,
+        `Asset: ${asset.name}`,
+        `Serial: ${asset.serial_number || 'N/A'}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `Location: ${location || 'N/A'}`,
+        `Action: In Use`
+      ]
+    });
 
     res.json({ message: 'Asset marked as In Use', asset });
   } catch (error) {
@@ -2241,6 +2296,19 @@ router.post('/return', protect, restrictViewer, async (req, res) => {
       details: `Returned asset ${asset.name} (SN: ${asset.serial_number}) as ${cond}`,
       store: asset.store
     });
+    await notifyAssetEvent({
+      asset,
+      recipientEmail: req.user.email,
+      subject: 'Asset Returned Successfully',
+      lines: [
+        `Asset movement event completed.`,
+        `Asset: ${asset.name}`,
+        `Serial: ${asset.serial_number || 'N/A'}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `Condition: ${cond}`,
+        `Action: Returned to store`
+      ]
+    });
 
     res.json({ message: 'Asset returned successfully', asset });
   } catch (error) {
@@ -2288,6 +2356,19 @@ router.post('/return-request', protect, restrictViewer, async (req, res) => {
       details: `Returned asset ${asset.name} (SN: ${asset.serial_number}) as ${cond}`,
       store: asset.store
     });
+    await notifyAssetEvent({
+      asset,
+      recipientEmail: req.user.email,
+      subject: 'Asset Return Completed',
+      lines: [
+        `Asset movement event completed.`,
+        `Asset: ${asset.name}`,
+        `Serial: ${asset.serial_number || 'N/A'}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `Condition: ${cond}`,
+        `Action: Returned`
+      ]
+    });
 
     res.json({ message: 'Asset returned successfully', asset });
   } catch (error) {
@@ -2323,6 +2404,7 @@ router.post('/return-approve', protect, admin, async (req, res) => {
     // apply return
     const cond = asset.return_request.condition;
     const ticketNumber = asset.return_request.ticket_number;
+    const requestedBy = asset.return_request.requested_by;
     asset.assigned_to = undefined;
     asset.status = 'In Store';
     asset.return_pending = false;
@@ -2341,6 +2423,21 @@ router.post('/return-approve', protect, admin, async (req, res) => {
       details: `Approved return of ${asset.name} (SN: ${asset.serial_number}) as ${cond}`,
       store: asset.store
     });
+    if (requestedBy) {
+      const requester = await User.findById(requestedBy).lean();
+      await notifyAssetEvent({
+        asset,
+        recipientEmail: requester?.email,
+        subject: 'Asset Return Approved',
+        lines: [
+          'Your return request was approved.',
+          `Asset: ${asset.name}`,
+          `Serial: ${asset.serial_number || 'N/A'}`,
+          `Ticket: ${ticketNumber || 'N/A'}`,
+          `Condition: ${cond}`
+        ]
+      });
+    }
     res.json({ message: 'Return approved', asset });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -2360,6 +2457,7 @@ router.post('/return-reject', protect, admin, async (req, res) => {
     }
     const cond = asset.return_request.condition;
     const ticketNumber = asset.return_request.ticket_number;
+    const requestedBy = asset.return_request.requested_by;
     asset.history.push({
       action: `Return Rejected/${cond}${reason ? ` — ${reason}` : ''}`,
       ticket_number: ticketNumber,
@@ -2376,6 +2474,21 @@ router.post('/return-reject', protect, admin, async (req, res) => {
       details: `Rejected return of ${asset.name} (SN: ${asset.serial_number})${reason ? ` — ${reason}` : ''}`,
       store: asset.store
     });
+    if (requestedBy) {
+      const requester = await User.findById(requestedBy).lean();
+      await notifyAssetEvent({
+        asset,
+        recipientEmail: requester?.email,
+        subject: 'Asset Return Rejected',
+        lines: [
+          'Your return request was rejected.',
+          `Asset: ${asset.name}`,
+          `Serial: ${asset.serial_number || 'N/A'}`,
+          `Ticket: ${ticketNumber || 'N/A'}`,
+          reason ? `Reason: ${reason}` : null
+        ]
+      });
+    }
     res.json({ message: 'Return rejected', asset });
   } catch (error) {
     res.status(500).json({ message: error.message });

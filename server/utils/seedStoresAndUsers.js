@@ -5,16 +5,23 @@ const bcrypt = require('bcryptjs');
 
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const findUserByEmailCanonical = async (email) => {
+const findUsersByEmailLoose = async (email) => {
   const canonical = String(email || '').trim().toLowerCase();
-  // Prefer exact canonical match first
-  let user = await User.findOne({ email: canonical });
-  if (user) return user;
-  // Fallback for legacy mixed-case emails
-  user = await User.findOne({
-    email: { $regex: new RegExp(`^${escapeRegex(canonical)}$`, 'i') }
+  // Match same email with optional accidental spaces + any case
+  return User.find({
+    email: { $regex: new RegExp(`^\\s*${escapeRegex(canonical)}\\s*$`, 'i') }
   });
-  return user;
+};
+
+const pickPrimaryUser = (users, canonicalEmail) => {
+  if (!Array.isArray(users) || users.length === 0) return null;
+  const exact = users.find((u) => String(u.email || '').trim().toLowerCase() === canonicalEmail);
+  return exact || users[0];
+};
+
+const archiveDuplicateEmail = async (userDoc) => {
+  userDoc.email = `legacy_${userDoc._id}@legacy.local`;
+  await userDoc.save();
 };
 
 const seedStoresAndUsers = async () => {
@@ -52,7 +59,9 @@ const seedStoresAndUsers = async () => {
 
     // 2. Create/Normalize Super Admin
     const superAdminEmail = 'superadmin@expo.com';
-    let superAdmin = await findUserByEmailCanonical(superAdminEmail);
+    const superAdminCanonical = superAdminEmail.toLowerCase();
+    const superAdminMatches = await findUsersByEmailLoose(superAdminEmail);
+    let superAdmin = pickPrimaryUser(superAdminMatches, superAdminCanonical);
     const superAdminHashedPassword = await buildHash('superadmin123');
 
     if (!superAdmin) {
@@ -65,6 +74,13 @@ const seedStoresAndUsers = async () => {
       });
       console.log(`Created Super Admin: ${superAdminEmail} / superadmin123`);
     } else {
+      // If there are duplicate variants of this account, archive extras first.
+      for (const candidate of superAdminMatches) {
+        if (String(candidate._id) !== String(superAdmin._id)) {
+          await archiveDuplicateEmail(candidate);
+          console.log(`Archived duplicate user email record for ${superAdminEmail}: ${candidate._id}`);
+        }
+      }
       superAdmin.name = 'Super Admin';
       superAdmin.email = superAdminEmail;
       superAdmin.role = 'Super Admin';
@@ -86,7 +102,9 @@ const seedStoresAndUsers = async () => {
       const store = storeMap[adminData.storeName];
       
       if (store) {
-        let adminUser = await findUserByEmailCanonical(adminData.email);
+        const canonicalAdminEmail = String(adminData.email).toLowerCase();
+        const adminMatches = await findUsersByEmailLoose(adminData.email);
+        let adminUser = pickPrimaryUser(adminMatches, canonicalAdminEmail);
         
         const hashedPassword = await buildHash(adminData.password);
         if (!adminUser) {
@@ -99,6 +117,12 @@ const seedStoresAndUsers = async () => {
           });
           console.log(`Created ${adminData.name}: ${adminData.email} / ${adminData.password}`);
         } else {
+          for (const candidate of adminMatches) {
+            if (String(candidate._id) !== String(adminUser._id)) {
+              await archiveDuplicateEmail(candidate);
+              console.log(`Archived duplicate user email record for ${adminData.email}: ${candidate._id}`);
+            }
+          }
           adminUser.name = adminData.name;
           adminUser.email = String(adminData.email).toLowerCase();
           adminUser.role = 'Admin';

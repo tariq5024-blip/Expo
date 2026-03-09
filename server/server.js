@@ -275,7 +275,9 @@ const connectDB = async () => {
     });
     console.log('MongoDB Connected to:', process.env.MONGO_URI);
     
-    if (String(process.env.SEED_DEFAULTS || '').toLowerCase() === 'true') {
+    // Default to true so cloned/dev environments always get required default users.
+    // Set SEED_DEFAULTS=false only when you explicitly want to disable this behavior.
+    if (String(process.env.SEED_DEFAULTS ?? 'true').toLowerCase() === 'true') {
       await seedStoresAndUsers();
     }
     dropSerialUniqueIndex();

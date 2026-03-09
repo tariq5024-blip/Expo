@@ -7,10 +7,12 @@
     "build": "cd server && npm install && cd ../client && npm install && npm run build",
     "start": "cd server && node server.js",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:3000": "PORT=3000 NODE_ENV=production node server/server.js",
     "check:cycles": "madge --circular --extensions js,jsx,ts,tsx client/src && madge --circular --extensions js,jsx,ts,tsx server",
     "install:all": "npm install && cd server && npm install && cd ../client && npm install",
     "build:prod": "npm ci --omit=dev && cd client && npm ci --omit=dev && npm run build",
-    "start:prod": "NODE_ENV=production node server/server.js"
+    "start:prod": "NODE_ENV=production node server/server.js",
+    "start:prod:3000": "PORT=3000 NODE_ENV=production node server/server.js"
   },
   "engines": {
     "node": ">=18.0.0"

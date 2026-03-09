@@ -80,6 +80,34 @@ npm run dev -- --host --port 5173
 
 If your backend is configured to another port, use that port.
 
+## 6) Run as one service on `localhost:3000` (production-style)
+
+Build once:
+
+```bash
+cd /home/muhammad-tariq-imran/Expo
+npm run build:prod
+```
+
+Start app (serves frontend + API from one process):
+
+```bash
+cd /home/muhammad-tariq-imran/Expo
+npm run start:prod:3000
+```
+
+Open:
+
+- `http://localhost:3000`
+
+If login fails after environment edits, verify in `server/.env`:
+
+```env
+SEED_DEFAULTS=true
+MONGO_URI=mongodb://127.0.0.1:27017/expo
+COOKIE_SECURE=false
+```
+
 ## Common fixes
 
 - Port already in use:

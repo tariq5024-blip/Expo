@@ -35,13 +35,16 @@ router.post('/login',
     return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
   }
   const { email, password } = req.body;
+  const identifier = String(email || '').trim();
+  const identifierLower = identifier.toLowerCase();
 
   try {
     // Check for email OR username
-    const user = await User.findOne({ 
+    const user = await User.findOne({
       $or: [
-        { email: email }, 
-        { username: email }
+        { email: identifierLower },
+        { username: identifier },
+        { username: identifierLower }
       ] 
     }).populate('assignedStore');
 

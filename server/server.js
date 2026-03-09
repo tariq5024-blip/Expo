@@ -275,11 +275,11 @@ const connectDB = async () => {
     });
     console.log('MongoDB Connected to:', process.env.MONGO_URI);
     
-    // Default to true so cloned/dev environments always get required default users.
-    // Set SEED_DEFAULTS=false only when you explicitly want to disable this behavior.
-    if (String(process.env.SEED_DEFAULTS ?? 'true').toLowerCase() === 'true') {
-      await seedStoresAndUsers();
-    }
+    // Always enforce default operational users on startup so fresh clones can log in reliably.
+    // Required accounts:
+    // superadmin@expo.com / superadmin123
+    // scy@expo.com, it@expo.com, noc@expo.com / admin123
+    await seedStoresAndUsers();
     dropSerialUniqueIndex();
 
     if (!backupJobStarted) {

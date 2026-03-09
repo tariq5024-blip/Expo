@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const apiHost = (globalThis.process && globalThis.process.env && globalThis.process.env.VITE_API_HOST) || 'localhost'
+const apiPort = (globalThis.process && globalThis.process.env && globalThis.process.env.VITE_API_PORT) || '5000'
 
 export default defineConfig({
   plugins: [react()],
@@ -9,22 +10,22 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: `http://${apiHost}:5001`,
+        target: `http://${apiHost}:${apiPort}`,
         changeOrigin: true,
         secure: false,
       },
       '/uploads': {
-        target: `http://${apiHost}:5001`,
+        target: `http://${apiHost}:${apiPort}`,
         changeOrigin: true,
         secure: false,
       },
       '/healthz': {
-        target: `http://${apiHost}:5001`,
+        target: `http://${apiHost}:${apiPort}`,
         changeOrigin: true,
         secure: false,
       },
       '/readyz': {
-        target: `http://${apiHost}:5001`,
+        target: `http://${apiHost}:${apiPort}`,
         changeOrigin: true,
         secure: false,
       },

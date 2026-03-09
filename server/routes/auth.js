@@ -10,6 +10,7 @@ const rateLimit = require('express-rate-limit');
 
 const Session = require('../models/Session');
 const cookieSecure = String(process.env.COOKIE_SECURE || '').toLowerCase() === 'true';
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Login rate limiter (relaxed for internal use)
 const loginLimiter = rateLimit({
@@ -43,6 +44,7 @@ router.post('/login',
     const user = await User.findOne({
       $or: [
         { email: identifierLower },
+        { email: { $regex: new RegExp(`^${escapeRegex(identifierLower)}$`, 'i') } },
         { username: identifier },
         { username: identifierLower }
       ] 

@@ -3,6 +3,20 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const findUserByEmailCanonical = async (email) => {
+  const canonical = String(email || '').trim().toLowerCase();
+  // Prefer exact canonical match first
+  let user = await User.findOne({ email: canonical });
+  if (user) return user;
+  // Fallback for legacy mixed-case emails
+  user = await User.findOne({
+    email: { $regex: new RegExp(`^${escapeRegex(canonical)}$`, 'i') }
+  });
+  return user;
+};
+
 const seedStoresAndUsers = async () => {
   try {
     // 1. Create Stores
@@ -38,7 +52,7 @@ const seedStoresAndUsers = async () => {
 
     // 2. Create/Normalize Super Admin
     const superAdminEmail = 'superadmin@expo.com';
-    let superAdmin = await User.findOne({ email: superAdminEmail });
+    let superAdmin = await findUserByEmailCanonical(superAdminEmail);
     const superAdminHashedPassword = await buildHash('superadmin123');
 
     if (!superAdmin) {
@@ -52,6 +66,7 @@ const seedStoresAndUsers = async () => {
       console.log(`Created Super Admin: ${superAdminEmail} / superadmin123`);
     } else {
       superAdmin.name = 'Super Admin';
+      superAdmin.email = superAdminEmail;
       superAdmin.role = 'Super Admin';
       superAdmin.assignedStore = null;
       // Keep default deploy credentials deterministic per user requirement.
@@ -71,7 +86,7 @@ const seedStoresAndUsers = async () => {
       const store = storeMap[adminData.storeName];
       
       if (store) {
-        let adminUser = await User.findOne({ email: adminData.email });
+        let adminUser = await findUserByEmailCanonical(adminData.email);
         
         const hashedPassword = await buildHash(adminData.password);
         if (!adminUser) {
@@ -85,6 +100,7 @@ const seedStoresAndUsers = async () => {
           console.log(`Created ${adminData.name}: ${adminData.email} / ${adminData.password}`);
         } else {
           adminUser.name = adminData.name;
+          adminUser.email = String(adminData.email).toLowerCase();
           adminUser.role = 'Admin';
           adminUser.assignedStore = store._id;
           // Keep default deploy credentials deterministic per user requirement.

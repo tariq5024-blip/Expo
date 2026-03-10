@@ -704,6 +704,76 @@ router.get('/email-logs', protect, admin, async (req, res) => {
   }
 });
 
+// @desc    Get notification preferences
+// @route   GET /api/system/notification-preferences
+// @access  Private/Admin
+router.get('/notification-preferences', protect, admin, async (req, res) => {
+  try {
+    const targetUserId = req.user.role === 'Super Admin' ? (req.query.userId || req.user._id) : req.user._id;
+    const targetUser = await User.findById(targetUserId).select('notificationPreferences role email name').lean();
+    if (!targetUser) return res.status(404).json({ message: 'User not found' });
+
+    const prefs = targetUser.notificationPreferences || {};
+    res.json({
+      userId: targetUser._id,
+      userRole: targetUser.role,
+      email: targetUser.email,
+      name: targetUser.name,
+      notificationPreferences: {
+        enabled: prefs.enabled !== false,
+        notifyReceiver: prefs.notifyReceiver !== false,
+        notifyIssuer: prefs.notifyIssuer !== false,
+        notifyLineManager: Boolean(prefs.notifyLineManager)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Update notification preferences
+// @route   PUT /api/system/notification-preferences
+// @access  Private/Admin
+router.put('/notification-preferences', protect, admin, async (req, res) => {
+  try {
+    const targetUserId = req.user.role === 'Super Admin' ? (req.body.userId || req.user._id) : req.user._id;
+    const {
+      enabled = true,
+      notifyReceiver = true,
+      notifyIssuer = true,
+      notifyLineManager = false
+    } = req.body || {};
+
+    const updated = await User.findByIdAndUpdate(
+      targetUserId,
+      {
+        $set: {
+          notificationPreferences: {
+            enabled: Boolean(enabled),
+            notifyReceiver: Boolean(notifyReceiver),
+            notifyIssuer: Boolean(notifyIssuer),
+            notifyLineManager: Boolean(notifyLineManager)
+          }
+        }
+      },
+      { new: true }
+    ).select('notificationPreferences role email name');
+
+    if (!updated) return res.status(404).json({ message: 'User not found' });
+
+    res.json({
+      message: 'Notification preferences updated',
+      userId: updated._id,
+      userRole: updated.role,
+      email: updated.email,
+      name: updated.name,
+      notificationPreferences: updated.notificationPreferences
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // @desc    Request database reset (Store Admin)
 // @route   POST /api/system/request-reset
 // @access  Private/Admin

@@ -38,6 +38,12 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Store',
     index: true
+  },
+  notificationPreferences: {
+    enabled: { type: Boolean, default: true },
+    notifyReceiver: { type: Boolean, default: true },
+    notifyIssuer: { type: Boolean, default: true },
+    notifyLineManager: { type: Boolean, default: false }
   }
 }, { timestamps: true });
 

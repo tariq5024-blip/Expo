@@ -625,7 +625,7 @@ const Assets = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    const normalized = ['status', 'condition', 'store'].includes(name)
+    const normalized = ['status', 'condition', 'store', 'location'].includes(name)
       ? value
       : (typeof value === 'string' ? value.toUpperCase() : value);
     setFormData({ ...formData, [name]: normalized });
@@ -662,7 +662,7 @@ const Assets = () => {
   
   const handleAddChange = (e) => {
     const { name, value } = e.target;
-    const normalized = ['status', 'condition', 'store'].includes(name)
+    const normalized = ['status', 'condition', 'store', 'location'].includes(name)
       ? value
       : (typeof value === 'string' ? value.toUpperCase() : value);
     setAddForm({ ...addForm, [name]: normalized });

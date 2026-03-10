@@ -52,7 +52,7 @@ const Dashboard = () => {
     let timer;
     const checkHealth = async () => {
       try {
-        const res = await fetch('/healthz', { credentials: 'include' });
+        const res = await fetch('/api/healthz', { credentials: 'include' });
         if (!res.ok) throw new Error('healthz failed');
         const data = await res.json();
         const backend = true;

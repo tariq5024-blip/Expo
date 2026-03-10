@@ -103,6 +103,21 @@ app.get('/readyz', async (req, res) => {
   const state = mongoose.connection.readyState; // 1=connected
   res.status(state === 1 ? 200 : 503).json({ ready: state === 1 });
 });
+// API-prefixed aliases to support reverse proxies that only forward /api/*
+app.get('/api/healthz', async (req, res) => {
+  const state = mongoose.connection.readyState; // 1=connected
+  const ok = state === 1;
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    db_connected: ok,
+    uptime_s: Math.round(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+app.get('/api/readyz', async (req, res) => {
+  const state = mongoose.connection.readyState; // 1=connected
+  res.status(state === 1 ? 200 : 503).json({ ready: state === 1 });
+});
 
 // CSRF protection
 const enableCsrf = String(process.env.ENABLE_CSRF || (isProd ? 'true' : 'false')).toLowerCase() === 'true';
@@ -275,11 +290,16 @@ const connectDB = async () => {
     });
     console.log('MongoDB Connected to:', process.env.MONGO_URI);
     
-    // Always enforce default operational users on startup so fresh clones can log in reliably.
+    // Keep default operational users stable across pulls/restarts unless explicitly disabled.
     // Required accounts:
     // superadmin@expo.com / superadmin123
     // scy@expo.com, it@expo.com, noc@expo.com / admin123
-    await seedStoresAndUsers();
+    const enforceDefaultUsers = String(process.env.SEED_DEFAULTS || 'true').toLowerCase() === 'true';
+    if (enforceDefaultUsers) {
+      await seedStoresAndUsers();
+    } else {
+      console.log('SEED_DEFAULTS=false, skipped default user enforcement.');
+    }
     dropSerialUniqueIndex();
 
     if (!backupJobStarted) {

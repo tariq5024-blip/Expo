@@ -17,7 +17,7 @@ const Layout = () => {
     let timer;
     const checkHealth = async () => {
       try {
-        const res = await fetch('/healthz', { credentials: 'include' });
+        const res = await fetch('/api/healthz', { credentials: 'include' });
         if (!res.ok) throw new Error('health check failed');
         const data = await res.json();
         setSystemHealthy(Boolean(data?.db_connected));

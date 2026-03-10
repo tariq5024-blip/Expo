@@ -208,7 +208,7 @@ const Assets = () => {
     store: '',
     location: '',
     status: '',
-    condition: 'New / Excellent',
+    condition: 'New',
     rfid: '',
     qr_code: ''
   });
@@ -625,8 +625,10 @@ const Assets = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    const up = typeof value === 'string' ? value.toUpperCase() : value;
-    setFormData({ ...formData, [name]: up });
+    const normalized = ['status', 'condition', 'store'].includes(name)
+      ? value
+      : (typeof value === 'string' ? value.toUpperCase() : value);
+    setFormData({ ...formData, [name]: normalized });
   };
 
   const handleSave = async () => {
@@ -660,8 +662,10 @@ const Assets = () => {
   
   const handleAddChange = (e) => {
     const { name, value } = e.target;
-    const up = typeof value === 'string' ? value.toUpperCase() : value;
-    setAddForm({ ...addForm, [name]: up });
+    const normalized = ['status', 'condition', 'store'].includes(name)
+      ? value
+      : (typeof value === 'string' ? value.toUpperCase() : value);
+    setAddForm({ ...addForm, [name]: normalized });
   };
   const handleAddSubmit = async () => {
     // Validate required fields (Store is optional now)
@@ -693,7 +697,10 @@ const Assets = () => {
         ticket_number: '',
         store: '',
         location: '',
-        status: 'New'
+        status: 'In Store',
+        condition: 'New',
+        rfid: '',
+        qr_code: ''
       });
       setSelectedProduct('');
       setAssets(prev => [created, ...prev]);
@@ -703,7 +710,7 @@ const Assets = () => {
       // Optional: toast style message if desired
     } catch (error) {
       console.error('Error adding asset:', error);
-      alert('Failed to add asset');
+      alert(error?.response?.data?.message || 'Failed to add asset');
     } finally {
       setAddLoading(false);
     }

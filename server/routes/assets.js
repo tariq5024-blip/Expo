@@ -63,6 +63,20 @@ async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [] }) 
   }
 }
 
+function readUploadedWorkbook(file) {
+  if (!file) {
+    throw new Error('No file uploaded');
+  }
+  if (file.buffer) {
+    return xlsx.read(file.buffer, { type: 'buffer' });
+  }
+  if (file.path && fs.existsSync(file.path)) {
+    const buf = fs.readFileSync(file.path);
+    return xlsx.read(buf, { type: 'buffer' });
+  }
+  throw new Error('Uploaded file is not readable');
+}
+
     // @desc    Get recent activity logs
     // @route   GET /api/assets/recent-activity
     // @access  Private (Admin/Technician/Viewer)
@@ -1012,7 +1026,7 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       uniqueId,
       store: req.activeStore || store,
       status: status || 'New',
-      condition: condition || 'New / Excellent',
+      condition: condition || 'New',
       location: normLocation || '',
       quantity: qty
     });
@@ -1238,7 +1252,7 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
   }
   try {
     const importBatchId = `BATCH-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    const workbook = readUploadedWorkbook(req.file);
     if (!workbook || !Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
       return res.status(400).json({ message: 'Invalid Excel file: no sheets found' });
     }
@@ -1388,7 +1402,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
 
   try {
     const importBatchId = `BATCH-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    const workbook = readUploadedWorkbook(req.file);
     if (!workbook || !Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
       return res.status(400).json({ message: 'Invalid Excel file: no sheets found' });
     }
@@ -1561,9 +1575,6 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       
       let productName = reqProductName || norm['product name'] || norm['product'] || '-';
 
-      const categoryFromRow = norm['category'] || '';
-      const typeFromRow = norm['product type'] || norm['producttype'] || '';
-
       if (!productName && (norm['asset type'] || norm['assettype'])) {
         productName = norm['asset type'] || norm['assettype'];
       }
@@ -1642,29 +1653,6 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       // Enforce active store context if present
       if (req.activeStore) {
         storeId = req.activeStore;
-      }
-      
-      // Uppercase enforcement: trim first before check
-      const hasLower = (s) => /[a-z]/.test(String(s || '').trim());
-      const uppercaseViolations = [];
-      if (hasLower(categoryFromRow)) uppercaseViolations.push('Category');
-      if (hasLower(typeFromRow)) uppercaseViolations.push('Product Type');
-      if (hasLower(productName)) uppercaseViolations.push('Product Name');
-      if (hasLower(model)) uppercaseViolations.push('Model Number');
-      if (hasLower(mac)) uppercaseViolations.push('MAC Address');
-      if (hasLower(manufacturer)) uppercaseViolations.push('Manufacturer');
-      if (hasLower(ticketNumber)) uppercaseViolations.push('Ticket Number');
-      if (hasLower(rfid)) uppercaseViolations.push('RFID');
-      if (hasLower(qrCode)) uppercaseViolations.push('QR Code');
-      if (hasLower(location)) uppercaseViolations.push('Location');
-      if (hasLower(deliveredByFromRow)) uppercaseViolations.push('Delivered By');
-      if (hasLower(vendorNameFromRow)) uppercaseViolations.push('Vendor Name');
-      if (uppercaseViolations.length > 0) {
-        invalidRows.push({
-          serial,
-          reason: `Non-capital letters in: ${uppercaseViolations.join(', ')}`
-        });
-        continue;
       }
       
       // Upsert by Serial (Store-scoped)

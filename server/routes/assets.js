@@ -995,6 +995,9 @@ router.get('/template', async (req, res) => {
       'MAC Address',
       'Manufacturer',
       'Ticket Number',
+      'PO Number',
+      'Vendor Name',
+      'Price',
       'RFID',
       'QR Code',
       'Store Location',
@@ -1021,6 +1024,9 @@ router.get('/template', async (req, res) => {
       '',
       'SIEMENS',
       'TKT-1001',
+      'PO-1001',
+      'ABC TRADERS',
+      '1250',
       '',
       '',
       'SCY ASSET',
@@ -1049,13 +1055,17 @@ router.get('/template', async (req, res) => {
 // @route   POST /api/assets
 // @access  Private (Admin or Technician)
 router.post('/', protect, restrictViewer, async (req, res) => {
-  const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, po_number, product_name, rfid, qr_code, quantity } = req.body;
+  const {
+    name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
+    ticket_number, po_number, product_name, rfid, qr_code, quantity, vendor_name, price
+  } = req.body;
   try {
     const normName = capitalizeWords(name);
     const normProduct = capitalizeWords(product_name || '');
     const normManufacturer = capitalizeWords(manufacturer || '');
     const normLocation = capitalizeWords(location || '');
     const qty = Number.parseInt(quantity, 10) > 0 ? Number.parseInt(quantity, 10) : 1;
+    const unitPrice = Number.isFinite(Number(price)) ? Number(price) : 0;
     // Check for duplicate serial number within the same store
     const duplicateQuery = { serial_number };
     if (req.activeStore) {
@@ -1088,6 +1098,7 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       manufacturer: normManufacturer || '',
       ticket_number: ticket_number || '',
       po_number: po_number || '',
+      vendor_name: capitalizeWords(vendor_name || ''),
       product_name: finalProductName,
       rfid: rfid || '',
       qr_code: qr_code || '',
@@ -1096,7 +1107,8 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       status: status || 'New',
       condition: condition || 'New',
       location: normLocation || '',
-      quantity: qty
+      quantity: qty,
+      price: unitPrice
     });
 
     // Log Activity
@@ -1385,6 +1397,7 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       const mac = norm['mac address'] || norm['mac'] || '-';
       const manufacturer = norm['manufacturer'] || '-';
       const ticketNumber = norm['ticket number'] || norm['ticket'] || '-';
+      const poNumber = norm['po number'] || norm['po'] || norm['purchase order'] || '';
       const rfid = norm['rfid'] || '-';
       const qrCode = norm['qr code'] || norm['qr'] || '-';
       const storeName = normalizeText(norm['store location'] || norm['storename'] || norm['store'] || '');
@@ -1453,6 +1466,7 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         mac_address: mac,
         manufacturer: capitalizeWords(manufacturer || ''),
         ticket_number: ticketNumber,
+        po_number: poNumber || '',
         rfid,
         qr_code: qrCode,
         uniqueId,
@@ -1707,6 +1721,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       const mac = norm['mac address'] || norm['mac'] || '-';
       const manufacturer = norm['manufacturer'] || '-';
       const ticketNumber = norm['ticket number'] || norm['ticket'] || '-';
+      const poNumber = norm['po number'] || norm['po'] || norm['purchase order'] || '';
       const rfid = norm['rfid'] || '-';
       const qrCode = norm['qr code'] || norm['qr'] || '-';
       
@@ -1802,6 +1817,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
           mac_address: mac,
           manufacturer: String(manufacturer || '').toUpperCase(),
           ticket_number: ticketNumber,
+          po_number: poNumber || '',
           rfid,
           qr_code: qrCode,
           uniqueId,
@@ -1966,6 +1982,9 @@ router.get('/import-template', protect, admin, async (req, res) => {
         'MAC Address': '',
         'Manufacturer': '',
         'Ticket Number': '',
+        'PO Number': '',
+        'Vendor Name': '',
+        'Price': '',
         'RFID': '',
         'QR Code': '',
         'Store Location': '',
@@ -2681,7 +2700,10 @@ router.post('/return-reject', protect, admin, async (req, res) => {
 // @route   PUT /api/assets/:id
 // @access  Private/Admin
 router.put('/:id', protect, admin, async (req, res) => {
-  const { name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition, ticket_number, product_name, rfid, qr_code } = req.body;
+  const {
+    name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
+    ticket_number, po_number, product_name, rfid, qr_code, vendor_name, price
+  } = req.body;
   try {
     const asset = await Asset.findById(req.params.id);
     if (asset) {
@@ -2694,6 +2716,12 @@ router.put('/:id', protect, admin, async (req, res) => {
       asset.mac_address = mac_address || asset.mac_address;
       asset.manufacturer = manufacturer ? capitalizeWords(manufacturer) : (asset.manufacturer || '');
       asset.ticket_number = ticket_number || asset.ticket_number || '';
+      if (po_number !== undefined) asset.po_number = po_number || '';
+      if (vendor_name !== undefined) asset.vendor_name = capitalizeWords(vendor_name || '');
+      if (price !== undefined && price !== '') {
+        const parsedPrice = Number(price);
+        if (Number.isFinite(parsedPrice)) asset.price = parsedPrice;
+      }
       // Model Number Sync on edit: if no explicit product_name provided, try linking by model_number
       if (prodName) {
         asset.product_name = capitalizeWords(prodName);

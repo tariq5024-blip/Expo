@@ -224,6 +224,9 @@ const Assets = () => {
     mac_address: '',
     manufacturer: '',
     ticket_number: '',
+    po_number: '',
+    vendor_name: '',
+    price: '',
     store: '',
     location: '',
     status: '',
@@ -239,6 +242,9 @@ const Assets = () => {
     mac_address: '',
     manufacturer: '',
     ticket_number: '',
+    po_number: '',
+    vendor_name: '',
+    price: '',
     store: '',
     location: '',
     status: 'In Store',
@@ -630,6 +636,9 @@ const Assets = () => {
       mac_address: assetToEdit.mac_address || '',
       manufacturer: assetToEdit.manufacturer || '',
       ticket_number: assetToEdit.ticket_number || '',
+      po_number: assetToEdit.po_number || '',
+      vendor_name: assetToEdit.vendor_name || '',
+      price: assetToEdit.price ?? '',
       rfid: assetToEdit.rfid || '',
       qr_code: assetToEdit.qr_code || '',
       store: assetToEdit.store?._id || assetToEdit.store || '',
@@ -714,6 +723,9 @@ const Assets = () => {
         mac_address: '',
         manufacturer: '',
         ticket_number: '',
+        po_number: '',
+        vendor_name: '',
+        price: '',
         store: '',
         location: '',
         status: 'In Store',
@@ -1064,7 +1076,7 @@ const Assets = () => {
             </div>
           )}
           <div className="mt-2 text-sm text-gray-600">
-            Excel headers supported: Category, Product Type, Product Name, Model Number, Quantity, Serial Number, MAC Address, Manufacturer, Ticket Number, RFID, QR Code, Store Location, Status, Condition, Delivered By, Delivered At (date & time)
+            Excel headers supported: Category, Product Type, Product Name, Model Number, Quantity, Serial Number, MAC Address, Manufacturer, Ticket Number, PO Number, Vendor Name, Price, RFID, QR Code, Store Location, Status, Condition, Delivered By, Delivered At (date & time)
           </div>
         </div>
       )}
@@ -2060,6 +2072,38 @@ const Assets = () => {
                 />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700">PO Number</label>
+                <input
+                  type="text"
+                  name="po_number"
+                  value={formData.po_number || ''}
+                  onChange={handleInputChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Vendor Name</label>
+                <input
+                  type="text"
+                  name="vendor_name"
+                  value={formData.vendor_name || ''}
+                  onChange={handleInputChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Price</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  name="price"
+                  value={formData.price ?? ''}
+                  onChange={handleInputChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700">RFID</label>
                 <input
                   type="text"
@@ -2242,6 +2286,38 @@ const Assets = () => {
                   type="text"
                   name="ticket_number"
                   value={addForm.ticket_number || ''}
+                  onChange={handleAddChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">PO Number</label>
+                <input
+                  type="text"
+                  name="po_number"
+                  value={addForm.po_number || ''}
+                  onChange={handleAddChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Vendor Name</label>
+                <input
+                  type="text"
+                  name="vendor_name"
+                  value={addForm.vendor_name || ''}
+                  onChange={handleAddChange}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Price</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  name="price"
+                  value={addForm.price ?? ''}
                   onChange={handleAddChange}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 />

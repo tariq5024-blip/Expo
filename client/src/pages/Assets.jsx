@@ -112,7 +112,18 @@ const Assets = () => {
         if (loc) form.append('location', loc.name);
       }
       const res = await api.post('/assets/import', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setImportInfo({ message: res.data?.message || 'Import complete', warnings: res.data?.skipped_duplicates || [], invalid_rows: res.data?.invalid_rows || [] });
+      const warningStrings = Array.isArray(res.data?.warnings)
+        ? res.data.warnings.map((w) => String(w))
+        : [];
+      const skippedDuplicates = Array.isArray(res.data?.skipped_duplicates)
+        ? res.data.skipped_duplicates
+        : [];
+      setImportInfo({
+        message: res.data?.message || 'Import complete',
+        warnings: warningStrings,
+        skipped_duplicates: skippedDuplicates,
+        invalid_rows: Array.isArray(res.data?.invalid_rows) ? res.data.invalid_rows : []
+      });
       alert(res.data?.message || 'Import completed');
       setShowImportModal(false);
       setImportPreview(null);
@@ -1007,7 +1018,7 @@ const Assets = () => {
               <div className="font-semibold text-sm">Warnings:</div>
               <ul className="text-sm list-disc ml-5">
                 {importInfo.warnings.slice(0, 10).map((w, idx) => (
-                  <li key={idx}>{w}</li>
+                  <li key={idx}>{String(w)}</li>
                 ))}
               </ul>
               {importInfo.warnings.length > 10 && (

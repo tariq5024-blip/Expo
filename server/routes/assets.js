@@ -1393,22 +1393,25 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       if (!location && storeName) location = storeName;
       const statusRaw = norm['status'];
       const statusNorm = String(statusRaw || '').trim().toLowerCase();
+      // Asset.status enum does not include New/Used (those belong to condition)
       const statusMap = {
-        'available/new': 'New',
-        'new': 'New',
-        'spare': 'New',
-        'spare (new)': 'New',
-        'spare (used)': 'Used',
-        'available/used': 'Used',
-        'used': 'Used',
+        'available/new': 'In Store',
+        'new': 'In Store',
+        'spare': 'Spare',
+        'spare (new)': 'Spare',
+        'spare (used)': 'Spare',
+        'available/used': 'In Store',
+        'used': 'In Store',
         'in store': 'In Store',
         'in use': 'In Use',
         'available faulty': 'Faulty',
         'faulty': 'Faulty',
         'disposed': 'Disposed',
-        'under repair': 'Under Repair'
+        'under repair': 'Under Repair',
+        'scrapped': 'Scrapped',
+        'missing': 'Missing'
       };
-      const status = statusMap[statusNorm] || 'New';
+      const status = statusMap[statusNorm] || 'In Store';
       const conditionRaw = norm['condition'];
       let condition = 'New';
       if (conditionRaw) {
@@ -1419,6 +1422,19 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         else if (cNorm.includes('repair')) condition = 'Under Repair';
         else if (cNorm.includes('disposed')) condition = 'Disposed';
         else if (cNorm.includes('repaired')) condition = 'Repaired';
+      } else {
+        // If condition column is empty, infer sensible condition from status text
+        if (statusNorm === 'used' || statusNorm === 'available/used' || statusNorm === 'spare (used)') {
+          condition = 'Used';
+        } else if (statusNorm === 'faulty' || statusNorm === 'available faulty') {
+          condition = 'Faulty';
+        } else if (statusNorm === 'under repair') {
+          condition = 'Under Repair';
+        } else if (statusNorm === 'disposed') {
+          condition = 'Disposed';
+        } else if (statusNorm === 'repaired') {
+          condition = 'Repaired';
+        }
       }
       let storeId = storeMapLower[String(storeName || '').toLowerCase()];
       if (req.activeStore) {
@@ -1706,22 +1722,25 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       
       const statusRaw = norm['status'];
       const statusNorm = String(statusRaw || '').trim().toLowerCase();
+      // Asset.status enum does not include New/Used (those belong to condition)
       const statusMap = {
-        'available/new': 'New',
-        'new': 'New',
-        'spare': 'New',
-        'spare (new)': 'New',
-        'spare (used)': 'Used',
-        'available/used': 'Used',
-        'used': 'Used',
+        'available/new': 'In Store',
+        'new': 'In Store',
+        'spare': 'Spare',
+        'spare (new)': 'Spare',
+        'spare (used)': 'Spare',
+        'available/used': 'In Store',
+        'used': 'In Store',
         'in store': 'In Store',
         'in use': 'In Use',
         'available faulty': 'Faulty',
         'faulty': 'Faulty',
         'disposed': 'Disposed',
-        'under repair': 'Under Repair'
+        'under repair': 'Under Repair',
+        'scrapped': 'Scrapped',
+        'missing': 'Missing'
       };
-      const status = statusMap[statusNorm] || 'New';
+      const status = statusMap[statusNorm] || 'In Store';
 
       const deliveredByFromRow = norm['delivered by'] || norm['delivered_by'] || norm['deliveredby'] || '';
       const vendorNameFromRow = norm['vendor name'] || norm['vendor'] || '';
@@ -1738,6 +1757,19 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
          else if (cNorm === 'under repair' || cNorm.includes('repair')) condition = 'Under Repair';
          else if (cNorm === 'disposed' || cNorm.includes('disposed')) condition = 'Disposed';
          else if (cNorm === 'repaired' || cNorm.includes('repaired')) condition = 'Repaired';
+      } else {
+         // If condition column is empty, infer sensible condition from status text
+         if (statusNorm === 'used' || statusNorm === 'available/used' || statusNorm === 'spare (used)') {
+           condition = 'Used';
+         } else if (statusNorm === 'faulty' || statusNorm === 'available faulty') {
+           condition = 'Faulty';
+         } else if (statusNorm === 'under repair') {
+           condition = 'Under Repair';
+         } else if (statusNorm === 'disposed') {
+           condition = 'Disposed';
+         } else if (statusNorm === 'repaired') {
+           condition = 'Repaired';
+         }
       }
 
       let storeId = storeMap[storeName] || storeMapLower[storeName.toLowerCase()];

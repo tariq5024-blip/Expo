@@ -7,12 +7,13 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const ActivityLog = require('../models/ActivityLog');
 const Request = require('../models/Request');
+const Pass = require('../models/Pass');
 const { protect, admin, restrictViewer } = require('../middleware/authMiddleware');
 const xlsx = require('xlsx');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const { sendStoreEmail } = require('../utils/storeEmail');
+const { sendStoreEmail, getStoreNotificationRecipients } = require('../utils/storeEmail');
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -51,12 +52,16 @@ async function generateUniqueId(assetType) {
 }
 
 async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [] }) {
-  if (!recipientEmail) return;
+  const configuredRecipients = await getStoreNotificationRecipients(asset?.store || null);
+  const recipients = Array.from(
+    new Set([recipientEmail, ...configuredRecipients].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean))
+  );
+  if (recipients.length === 0) return;
   try {
     const safeLines = lines.filter(Boolean).map((line) => String(line));
     await sendStoreEmail({
       storeId: asset?.store || null,
-      to: recipientEmail,
+      to: recipients.join(','),
       subject,
       text: safeLines.join('\n'),
       html: `<div>${safeLines.map((line) => `<p>${line}</p>`).join('')}</div>`
@@ -64,6 +69,70 @@ async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [] }) 
   } catch (error) {
     console.error('Asset notification email error:', error.message);
   }
+}
+
+async function createAssignmentGatePass({
+  asset,
+  issuedBy,
+  recipientName,
+  recipientEmail,
+  recipientPhone,
+  recipientCompany,
+  ticketNumber,
+  origin,
+  destination,
+  justification
+}) {
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const prefix = 'OUT';
+  const todayRegex = new RegExp(`^${prefix}-${dateStr}`);
+  const lastPass = await Pass.findOne({ pass_number: todayRegex }).sort({ pass_number: -1 }).lean();
+  let sequence = '001';
+  if (lastPass?.pass_number) {
+    const lastSeq = parseInt(String(lastPass.pass_number).split('-')[2], 10);
+    if (Number.isFinite(lastSeq)) {
+      sequence = String(lastSeq + 1).padStart(3, '0');
+    }
+  }
+  const passNumber = `${prefix}-${dateStr}-${sequence}`;
+
+  const pass = await Pass.create({
+    pass_number: passNumber,
+    file_no: `ECD/ECT/EXITPASS/${passNumber}`,
+    ticket_no: ticketNumber || '',
+    type: 'Outbound',
+    requested_by: String(recipientName || '').trim(),
+    provided_by: String(issuedBy?.name || '').trim(),
+    collected_by: String(recipientName || '').trim(),
+    approved_by: String(issuedBy?.name || '').trim(),
+    assets: [{
+      asset: asset._id,
+      name: asset.name || '',
+      model: asset.model_number || '',
+      serial_number: asset.serial_number || '',
+      brand: asset.manufacturer || '',
+      asset_model: asset.model_number || '',
+      location: asset.location || '',
+      movement: 'Outbound',
+      status: asset.condition || 'Good',
+      remarks: `Auto-created during assignment of ${asset.name || 'asset'}`,
+      quantity: Number(asset.quantity || 1)
+    }],
+    issued_to: {
+      name: String(recipientName || '').trim() || 'Recipient',
+      company: String(recipientCompany || '').trim() || (recipientEmail ? `Email: ${recipientEmail}` : ''),
+      contact: String(recipientPhone || '').trim(),
+      id_number: ''
+    },
+    issued_by: issuedBy._id,
+    destination: String(destination || recipientName || '').trim(),
+    origin: String(origin || asset.location || '').trim(),
+    justification: String(justification || '').trim() || `Asset assignment for ${asset.name || 'asset'}`,
+    notes: `Auto-generated gate pass for asset assignment (${asset.serial_number || 'N/A'})`,
+    store: asset.store || null
+  });
+
+  return pass;
 }
 
 function readUploadedWorkbook(file) {
@@ -922,15 +991,13 @@ router.get('/template', async (req, res) => {
       'Product Name',
       'Model Number',
       'Quantity',
-      'Price',
       'Serial Number',
       'MAC Address',
       'Manufacturer',
       'Ticket Number',
       'RFID',
       'QR Code',
-      'Store',
-      'Location',
+      'Store Location',
       'Status',
       'Condition',
       'Delivered By',
@@ -950,17 +1017,15 @@ router.get('/template', async (req, res) => {
       'MAGNETIC LOCKS',
       'MEC-1200',
       '1',
-      '100',
       '1584632152',
       '',
       'SIEMENS',
-      '-',
-      '-',
-      '-',
-      'SCY STORE',
-      'MOBILITY STORE-10',
-      'IN STORE',
-      'USED',
+      'TKT-1001',
+      '',
+      '',
+      'SCY ASSET',
+      'In Store',
+      'New',
       'JOHN DOE',
       '2024-01-01 10:00'
     ];
@@ -1296,10 +1361,14 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
     };
     const preview = [];
     const invalid_rows = [];
+    const duplicate_rows = [];
+    const allowDuplicates = String(req.body?.allowDuplicates || '').toLowerCase() === 'true';
+    const isAdminUser = req.user?.role === 'Admin' || req.user?.role === 'Super Admin';
+    const seenSerialByStore = new Set();
     for (const item of rows) {
       const norm = {};
       Object.keys(item).forEach(k => { norm[String(k).trim().toLowerCase()] = item[k]; });
-      let productName = norm['product name'] || norm['product'] || norm['asset type'] || '';
+      let productName = norm['product name'] || norm['product'] || norm['product type'] || norm['category'] || norm['asset type'] || '';
       if (productName) {
         const found = productLookup[String(productName).trim().toLowerCase()];
         if (found) productName = found;
@@ -1387,9 +1456,27 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         invalid_rows.push({ serial: '', reason: 'Missing serial number' });
         continue;
       }
+      const serialKey = String(assetData.serial_number || '').trim().toLowerCase();
+      const storeKey = String(storeId || '').trim().toLowerCase();
+      const dedupeKey = `${storeKey}::${serialKey}`;
+      let duplicateReason = '';
+      if (seenSerialByStore.has(dedupeKey)) {
+        duplicateReason = 'Duplicate serial in uploaded file';
+      } else if (serialKey && storeId) {
+        // eslint-disable-next-line no-await-in-loop
+        const existing = await Asset.findOne({ serial_number: assetData.serial_number, store: storeId }).select('_id').lean();
+        if (existing) duplicateReason = 'Duplicate serial already exists in store';
+      }
+      if (serialKey) seenSerialByStore.add(dedupeKey);
+      if (duplicateReason) {
+        duplicate_rows.push({ serial: assetData.serial_number, reason: duplicateReason });
+      }
+      assetData._duplicateSerial = Boolean(duplicateReason);
+      assetData._duplicateReason = duplicateReason;
+      assetData._duplicateAllowed = Boolean(duplicateReason && allowDuplicates && isAdminUser);
       preview.push(assetData);
     }
-    res.json({ assets: preview, invalid_rows });
+    res.json({ assets: preview, invalid_rows, duplicate_rows });
   } catch (error) {
     res.status(500).json({ message: 'Error parsing file', error: error.message });
   }
@@ -1516,6 +1603,8 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
     const duplicates = [];
     const createdCount = { v: 0 };
     const updatedCount = { v: 0 };
+    const allowDuplicates = String(req.body?.allowDuplicates || '').toLowerCase() === 'true';
+    const isAdminUser = req.user?.role === 'Admin' || req.user?.role === 'Super Admin';
     const {
       product_name: reqProductName,
       source: reqSource,
@@ -1576,7 +1665,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       // Mapping based on User Request + Aliases
       // "Excel headers supported: asset type, Model number, Serial number, mac address, Manufacturer, Ticket number, RFID, QR Code, Store location, Status"
       
-      let productName = reqProductName || norm['product name'] || norm['product'] || '-';
+      let productName = reqProductName || norm['product name'] || norm['product'] || norm['product type'] || norm['category'] || '-';
 
       if (!productName && (norm['asset type'] || norm['assettype'])) {
         productName = norm['asset type'] || norm['assettype'];
@@ -1698,35 +1787,22 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         };
 
         try {
-          // If serial present, try upsert; otherwise create new
+          // If serial present, enforce duplicate policy by role/permission
           if (serialStr) {
             const existing = await Asset.findOne({ serial_number: serialStr, store: storeId });
             if (existing) {
-              // Update only with provided fields
-              await Asset.updateOne(
-                { _id: existing._id },
-                { $set: {
-                  importBatchId: assetData.importBatchId,
-                  name: assetData.name,
-                  model_number: assetData.model_number,
-                  mac_address: assetData.mac_address,
-                  manufacturer: assetData.manufacturer,
-                  ticket_number: assetData.ticket_number,
-                  rfid: assetData.rfid,
-                  qr_code: assetData.qr_code,
-                  status: assetData.status,
-                  condition: assetData.condition,
-                  product_name: assetData.product_name,
-                  location: assetData.location,
-                  vendor_name: assetData.vendor_name,
-                  delivered_by_name: assetData.delivered_by_name,
-                  delivered_at: assetData.delivered_at,
-                  quantity: assetData.quantity,
-                  price: assetData.price,
-                  serial_last_4: assetData.serial_last_4
-                } }
-              );
-              updatedCount.v++;
+              if (allowDuplicates && isAdminUser) {
+                await Asset.create(assetData);
+                createdCount.v++;
+              } else {
+                duplicates.push({
+                  serial: serialStr,
+                  reason: isAdminUser
+                    ? 'Duplicate serial exists in same store (enable Allow duplicates to force add)'
+                    : 'Duplicate serial exists in same store (Admin permission required)',
+                  asset: assetData
+                });
+              }
             } else {
               await Asset.create(assetData);
               createdCount.v++;
@@ -1849,20 +1925,22 @@ router.get('/import-template', protect, admin, async (req, res) => {
   try {
     const template = [
       {
-        'Asset Type': '',
+        'Category': '',
+        'Product Type': '',
+        'Product Name': '',
         'Model Number': '',
+        'Quantity': '',
         'Serial Number': '',
         'MAC Address': '',
         'Manufacturer': '',
         'Ticket Number': '',
         'RFID': '',
         'QR Code': '',
-        'Condition': '',
-        'Store': '',
-        'Location': '',
+        'Store Location': '',
         'Status': '',
-        'Quantity': '',
-        'Price': ''
+        'Condition': '',
+        'Delivered By': '',
+        'Delivered At': ''
       }
     ];
     const workbook = xlsx.utils.book_new();
@@ -1935,12 +2013,24 @@ router.get('/by-technician', protect, admin, async (req, res) => {
 // @route   POST /api/assets/assign
 // @access  Private/Admin
 router.post('/assign', protect, admin, async (req, res) => {
-  const { assetId, technicianId, ticketNumber, otherRecipient } = req.body;
+  const {
+    assetId,
+    technicianId,
+    ticketNumber,
+    otherRecipient,
+    needGatePass,
+    recipientEmail,
+    recipientPhone,
+    gatePassOrigin,
+    gatePassDestination,
+    gatePassJustification
+  } = req.body;
   try {
     const asset = await Asset.findById(assetId);
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
     }
+    let gatePass = null;
     
     // Admin can assign either to a technician or to an external person
     if (technicianId) {
@@ -1968,19 +2058,47 @@ router.post('/assign', protect, admin, async (req, res) => {
         details: `Assigned asset ${asset.name} (SN: ${asset.serial_number}) to ${technician.name} (Ticket: ${ticketNumber || 'N/A'})`,
         store: asset.store
       });
+      const targetEmail = String(recipientEmail || technician.email || '').trim().toLowerCase();
+      if (needGatePass === true) {
+        const finalOrigin = String(gatePassOrigin || asset.location || '').trim();
+        const finalDestination = String(gatePassDestination || technician.name || '').trim();
+        if (!ticketNumber) {
+          return res.status(400).json({ message: 'Ticket number is required when gate pass is enabled' });
+        }
+        if (!finalOrigin || !finalDestination) {
+          return res.status(400).json({ message: 'Gate pass origin and destination are required' });
+        }
+        gatePass = await createAssignmentGatePass({
+          asset,
+          issuedBy: req.user,
+          recipientName: technician.name,
+          recipientEmail: targetEmail,
+          recipientPhone: String(recipientPhone || technician.phone || '').trim(),
+          recipientCompany: '',
+          ticketNumber,
+          origin: finalOrigin,
+          destination: finalDestination,
+          justification: gatePassJustification
+        });
+      }
       await notifyAssetEvent({
         asset,
-        recipientEmail: technician.email,
+        recipientEmail: targetEmail,
         subject: 'Asset Assigned to You',
         lines: [
           `Asset assignment update for ${technician.name}.`,
           `Asset: ${asset.name}`,
+          `Model: ${asset.model_number || 'N/A'}`,
           `Serial: ${asset.serial_number || 'N/A'}`,
+          `Store Location: ${asset.location || 'N/A'}`,
           `Ticket: ${ticketNumber || 'N/A'}`,
+          gatePass?.pass_number ? `Gate Pass: ${gatePass.pass_number}` : null,
+          gatePass?.origin ? `From: ${gatePass.origin}` : null,
+          gatePass?.destination ? `To: ${gatePass.destination}` : null,
           `Action: Assigned by ${req.user.name}`
         ]
       });
-      return res.json(asset);
+      return res.json({ asset, gatePass: gatePass || null });
     } else if (otherRecipient && otherRecipient.name) {
       // Assign to external person without linking to a User
       // Save previous status before assignment
@@ -1990,6 +2108,7 @@ router.post('/assign', protect, admin, async (req, res) => {
       
       asset.assigned_to_external = {
         name: otherRecipient.name,
+        email: otherRecipient.email,
         phone: otherRecipient.phone,
         note: otherRecipient.note
       };
@@ -2011,7 +2130,47 @@ router.post('/assign', protect, admin, async (req, res) => {
         details: `Assigned asset ${asset.name} (SN: ${asset.serial_number}) externally — ${otherInfo} (Ticket: ${ticketNumber || 'N/A'})`,
         store: asset.store
       });
-      return res.json(asset);
+      const externalEmail = String(otherRecipient.email || recipientEmail || '').trim().toLowerCase();
+      if (needGatePass === true) {
+        const finalOrigin = String(gatePassOrigin || asset.location || '').trim();
+        const finalDestination = String(gatePassDestination || otherRecipient.name || '').trim();
+        if (!ticketNumber) {
+          return res.status(400).json({ message: 'Ticket number is required when gate pass is enabled' });
+        }
+        if (!finalOrigin || !finalDestination) {
+          return res.status(400).json({ message: 'Gate pass origin and destination are required' });
+        }
+        gatePass = await createAssignmentGatePass({
+          asset,
+          issuedBy: req.user,
+          recipientName: otherRecipient.name,
+          recipientEmail: externalEmail,
+          recipientPhone: String(recipientPhone || otherRecipient.phone || '').trim(),
+          recipientCompany: otherRecipient.note || '',
+          ticketNumber,
+          origin: finalOrigin,
+          destination: finalDestination,
+          justification: gatePassJustification || otherRecipient.note || ''
+        });
+      }
+      await notifyAssetEvent({
+        asset,
+        recipientEmail: externalEmail,
+        subject: 'Asset Assigned to You',
+        lines: [
+          `Asset assignment update for ${otherRecipient.name}.`,
+          `Asset: ${asset.name}`,
+          `Model: ${asset.model_number || 'N/A'}`,
+          `Serial: ${asset.serial_number || 'N/A'}`,
+          `Store Location: ${asset.location || 'N/A'}`,
+          `Ticket: ${ticketNumber || 'N/A'}`,
+          gatePass?.pass_number ? `Gate Pass: ${gatePass.pass_number}` : null,
+          gatePass?.origin ? `From: ${gatePass.origin}` : null,
+          gatePass?.destination ? `To: ${gatePass.destination}` : null,
+          `Action: Assigned by ${req.user.name}`
+        ]
+      });
+      return res.json({ asset, gatePass: gatePass || null });
     } else {
       return res.status(400).json({ message: 'Provide technicianId or otherRecipient.name' });
     }

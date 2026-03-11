@@ -172,7 +172,7 @@ const Setup = () => {
     if (!newTheme || themeSaving || (branding?.theme || 'default') === newTheme) return;
     try {
       setThemeSaving(true);
-      await api.post('/system/theme', { theme: newTheme });
+      await api.post('/system/theme', { theme: newTheme, storeId: effectiveEmailStoreId });
       await refreshBranding();
       alert('Theme updated successfully.');
     } catch (error) {

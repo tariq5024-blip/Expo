@@ -95,6 +95,7 @@ const assetSchema = new mongoose.Schema({
   },
   assigned_to_external: {
     name: String,
+    email: String,
     phone: String,
     note: String
   },

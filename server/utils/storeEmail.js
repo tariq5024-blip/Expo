@@ -28,6 +28,21 @@ const getStoreEmailConfig = async (storeId) => {
   };
 };
 
+const getStoreNotificationRecipients = async (storeId) => {
+  const id = resolveStoreId(storeId);
+  if (!id) return [];
+  const store = await Store.findById(id).select('emailConfig.notificationRecipients emailConfig.lineManagerRecipients').lean();
+  const recipients = Array.isArray(store?.emailConfig?.notificationRecipients)
+    ? store.emailConfig.notificationRecipients
+    : [];
+  const lineManagers = Array.isArray(store?.emailConfig?.lineManagerRecipients)
+    ? store.emailConfig.lineManagerRecipients
+    : [];
+  return Array.from(new Set([...recipients, ...lineManagers]
+    .map((v) => String(v || '').trim().toLowerCase())
+    .filter(Boolean)));
+};
+
 const getFallbackConfig = () => {
   const host = process.env.SMTP_HOST;
   const port = Number(process.env.SMTP_PORT || 587);
@@ -100,6 +115,7 @@ const sendStoreEmail = async ({ storeId, to, subject, text, html, forceConfig, c
 
 module.exports = {
   getStoreEmailConfig,
+  getStoreNotificationRecipients,
   sendStoreEmail,
   buildTransport
 };

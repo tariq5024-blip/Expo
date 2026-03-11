@@ -290,16 +290,12 @@ const connectDB = async () => {
     });
     console.log('MongoDB Connected to:', process.env.MONGO_URI);
     
-    // Keep default operational users stable across pulls/restarts unless explicitly disabled.
+    // Always enforce required operational accounts on startup so updates/deploys
+    // cannot break default credentials.
     // Required accounts:
     // superadmin@expo.com / superadmin123
     // scy@expo.com, it@expo.com, noc@expo.com / admin123
-    const enforceDefaultUsers = String(process.env.SEED_DEFAULTS || 'true').toLowerCase() === 'true';
-    if (enforceDefaultUsers) {
-      await seedStoresAndUsers();
-    } else {
-      console.log('SEED_DEFAULTS=false, skipped default user enforcement.');
-    }
+    await seedStoresAndUsers();
     dropSerialUniqueIndex();
 
     if (!backupJobStarted) {

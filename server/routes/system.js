@@ -41,26 +41,30 @@ const brandingDir = path.join(__dirname, '../uploads/branding');
 if (!fs.existsSync(brandingDir)) {
   fs.mkdirSync(brandingDir, { recursive: true });
 }
-const brandingStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, brandingDir),
-  filename: (req, file, cb) => {
-    const ts = Date.now();
-    const extMatch = file.originalname.match(/\.[a-zA-Z0-9]+$/);
-    const ext = extMatch ? extMatch[0].toLowerCase() : '';
-    cb(null, `app-logo-${ts}${ext}`);
-  }
-});
 const allowedMime = new Set(['image/png', 'image/jpeg', 'image/svg+xml']);
-const brandingUpload = multer({
-  storage: brandingStorage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
-  fileFilter: (req, file, cb) => {
-    if (!allowedMime.has(file.mimetype)) {
-      return cb(new Error('Invalid file type. Allowed: PNG, JPG, SVG'));
+const createBrandingUpload = (prefix) => {
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, brandingDir),
+    filename: (req, file, cb) => {
+      const ts = Date.now();
+      const extMatch = file.originalname.match(/\.[a-zA-Z0-9]+$/);
+      const ext = extMatch ? extMatch[0].toLowerCase() : '';
+      cb(null, `${prefix}-${ts}${ext}`);
     }
-    cb(null, true);
-  }
-});
+  });
+  return multer({
+    storage,
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+    fileFilter: (req, file, cb) => {
+      if (!allowedMime.has(file.mimetype)) {
+        return cb(new Error('Invalid file type. Allowed: PNG, JPG, SVG'));
+      }
+      cb(null, true);
+    }
+  });
+};
+const brandingUpload = createBrandingUpload('app-logo');
+const gatePassLogoUpload = createBrandingUpload('gatepass-logo');
 
 // Simple in-process lock to prevent concurrent resets
 let RESET_LOCK = false;
@@ -69,6 +73,24 @@ const SCAN_TTL_MS = 30 * 60 * 1000;
 
 const normalizeIdentity = (value) => String(value || '').trim().toLowerCase();
 const toPlain = (doc) => (doc && typeof doc.toObject === 'function' ? doc.toObject() : doc);
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeRecipientList = (input) => {
+  const list = Array.isArray(input)
+    ? input
+    : String(input || '')
+      .split(',');
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const email = String(raw || '').trim().toLowerCase();
+    if (!email) continue;
+    if (!EMAIL_RX.test(email)) continue;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    out.push(email);
+  }
+  return out;
+};
 
 const pickDuplicateKeys = (assetLike = {}) => {
   const uniqueId = String(assetLike.uniqueId || assetLike.asset_id || '').trim();
@@ -152,13 +174,18 @@ router.get('/storage', protect, admin, async (req, res) => {
 // @access  Public
 router.get('/public-config', async (req, res) => {
   try {
-    const [logoSetting, themeSetting] = await Promise.all([
+    const requestedStoreId = String(req.query?.storeId || '').trim();
+    const [logoSetting, gatePassLogoSetting, themeSetting, storeThemeDoc] = await Promise.all([
       Setting.findOne({ key: 'logoUrl' }).lean(),
-      Setting.findOne({ key: 'theme' }).lean()
+      Setting.findOne({ key: 'gatePassLogoUrl' }).lean(),
+      Setting.findOne({ key: 'theme' }).lean(),
+      requestedStoreId ? Store.findById(requestedStoreId).select('appTheme').lean() : Promise.resolve(null)
     ]);
     const logoUrl = logoSetting?.value || '/logo.svg';
-    const theme = typeof themeSetting?.value === 'string' ? themeSetting.value : 'default';
-    res.json({ logoUrl, theme });
+    const gatePassLogoUrl = gatePassLogoSetting?.value || logoUrl;
+    const fallbackTheme = typeof themeSetting?.value === 'string' ? themeSetting.value : 'default';
+    const theme = storeThemeDoc?.appTheme || fallbackTheme;
+    res.json({ logoUrl, gatePassLogoUrl, theme });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -196,22 +223,66 @@ router.post('/logo', protect, superAdmin, brandingUpload.single('logo'), async (
   }
 });
 
+// @desc    Upload/replace gate pass logo (Super Admin only)
+// @route   POST /api/system/gatepass-logo
+// @access  Private/SuperAdmin
+router.post('/gatepass-logo', protect, superAdmin, gatePassLogoUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Logo file is required' });
+    }
+    // Keep latest gate pass logos only
+    try {
+      const files = fs.readdirSync(brandingDir).filter((f) => f.startsWith('gatepass-logo-'));
+      files.sort();
+      while (files.length > 5) {
+        const toDelete = files.shift();
+        if (toDelete) fs.unlinkSync(path.join(brandingDir, toDelete));
+      }
+    } catch {}
+
+    const relativeUrl = `/uploads/branding/${req.file.filename}`;
+    await Setting.updateOne(
+      { key: 'gatePassLogoUrl' },
+      { $set: { value: relativeUrl, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ message: 'Gate pass logo updated', gatePassLogoUrl: relativeUrl });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // @desc    Update application theme (Admin or Super Admin)
 // @route   POST /api/system/theme
 // @access  Private/Admin
 router.post('/theme', protect, admin, async (req, res) => {
   try {
-    const { theme } = req.body;
+    const { theme, storeId: inputStoreId } = req.body || {};
     const allowed = ['default', 'ocean', 'emerald', 'sunset', 'midnight', 'mono'];
     if (!allowed.includes(theme)) {
       return res.status(400).json({ message: 'Invalid theme selected' });
     }
-    await Setting.updateOne(
-      { key: 'theme' },
-      { $set: { value: theme, updatedAt: new Date() } },
-      { upsert: true }
-    );
-    res.json({ message: 'Theme updated', theme });
+
+    const targetStoreId = req.user.role === 'Super Admin'
+      ? (inputStoreId || req.activeStore || null)
+      : (req.user.assignedStore || null);
+
+    if (!targetStoreId) {
+      return res.status(400).json({ message: 'Store context is required to update theme' });
+    }
+
+    const store = await Store.findByIdAndUpdate(
+      targetStoreId,
+      { $set: { appTheme: theme } },
+      { new: true }
+    ).select('name appTheme');
+
+    if (!store) {
+      return res.status(404).json({ message: 'Store not found' });
+    }
+
+    res.json({ message: 'Theme updated', theme: store.appTheme, storeId: store._id, storeName: store.name });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -583,6 +654,8 @@ router.get('/email-config', protect, admin, async (req, res) => {
         encryption: cfg.encryption || 'TLS',
         fromEmail: cfg.fromEmail || '',
         fromName: cfg.fromName || '',
+        notificationRecipients: Array.isArray(cfg.notificationRecipients) ? cfg.notificationRecipients : [],
+        lineManagerRecipients: Array.isArray(cfg.lineManagerRecipients) ? cfg.lineManagerRecipients : [],
         enabled: Boolean(cfg.enabled)
       },
       canOverrideAllStores: req.user.role === 'Super Admin'
@@ -608,6 +681,8 @@ router.put('/email-config', protect, admin, async (req, res) => {
       encryption = 'TLS',
       fromEmail,
       fromName,
+      notificationRecipients,
+      lineManagerRecipients,
       enabled
     } = req.body;
 
@@ -618,6 +693,15 @@ router.put('/email-config', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'Encryption must be TLS or SSL' });
     }
 
+    const existingStore = await Store.findById(storeId).lean();
+    if (!existingStore) return res.status(404).json({ message: 'Store not found' });
+    const mergedRecipients = notificationRecipients === undefined
+      ? (Array.isArray(existingStore?.emailConfig?.notificationRecipients) ? existingStore.emailConfig.notificationRecipients : [])
+      : normalizeRecipientList(notificationRecipients);
+    const mergedLineManagerRecipients = lineManagerRecipients === undefined
+      ? (Array.isArray(existingStore?.emailConfig?.lineManagerRecipients) ? existingStore.emailConfig.lineManagerRecipients : [])
+      : normalizeRecipientList(lineManagerRecipients);
+
     const update = {
       emailConfig: {
         smtpHost: String(smtpHost).trim(),
@@ -627,6 +711,8 @@ router.put('/email-config', protect, admin, async (req, res) => {
         encryption: String(encryption).toUpperCase(),
         fromEmail: String(fromEmail || username).trim(),
         fromName: String(fromName || '').trim(),
+        notificationRecipients: mergedRecipients,
+        lineManagerRecipients: mergedLineManagerRecipients,
         enabled: Boolean(enabled !== false),
         updatedBy: req.user._id,
         updatedAt: new Date()

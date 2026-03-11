@@ -105,6 +105,7 @@ const Assets = () => {
       // Reuse the original file and let server perform robust parsing/upsert
       const form = new FormData();
       form.append('file', file);
+      form.append('allowDuplicates', String(allowDup));
       if (selectedProduct) form.append('product_name', selectedProduct);
       if (bulkLocationId) {
         const loc = stores.find(s => s._id === bulkLocationId);
@@ -185,13 +186,20 @@ const Assets = () => {
   const [assigningAsset, setAssigningAsset] = useState(null);
   const [assignForm, setAssignForm] = useState({
     technicianId: '',
-    ticketNumber: ''
+    recipientEmail: '',
+    recipientPhone: '',
+    ticketNumber: '',
+    needGatePass: false,
+    gatePassOrigin: '',
+    gatePassDestination: '',
+    gatePassJustification: ''
   });
   const [techSearch, setTechSearch] = useState('');
   const [showTechSuggestions, setShowTechSuggestions] = useState(false);
   const [recipientType, setRecipientType] = useState('Technician');
   const [otherRecipient, setOtherRecipient] = useState({
     name: '',
+    email: '',
     phone: '',
     note: ''
   });
@@ -718,11 +726,20 @@ const Assets = () => {
 
   const handleAssignClick = (asset) => {
     setAssigningAsset(asset);
-    setAssignForm({ technicianId: '', ticketNumber: '' });
+    setAssignForm({
+      technicianId: '',
+      recipientEmail: '',
+      recipientPhone: '',
+      ticketNumber: '',
+      needGatePass: false,
+      gatePassOrigin: asset?.location || '',
+      gatePassDestination: '',
+      gatePassJustification: ''
+    });
     setTechSearch('');
     setShowTechSuggestions(false);
     setRecipientType('Technician');
-    setOtherRecipient({ name: '', phone: '', note: '' });
+    setOtherRecipient({ name: '', email: '', phone: '', note: '' });
   };
 
   const handleAssignSubmit = async () => {
@@ -730,9 +747,31 @@ const Assets = () => {
       alert('Please select a technician');
       return;
     }
+    if (recipientType === 'Technician' && !assignForm.recipientEmail) {
+      alert('Please enter recipient email for notification');
+      return;
+    }
     if (recipientType === 'Other') {
       if (!otherRecipient.name) {
         alert('Please enter recipient name');
+        return;
+      }
+      if (!otherRecipient.email) {
+        alert('Please enter recipient email for notification');
+        return;
+      }
+    }
+    if (assignForm.needGatePass) {
+      if (!assignForm.ticketNumber) {
+        alert('Ticket number is required when gate pass is enabled');
+        return;
+      }
+      if (!assignForm.gatePassOrigin || !assignForm.gatePassDestination) {
+        alert('Please fill gate pass "Moving From" and "Moving To"');
+        return;
+      }
+      if (recipientType === 'Other' && !otherRecipient.phone) {
+        alert('Recipient phone is required for external gate pass');
         return;
       }
     }
@@ -740,16 +779,26 @@ const Assets = () => {
       const payload = {
         assetId: assigningAsset._id,
         ticketNumber: assignForm.ticketNumber,
+        needGatePass: Boolean(assignForm.needGatePass),
+        recipientEmail: assignForm.recipientEmail,
+        recipientPhone: recipientType === 'Technician' ? assignForm.recipientPhone : otherRecipient.phone,
+        gatePassOrigin: assignForm.gatePassOrigin,
+        gatePassDestination: assignForm.gatePassDestination,
+        gatePassJustification: assignForm.gatePassJustification
       };
       if (recipientType === 'Technician') {
         payload.technicianId = assignForm.technicianId;
       } else {
         payload.otherRecipient = otherRecipient;
       }
-      await api.post(`/assets/assign`, payload);
+      const res = await api.post(`/assets/assign`, payload);
       setAssigningAsset(null);
       fetchAssets(undefined, { silent: true });
-      alert('Asset assigned successfully');
+      if (res.data?.gatePass?.pass_number) {
+        alert(`Asset assigned successfully. Gate pass created: ${res.data.gatePass.pass_number}`);
+      } else {
+        alert('Asset assigned successfully');
+      }
     } catch (error) {
       console.error('Error assigning asset:', error);
       alert('Failed to assign asset');
@@ -1004,7 +1053,7 @@ const Assets = () => {
             </div>
           )}
           <div className="mt-2 text-sm text-gray-600">
-            Excel headers supported: Category, Product Type, Product Name, Model, Quantity, Serial, MAC, Manufacturer, Ticket, RFID, QR Code, Store, Location, Status, Condition
+            Excel headers supported: Category, Product Type, Product Name, Model Number, Quantity, Serial Number, MAC Address, Manufacturer, Ticket Number, RFID, QR Code, Store Location, Status, Condition, Delivered By, Delivered At (date & time)
           </div>
         </div>
       )}
@@ -1056,8 +1105,9 @@ const Assets = () => {
                       id="allowDup"
                       checked={allowDup}
                       onChange={(e) => setAllowDup(e.target.checked)}
+                      disabled={!(user?.role === 'Admin' || user?.role === 'Super Admin')}
                     />
-                    <label htmlFor="allowDup" className="text-sm text-gray-700">Allow duplicates in same store</label>
+                    <label htmlFor="allowDup" className="text-sm text-gray-700">Allow duplicates in same store (Admin only)</label>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Excel File</label>
@@ -1086,6 +1136,9 @@ const Assets = () => {
                 <div className="mb-4 text-sm text-gray-700">
                   Previewing {importPreview?.length || 0} assets
                 </div>
+                <div className="mb-3 text-xs text-gray-600">
+                  Duplicate serial rows are highlighted in yellow. They will be blocked unless Admin enables "Allow duplicates in same store".
+                </div>
                 <div className="max-h-80 overflow-auto border rounded">
                   <table className="min-w-full text-sm">
                     <thead className="bg-gray-50">
@@ -1103,10 +1156,20 @@ const Assets = () => {
                     </thead>
                     <tbody>
                       {(importPreview || []).slice(0, 50).map((a, idx) => (
-                        <tr key={idx} className="border-t">
+                        <tr key={idx} className={`border-t ${a._duplicateSerial ? 'bg-yellow-100' : ''}`}>
                           <td className="px-2 py-2">{a.name}</td>
                           <td className="px-2 py-2">{a.model_number || '-'}</td>
-                          <td className="px-2 py-2">{a.serial_number || '-'}</td>
+                          <td className="px-2 py-2">
+                            {a.serial_number || '-'}
+                            {a._duplicateSerial && (
+                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-yellow-200 text-yellow-900 border border-yellow-300">
+                                Duplicate
+                              </span>
+                            )}
+                            {a._duplicateSerial && a._duplicateReason && (
+                              <div className="text-[10px] text-yellow-800 mt-1">{a._duplicateReason}</div>
+                            )}
+                          </td>
                           <td className="px-2 py-2">{a.status || '-'}</td>
                           <td className="px-2 py-2">{a.condition || '-'}</td>
                           <td className="px-2 py-2">{a.location || '-'}</td>
@@ -1725,7 +1788,13 @@ const Assets = () => {
                           <div
                             key={tech._id}
                             onClick={() => {
-                              setAssignForm({ ...assignForm, technicianId: tech._id });
+                              setAssignForm((prev) => ({
+                                ...prev,
+                                technicianId: tech._id,
+                                recipientEmail: tech.email || '',
+                                recipientPhone: tech.phone || '',
+                                gatePassDestination: prev.gatePassDestination || tech.name || ''
+                              }));
                               setTechSearch(tech.name);
                               setShowTechSuggestions(false);
                             }}
@@ -1743,6 +1812,28 @@ const Assets = () => {
                     </div>
                   )}
                   {assignForm.technicianId && <div className="text-xs text-green-600 mt-1">✓ Technician selected</div>}
+                  <div className="mt-2">
+                    <label className="block text-sm font-medium text-gray-700">Recipient Email</label>
+                    <input
+                      type="email"
+                      value={assignForm.recipientEmail}
+                      onChange={(e) => setAssignForm({ ...assignForm, recipientEmail: e.target.value })}
+                      placeholder="technician email"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    />
+                  </div>
+                  {assignForm.needGatePass && (
+                    <div className="mt-2">
+                      <label className="block text-sm font-medium text-gray-700">Recipient Phone (for Gate Pass)</label>
+                      <input
+                        type="text"
+                        value={assignForm.recipientPhone}
+                        onChange={(e) => setAssignForm({ ...assignForm, recipientPhone: e.target.value })}
+                        placeholder="Technician contact number"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
               
@@ -1753,8 +1844,25 @@ const Assets = () => {
                     <input
                       type="text"
                       value={otherRecipient.name}
-                      onChange={(e) => setOtherRecipient({ ...otherRecipient, name: e.target.value })}
+                      onChange={(e) => {
+                        const nextName = e.target.value;
+                        setOtherRecipient({ ...otherRecipient, name: nextName });
+                        setAssignForm((prev) => ({
+                          ...prev,
+                          gatePassDestination: prev.gatePassDestination || nextName
+                        }));
+                      }}
                       placeholder="Enter person name"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Recipient Email</label>
+                    <input
+                      type="email"
+                      value={otherRecipient.email}
+                      onChange={(e) => setOtherRecipient({ ...otherRecipient, email: e.target.value })}
+                      placeholder="Enter email"
                       className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                     />
                   </div>
@@ -1781,7 +1889,66 @@ const Assets = () => {
                 </div>
               )}
               <div>
-                <label className="block text-sm font-medium text-gray-700">Ticket Number / Reference (Optional)</label>
+                <label className="block text-sm font-medium text-gray-700">Need Gate Pass?</label>
+                <div className="mt-1 flex gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="needGatePass"
+                      checked={assignForm.needGatePass === true}
+                      onChange={() => setAssignForm({ ...assignForm, needGatePass: true })}
+                    />
+                    Yes
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="needGatePass"
+                      checked={assignForm.needGatePass === false}
+                      onChange={() => setAssignForm({ ...assignForm, needGatePass: false })}
+                    />
+                    No
+                  </label>
+                </div>
+              </div>
+              {assignForm.needGatePass && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Moving From (Gate Pass)</label>
+                    <input
+                      type="text"
+                      value={assignForm.gatePassOrigin}
+                      onChange={(e) => setAssignForm({ ...assignForm, gatePassOrigin: e.target.value })}
+                      placeholder="Origin location"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Moving To (Gate Pass)</label>
+                    <input
+                      type="text"
+                      value={assignForm.gatePassDestination}
+                      onChange={(e) => setAssignForm({ ...assignForm, gatePassDestination: e.target.value })}
+                      placeholder="Destination"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Justification (Gate Pass)</label>
+                    <input
+                      type="text"
+                      value={assignForm.gatePassJustification}
+                      onChange={(e) => setAssignForm({ ...assignForm, gatePassJustification: e.target.value })}
+                      placeholder="Reason for movement"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    />
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Ticket Number / Reference {assignForm.needGatePass ? '(Required for Gate Pass)' : '(Optional)'}
+                </label>
                 <input
                   type="text"
                   value={assignForm.ticketNumber}

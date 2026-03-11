@@ -15,6 +15,16 @@ export const AuthProvider = ({ children }) => {
   const [globalLoading, setGlobalLoading] = useState(false);
   const [branding, setBranding] = useState({ logoUrl: '/logo.svg', theme: 'default' });
 
+  const resolveStoreIdForBranding = (storeValue = activeStore, userValue = user) => {
+    if (storeValue && storeValue !== 'all') {
+      return storeValue?._id || storeValue || '';
+    }
+    if (userValue?.role !== 'Super Admin' && userValue?.assignedStore) {
+      return userValue.assignedStore?._id || userValue.assignedStore || '';
+    }
+    return '';
+  };
+
   const setFavicon = (href) => {
     try {
       const head = document.head || document.getElementsByTagName('head')[0];
@@ -30,6 +40,26 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const fetchBranding = async (storeOverride = undefined, userOverride = undefined) => {
+    try {
+      const storeId = resolveStoreIdForBranding(
+        storeOverride === undefined ? activeStore : storeOverride,
+        userOverride === undefined ? user : userOverride
+      );
+      const params = storeId ? { storeId } : undefined;
+      const res = await api.get('/system/public-config', { params });
+      const logoUrl = res.data?.logoUrl || '/logo.svg';
+      const theme = res.data?.theme || 'default';
+      setBranding({ logoUrl, theme });
+      setFavicon(logoUrl);
+      document.documentElement.dataset.theme = theme;
+    } catch {
+      setBranding({ logoUrl: '/logo.svg', theme: 'default' });
+      setFavicon('/logo.svg');
+      document.documentElement.dataset.theme = 'default';
+    }
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -38,21 +68,6 @@ export const AuthProvider = ({ children }) => {
         console.error('CSRF token fetch failed:', error);
       }
     })();
-
-    const fetchBranding = async () => {
-      try {
-        const res = await api.get('/system/public-config');
-        const logoUrl = res.data?.logoUrl || '/logo.svg';
-        const theme = res.data?.theme || 'default';
-        setBranding({ logoUrl, theme });
-        setFavicon(logoUrl);
-        document.documentElement.dataset.theme = theme;
-      } catch {
-        setBranding({ logoUrl: '/logo.svg', theme: 'default' });
-        setFavicon('/logo.svg');
-        document.documentElement.dataset.theme = 'default';
-      }
-    };
 
     const verifySession = async () => {
       const storedUser = localStorage.getItem('user');
@@ -82,6 +97,12 @@ export const AuthProvider = ({ children }) => {
     fetchBranding();
     verifySession();
   }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    fetchBranding();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStore, user?._id, loading]);
 
   const login = async (email, password) => {
     setGlobalLoading(true);
@@ -135,18 +156,7 @@ export const AuthProvider = ({ children }) => {
     globalLoading,
     branding,
     refreshBranding: async () => {
-      try {
-        const res = await api.get('/system/public-config');
-        const logoUrl = res.data?.logoUrl || '/logo.svg';
-        const theme = res.data?.theme || 'default';
-        setBranding({ logoUrl, theme });
-        setFavicon(logoUrl);
-        document.documentElement.dataset.theme = theme;
-      } catch {
-        setBranding({ logoUrl: '/logo.svg', theme: 'default' });
-        setFavicon('/logo.svg');
-        document.documentElement.dataset.theme = 'default';
-      }
+      await fetchBranding();
     }
   };
   

@@ -28,6 +28,11 @@ const storeSchema = new mongoose.Schema({
     type: String, // Store email or name of requester
     default: null
   },
+  appTheme: {
+    type: String,
+    enum: ['default', 'ocean', 'emerald', 'sunset', 'midnight', 'mono'],
+    default: 'default'
+  },
   emailConfig: {
     smtpHost: { type: String, default: '' },
     smtpPort: { type: Number, default: 587 },
@@ -36,6 +41,8 @@ const storeSchema = new mongoose.Schema({
     encryption: { type: String, enum: ['TLS', 'SSL'], default: 'TLS' },
     fromEmail: { type: String, default: '' },
     fromName: { type: String, default: '' },
+    notificationRecipients: [{ type: String, trim: true, lowercase: true }],
+    lineManagerRecipients: [{ type: String, trim: true, lowercase: true }],
     enabled: { type: Boolean, default: false },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     updatedAt: { type: Date, default: null }

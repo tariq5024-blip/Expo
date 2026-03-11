@@ -67,7 +67,7 @@ PasswordModal.propTypes = {
   onConfirm: PropTypes.func.isRequired,
 };
 
-const PassTemplate = ({ pass, refInstance }) => {
+const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
   if (!pass) return null;
   
   // Format date as 11-NOV-2025
@@ -89,7 +89,7 @@ const PassTemplate = ({ pass, refInstance }) => {
             <div className="flex items-center gap-2">
                <div className="text-right border-l-2 border-amber-400 pl-3">
                   <div className="flex items-center gap-2">
-                     <img src="/gatepass-logo.svg" alt="Expo City Dubai" className="w-16 h-16 object-contain" />
+                     <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="Expo City Dubai" className="w-16 h-16 object-contain" />
                      <div className="text-left">
                         <div className="text-xl font-bold text-gray-900 leading-none">EXPO</div>
                         <div className="text-xl font-bold text-gray-900 leading-none">CITY</div>
@@ -213,10 +213,11 @@ const PassTemplate = ({ pass, refInstance }) => {
 
 PassTemplate.propTypes = {
   pass: PropTypes.object,
-  refInstance: PropTypes.object
+  refInstance: PropTypes.object,
+  gatePassLogoUrl: PropTypes.string
 };
 
-const ViewModal = ({ pass, onClose, onPrint }) => {
+const ViewModal = ({ pass, onClose, onPrint, gatePassLogoUrl }) => {
   if (!pass) return null;
 
   // Format date as 11-NOV-2025
@@ -258,7 +259,7 @@ const ViewModal = ({ pass, onClose, onPrint }) => {
                 <div className="flex items-center gap-2">
                    <div className="text-right border-l-2 border-amber-400 pl-3">
                       <div className="flex items-center gap-2">
-                         <img src="/gatepass-logo.svg" alt="Expo City Dubai" className="w-16 h-16 object-contain" />
+                         <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="Expo City Dubai" className="w-16 h-16 object-contain" />
                          <div className="text-left">
                             <div className="text-lg font-bold text-gray-900 leading-none">EXPO</div>
                             <div className="text-lg font-bold text-gray-900 leading-none">CITY</div>
@@ -365,7 +366,8 @@ const ViewModal = ({ pass, onClose, onPrint }) => {
 ViewModal.propTypes = {
   pass: PropTypes.object,
   onClose: PropTypes.func.isRequired,
-  onPrint: PropTypes.func
+  onPrint: PropTypes.func,
+  gatePassLogoUrl: PropTypes.string
 };
 
 const Passes = () => {
@@ -382,6 +384,7 @@ const Passes = () => {
     passId: null,
     passData: null
   });
+  const [gatePassLogoUrl, setGatePassLogoUrl] = useState('/gatepass-logo.svg');
 
   const printRef = useRef();
   const handlePrint = useReactToPrint({
@@ -430,6 +433,18 @@ const Passes = () => {
 
   useEffect(() => {
     loadPasses();
+  }, []);
+
+  useEffect(() => {
+    const loadGatePassLogo = async () => {
+      try {
+        const { data } = await api.get('/system/public-config');
+        setGatePassLogoUrl(data?.gatePassLogoUrl || '/gatepass-logo.svg');
+      } catch {
+        setGatePassLogoUrl('/gatepass-logo.svg');
+      }
+    };
+    loadGatePassLogo();
   }, []);
 
   const handlePasswordConfirm = () => {
@@ -652,6 +667,7 @@ const Passes = () => {
         pass={viewPass} 
         onClose={() => setViewPass(null)} 
         onPrint={() => openPrint(viewPass)}
+        gatePassLogoUrl={gatePassLogoUrl}
       />
 
       <div className="flex justify-between items-center mb-6">
@@ -1041,7 +1057,7 @@ const Passes = () => {
       )}
 
       {/* Print Template (Hidden) */}
-      <PassTemplate pass={selectedPass} refInstance={printRef} />
+      <PassTemplate pass={selectedPass} refInstance={printRef} gatePassLogoUrl={gatePassLogoUrl} />
     </div>
   );
 };

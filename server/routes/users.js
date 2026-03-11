@@ -4,16 +4,20 @@ const User = require('../models/User');
 const Store = require('../models/Store');
 const bcrypt = require('bcryptjs');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
-const { sendStoreEmail } = require('../utils/storeEmail');
+const { sendStoreEmail, getStoreNotificationRecipients } = require('../utils/storeEmail');
 
 const sendWelcomeEmail = async (userDoc) => {
   if (!userDoc?.email) return;
   try {
     const store = userDoc.assignedStore ? await Store.findById(userDoc.assignedStore).lean() : null;
     const storeName = store?.name || 'All Stores';
+    const configuredRecipients = await getStoreNotificationRecipients(userDoc.assignedStore || null);
+    const recipients = Array.from(
+      new Set([userDoc.email, ...configuredRecipients].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean))
+    );
     await sendStoreEmail({
       storeId: userDoc.assignedStore || null,
-      to: userDoc.email,
+      to: recipients.join(','),
       subject: 'Welcome to Expo IT Asset Management',
       text: `Hello ${userDoc.name}, your ${userDoc.role} account has been created for ${storeName}.`,
       html: `<p>Hello <strong>${userDoc.name}</strong>,</p><p>Your <strong>${userDoc.role}</strong> account has been created for <strong>${storeName}</strong>.</p><p>You can now log in to the Expo IT Asset Management portal.</p>`

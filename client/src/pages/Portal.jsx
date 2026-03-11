@@ -41,12 +41,15 @@ const Portal = () => {
     encryption: 'TLS',
     fromEmail: '',
     fromName: '',
+    notificationRecipients: '',
+    lineManagerRecipients: '',
     enabled: true
   });
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailSaving, setEmailSaving] = useState(false);
   const [testEmail, setTestEmail] = useState('');
   const [testingEmail, setTestingEmail] = useState(false);
+  const [gatePassLogoUrl, setGatePassLogoUrl] = useState('/gatepass-logo.svg');
 
   useEffect(() => {
     const isGlobalViewer = user?.role === 'Viewer' && !user?.assignedStore;
@@ -103,6 +106,19 @@ const Portal = () => {
 
   useEffect(() => {
     if (user?.role !== 'Super Admin') return;
+    const loadGatePassLogo = async () => {
+      try {
+        const res = await api.get('/system/public-config');
+        setGatePassLogoUrl(res.data?.gatePassLogoUrl || '/gatepass-logo.svg');
+      } catch {
+        setGatePassLogoUrl('/gatepass-logo.svg');
+      }
+    };
+    loadGatePassLogo();
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'Super Admin') return;
     if (!emailStoreId) return;
     const loadEmailConfig = async () => {
       try {
@@ -117,6 +133,8 @@ const Portal = () => {
           encryption: cfg.encryption || 'TLS',
           fromEmail: cfg.fromEmail || '',
           fromName: cfg.fromName || '',
+          notificationRecipients: Array.isArray(cfg.notificationRecipients) ? cfg.notificationRecipients.join(', ') : '',
+          lineManagerRecipients: Array.isArray(cfg.lineManagerRecipients) ? cfg.lineManagerRecipients.join(', ') : '',
           enabled: Boolean(cfg.enabled)
         });
         setTestEmail(user?.email || '');
@@ -669,6 +687,52 @@ const Portal = () => {
               </div>
             </div>
 
+            {/* Customize Gate Pass Logo */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm">
+              <div className="flex items-center gap-4 md:gap-5">
+                <div className="p-3 md:p-4 bg-emerald-50 rounded-lg text-emerald-600 border border-emerald-100">
+                  <ShieldCheck size={20} className="md:w-[24px] md:h-[24px]" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base md:text-lg font-bold text-slate-900 mb-1">Customize Gate Pass Logo</h3>
+                  <p className="text-slate-500 text-xs md:text-sm mb-3">Used on gate pass preview, print/PDF, and gate pass emails. PNG, JPG, or SVG. Max 2 MB.</p>
+                  <div className="flex items-center gap-4">
+                    <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="Current Gate Pass Logo" className="h-10 w-auto rounded border border-slate-200 p-1 bg-white" />
+                    <label className="inline-flex items-center px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 cursor-pointer text-sm font-medium border border-slate-200">
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 2 * 1024 * 1024) {
+                            alert('File too large. Max size is 2 MB.');
+                            e.target.value = '';
+                            return;
+                          }
+                          const form = new FormData();
+                          form.append('logo', file);
+                          try {
+                            const res = await api.post('/system/gatepass-logo', form, {
+                              headers: { 'Content-Type': 'multipart/form-data' }
+                            });
+                            setGatePassLogoUrl(res.data?.gatePassLogoUrl || '/gatepass-logo.svg');
+                            alert('Gate pass logo updated successfully.');
+                          } catch (err) {
+                            alert(err.response?.data?.message || 'Upload failed');
+                          } finally {
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                      <span>Select Gate Pass Logo…</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Customize Email Configuration */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm">
               <div className="flex items-center gap-4 md:gap-5">
@@ -740,6 +804,20 @@ const Portal = () => {
                       onChange={(e) => handleEmailField('fromName', e.target.value)}
                       className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
                       placeholder="From Name"
+                    />
+                    <input
+                      type="text"
+                      value={emailConfig.notificationRecipients}
+                      onChange={(e) => handleEmailField('notificationRecipients', e.target.value)}
+                      className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
+                      placeholder="Notification recipients (comma-separated emails)"
+                    />
+                    <input
+                      type="text"
+                      value={emailConfig.lineManagerRecipients}
+                      onChange={(e) => handleEmailField('lineManagerRecipients', e.target.value)}
+                      className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
+                      placeholder="Line manager emails (comma-separated)"
                     />
                   </div>
                   <div className="flex flex-wrap gap-3 mt-4 items-center">

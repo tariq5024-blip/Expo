@@ -73,18 +73,18 @@ const assetSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['In Store', 'In Use', 'Spare', 'Missing', 'Scrapped', 'Disposed', 'Faulty', 'Under Repair'],
+    enum: ['In Store', 'In Use', 'Missing'],
     default: 'In Store',
     index: true
   },
   previous_status: {
     type: String,
-    enum: ['New', 'Used', 'Faulty', 'Disposed', 'Under Repair', 'In Use', 'In Store', 'Testing'],
+    enum: ['In Store', 'In Use', 'Missing'],
     default: null
   },
   condition: {
     type: String,
-    enum: ['New', 'Used', 'Faulty', 'Repaired', 'Under Repair', 'Disposed', 'Scrapped'],
+    enum: ['New', 'Used', 'Faulty', 'Repaired'],
     default: 'New',
     index: true
   },
@@ -115,7 +115,7 @@ const assetSchema = new mongoose.Schema({
     index: true // Indexed for quick return checks
   },
   return_request: {
-    condition: { type: String, enum: ['New', 'Used', 'Faulty', 'Under Repair'] },
+    condition: { type: String, enum: ['New', 'Used', 'Faulty', 'Repaired'] },
     requested_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     ticket_number: String,
     notes: String
@@ -140,6 +140,23 @@ const assetSchema = new mongoose.Schema({
     type: Date
   }
   ,
+  disposed: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  disposed_at: {
+    type: Date,
+    default: null
+  },
+  disposed_by: {
+    type: String,
+    default: ''
+  },
+  disposal_reason: {
+    type: String,
+    default: ''
+  },
   importBatchId: {
     type: String,
     index: true

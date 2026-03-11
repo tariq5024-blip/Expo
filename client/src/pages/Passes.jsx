@@ -152,29 +152,21 @@ const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
           <table className="w-full border-collapse border border-black text-center mb-6 text-[10px]">
             <thead className="bg-[#005f73] text-white">
               <tr>
-                <th className="border border-black p-2 font-bold w-10">No.</th>
-                <th className="border border-black p-2 font-bold">Product</th>
-                <th className="border border-black p-2 font-bold">Model</th>
+                <th className="border border-black p-2 font-bold w-10">S.No</th>
+                <th className="border border-black p-2 font-bold">Model Number</th>
                 <th className="border border-black p-2 font-bold">Serial Number</th>
-                <th className="border border-black p-2 font-bold">Asset Brand</th>
-                <th className="border border-black p-2 font-bold">Asset Model</th>
-                <th className="border border-black p-2 font-bold">Location</th>
-                <th className="border border-black p-2 font-bold">Movement</th>
+                <th className="border border-black p-2 font-bold">Manufacturer</th>
                 <th className="border border-black p-2 font-bold">Status</th>
-                <th className="border border-black p-2 font-bold">Remark</th>
+                <th className="border border-black p-2 font-bold">Remarks</th>
               </tr>
             </thead>
             <tbody>
               {pass.assets.map((item, i) => (
                 <tr key={i} className="text-black">
                   <td className="border border-black p-2">{i + 1}</td>
-                  <td className="border border-black p-2 font-medium">{item.name}</td>
                   <td className="border border-black p-2">{item.model || '-'}</td>
                   <td className="border border-black p-2 font-mono">{item.serial_number}</td>
                   <td className="border border-black p-2">{item.brand || '-'}</td>
-                  <td className="border border-black p-2">{item.asset_model || '-'}</td>
-                  <td className="border border-black p-2">{item.location || '-'}</td>
-                  <td className="border border-black p-2">{item.movement || pass.type}</td>
                   <td className="border border-black p-2">{item.status || '-'}</td>
                   <td className="border border-black p-2">{item.remarks || '-'}</td>
                 </tr>
@@ -183,10 +175,6 @@ const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
               {Array.from({ length: Math.max(0, 5 - pass.assets.length) }).map((_, idx) => (
                  <tr key={`empty-${idx}`}>
                    <td className="border border-black p-2">&nbsp;</td>
-                   <td className="border border-black p-2"></td>
-                   <td className="border border-black p-2"></td>
-                   <td className="border border-black p-2"></td>
-                   <td className="border border-black p-2"></td>
                    <td className="border border-black p-2"></td>
                    <td className="border border-black p-2"></td>
                    <td className="border border-black p-2"></td>
@@ -322,29 +310,21 @@ const ViewModal = ({ pass, onClose, onPrint, gatePassLogoUrl }) => {
               <table className="w-full border-collapse border border-black text-center mb-6 text-[10px]">
                 <thead className="bg-[#005f73] text-white">
                   <tr>
-                    <th className="border border-black p-2 font-bold w-10">No.</th>
-                    <th className="border border-black p-2 font-bold">Product</th>
-                    <th className="border border-black p-2 font-bold">Model</th>
+                    <th className="border border-black p-2 font-bold w-10">S.No</th>
+                    <th className="border border-black p-2 font-bold">Model Number</th>
                     <th className="border border-black p-2 font-bold">Serial Number</th>
-                    <th className="border border-black p-2 font-bold">Asset Brand</th>
-                    <th className="border border-black p-2 font-bold">Asset Model</th>
-                    <th className="border border-black p-2 font-bold">Location</th>
-                    <th className="border border-black p-2 font-bold">Movement</th>
+                    <th className="border border-black p-2 font-bold">Manufacturer</th>
                     <th className="border border-black p-2 font-bold">Status</th>
-                    <th className="border border-black p-2 font-bold">Remark</th>
+                    <th className="border border-black p-2 font-bold">Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pass.assets.map((item, i) => (
                     <tr key={i} className="text-black">
                       <td className="border border-black p-2">{i + 1}</td>
-                      <td className="border border-black p-2 font-medium">{item.name}</td>
                       <td className="border border-black p-2">{item.model || '-'}</td>
                       <td className="border border-black p-2 font-mono">{item.serial_number}</td>
                       <td className="border border-black p-2">{item.brand || '-'}</td>
-                      <td className="border border-black p-2">{item.asset_model || '-'}</td>
-                      <td className="border border-black p-2">{item.location || '-'}</td>
-                      <td className="border border-black p-2">{item.movement || pass.type}</td>
                       <td className="border border-black p-2">{item.status || '-'}</td>
                       <td className="border border-black p-2">{item.remarks || '-'}</td>
                     </tr>

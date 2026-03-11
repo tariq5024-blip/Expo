@@ -85,74 +85,43 @@ const ProductDetails = () => {
     }, 0),
     inStore: assets.reduce((sum, a) => {
       const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
-      if (
-        (!['Disposed', 'Under Repair', 'In Use'].includes(a.status) &&
-        !a.assigned_to &&
-        !(a.assigned_to_external && a.assigned_to_external.name)) ||
-        a.status === 'Faulty'
-      ) {
+      if (!['Missing', 'In Use'].includes(a.status) && !a.assigned_to && !(a.assigned_to_external && a.assigned_to_external.name)) {
         return sum + q;
       }
       return sum;
     }, 0),
     faulty: assets.reduce((sum, a) => {
       const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
-      if (a.status === 'Faulty' || String(a.condition || '').toLowerCase().includes('faulty')) {
+      if (String(a.condition || '').toLowerCase().includes('faulty')) {
         return sum + q;
       }
       return sum;
     }, 0),
-    disposed: assets.reduce((sum, a) => {
+    missing: assets.reduce((sum, a) => {
       const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
-      if (a.status === 'Disposed') {
+      if (a.status === 'Missing') {
         return sum + q;
       }
       return sum;
     }, 0),
-    underRepair: assets.reduce((sum, a) => {
+    repaired: assets.reduce((sum, a) => {
       const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
-      if (a.status === 'Under Repair') {
+      if (String(a.condition || '').toLowerCase().includes('repair')) {
         return sum + q;
       }
       return sum;
     }, 0)
   };
 
-  const getDerivedStatus = (asset) => {
-    // 1. Condition-based statuses (Priority)
-    const cond = String(asset.condition || '').toLowerCase();
-    if (cond.includes('faulty') || asset.status === 'Faulty') {
-      return { label: 'Faulty', color: 'bg-red-100 text-red-800' };
+  const getStatusBadge = (asset) => {
+    const status = asset.status;
+    if (status === 'In Use' || asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) {
+      return { label: 'In Use', color: 'bg-emerald-100 text-emerald-800' };
     }
-    if (cond.includes('repair') || asset.status === 'Under Repair') {
-      return { label: 'Under Repair', color: 'bg-amber-100 text-amber-800' };
+    if (status === 'Missing') {
+      return { label: 'Missing', color: 'bg-orange-100 text-orange-800' };
     }
-    if (cond.includes('disposed') || asset.status === 'Disposed') {
-      return { label: 'Disposed', color: 'bg-gray-100 text-gray-800' };
-    }
-    if (cond.includes('scrap') || asset.status === 'Scrapped') {
-      return { label: 'Scrapped', color: 'bg-gray-100 text-gray-800' };
-    }
-
-    if (asset.status === 'Testing') {
-      return { label: 'Testing', color: 'bg-indigo-100 text-indigo-800' };
-    }
-
-    // 2. Assignment status
-    if (asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) {
-      return { label: 'In Use', color: 'bg-blue-100 text-blue-800' };
-    }
-
-    // 3. Spare status (Only for Available New/Used)
-    if (asset.status === 'New') {
-      return { label: 'In Store (New)', color: 'bg-green-100 text-green-800' };
-    }
-    if (asset.status === 'Used') {
-      return { label: 'In Store (Used)', color: 'bg-green-100 text-green-800' };
-    }
-
-    // 4. Fallback
-    return { label: asset.status, color: 'bg-gray-100 text-gray-800' };
+    return { label: 'In Store', color: 'bg-sky-100 text-sky-800' };
   };
 
   const openHistory = (asset) => {
@@ -272,12 +241,12 @@ const ProductDetails = () => {
               <span className="text-xl font-bold text-red-700">{stats.faulty}</span>
             </div>
             <div className="bg-amber-50 px-4 py-2 rounded-lg border border-amber-100 shadow-sm">
-              <span className="text-xs font-bold text-amber-500 uppercase tracking-wider block">Under Repair</span>
-              <span className="text-xl font-bold text-amber-700">{stats.underRepair}</span>
+              <span className="text-xs font-bold text-amber-500 uppercase tracking-wider block">Repaired</span>
+              <span className="text-xl font-bold text-amber-700">{stats.repaired}</span>
             </div>
             <div className="bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
-              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block">Disposed</span>
-              <span className="text-xl font-bold text-gray-700">{stats.disposed}</span>
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider block">Missing</span>
+              <span className="text-xl font-bold text-gray-700">{stats.missing}</span>
             </div>
           </div>
         </div>
@@ -377,7 +346,7 @@ const ProductDetails = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {(() => {
-                        const { label, color } = getDerivedStatus(asset);
+                        const { label, color } = getStatusBadge(asset);
                         return (
                           <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${color}`}>
                             {label}

@@ -311,9 +311,9 @@ const TechScanner = () => {
             <div className="grid grid-cols-2 gap-4">
               <button 
                 onClick={() => handleAction('collect')}
-                disabled={asset.assigned_to || asset.status === 'Faulty' || asset.status === 'Disposed' || asset.status === 'Under Repair'}
+                disabled={asset.assigned_to || asset.status === 'Missing' || String(asset.condition || '').toLowerCase().includes('faulty')}
                 className={`py-3 rounded text-white font-medium ${
-                  (!asset.assigned_to && asset.status !== 'Faulty' && asset.status !== 'Disposed' && asset.status !== 'Under Repair')
+                  (!asset.assigned_to && asset.status !== 'Missing' && !String(asset.condition || '').toLowerCase().includes('faulty'))
                     ? 'bg-green-600 hover:bg-green-700'
                     : 'bg-gray-400 cursor-not-allowed'
                 }`}
@@ -336,7 +336,7 @@ const TechScanner = () => {
                 <option value="New">Return as New</option>
                 <option value="Used">Return as Used</option>
                 <option value="Faulty">Return as Faulty</option>
-                <option value="Under Repair">Return as Under Repair</option>
+                <option value="Repaired">Return as Repaired</option>
               </select>
               <button
                 onClick={handleReturn}

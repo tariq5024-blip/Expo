@@ -11,27 +11,13 @@ const DisposalProcess = () => {
   const fetchAssets = useCallback(async () => {
     setLoading(true);
     try {
-      const isFaulty = activeTab === 'faulty';
-      const primary = await api.get('/assets', {
-        params: {
-          status: isFaulty ? 'Faulty' : 'Disposed',
-          limit: 100
-        }
-      });
-      const secondaryFaulty = await api.get('/assets', {
-        params: {
-          condition: isFaulty ? 'Faulty' : 'Disposed',
-          limit: 100
-        }
-      });
-      // Include 'Scrapped' condition as pending disposal candidates
-      const secondaryScrapped = isFaulty 
-        ? await api.get('/assets', { params: { condition: 'Scrapped', limit: 100 } })
-        : { data: { items: [] } };
+      let params = { limit: 100 };
+      if (activeTab === 'faulty') params = { ...params, condition: 'Faulty', disposed: 'false' };
+      if (activeTab === 'repaired') params = { ...params, condition: 'Repaired', disposed: 'false' };
+      if (activeTab === 'disposed') params = { ...params, disposed: 'true' };
+      const primary = await api.get('/assets', { params });
       const merged = [
-        ...(primary.data.items || []), 
-        ...(secondaryFaulty.data.items || []),
-        ...((secondaryScrapped.data.items) || [])
+        ...(primary.data.items || [])
       ];
       const dedup = [];
       const seen = new Set();
@@ -60,19 +46,31 @@ const DisposalProcess = () => {
     return () => clearInterval(id);
   }, [autoRefresh, fetchAssets]);
 
-  const handleDispose = async (assetId) => {
-    if (!window.confirm('Are you sure you want to mark this asset as Disposed? This action cannot be easily undone.')) return;
+  const handleMarkRepaired = async (assetId) => {
+    if (!window.confirm('Mark this asset as repaired and available in store?')) return;
     
     try {
-      await api.put(`/assets/${assetId}`, { status: 'Disposed', condition: 'Disposed' });
+      await api.put(`/assets/${assetId}`, { status: 'In Store', condition: 'Repaired' });
       fetchAssets(); // Refresh list
     } catch (err) {
       console.error(err);
-      alert('Failed to dispose asset');
+      alert('Failed to update asset');
     }
   };
 
-  const exportDisposedToExcel = () => {
+  const handleDispose = async (asset) => {
+    const reason = window.prompt('Disposal reason (optional):', 'Not repairable');
+    if (reason === null) return;
+    try {
+      await api.post('/assets/dispose', { assetId: asset._id, reason });
+      fetchAssets();
+    } catch (err) {
+      console.error(err);
+      alert(err?.response?.data?.message || 'Failed to dispose asset');
+    }
+  };
+
+  const exportRepairedToExcel = () => {
     const rows = assets.map(a => ({
       UniqueID: a.uniqueId || '',
       Category: a.category || '',
@@ -89,20 +87,26 @@ const DisposalProcess = () => {
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Disposed');
-    XLSX.writeFile(wb, 'disposed_history.xlsx');
+    XLSX.utils.book_append_sheet(wb, ws, 'Repaired');
+    XLSX.writeFile(wb, 'repaired_assets.xlsx');
   };
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Disposal Process</h1>
+      <h1 className="text-2xl font-bold mb-6">Asset Maintenance Process</h1>
 
       <div className="flex gap-4 mb-6 border-b">
         <button
           className={`pb-2 px-4 font-medium ${activeTab === 'faulty' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-500'}`}
           onClick={() => setActiveTab('faulty')}
         >
-          Faulty (Pending Disposal)
+          Faulty Assets
+        </button>
+        <button
+          className={`pb-2 px-4 font-medium ${activeTab === 'repaired' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-500'}`}
+          onClick={() => setActiveTab('repaired')}
+        >
+          Repaired History
         </button>
         <button
           className={`pb-2 px-4 font-medium ${activeTab === 'disposed' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-gray-500'}`}
@@ -131,10 +135,10 @@ const DisposalProcess = () => {
           <p className="text-sm text-gray-500">No assets found in this category.</p>
         ) : (
           <div className="overflow-x-auto">
-            {activeTab === 'disposed' && (
+            {(activeTab === 'repaired' || activeTab === 'disposed') && (
               <div className="flex justify-end mb-3">
                 <button
-                  onClick={exportDisposedToExcel}
+                  onClick={exportRepairedToExcel}
                   className="bg-amber-600 hover:bg-amber-700 text-black px-4 py-2 rounded"
                 >
                   Download Excel
@@ -147,7 +151,7 @@ const DisposalProcess = () => {
               </div>
               {activeTab === 'faulty' && (
                 <div>
-                  <span className="font-semibold">Ready to dispose:</span> {assets.filter(a => a.status === 'Faulty').length}
+                  <span className="font-semibold">Ready to repair:</span> {assets.filter(a => String(a.condition || '').toLowerCase() === 'faulty').length}
                 </div>
               )}
             </div>
@@ -178,22 +182,30 @@ const DisposalProcess = () => {
                     <td className="px-6 py-4">{a.manufacturer || '-'}</td>
                     <td className="px-6 py-4">{a.condition || '-'}</td>
                     <td className="px-6 py-4">
-                      <span className={`px-2 py-1 text-xs rounded-full ${a.status === 'Faulty' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>
-                        {a.status}
+                      <span className={`px-2 py-1 text-xs rounded-full ${String(a.condition || '').toLowerCase() === 'faulty' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>
+                        {a.status || '-'}
                       </span>
                     </td>
                     <td className="px-6 py-4">{a.uniqueId || '-'}</td>
                     <td className="px-6 py-4">{a.location || '-'}</td>
                     <td className="px-6 py-4">
                       {activeTab === 'faulty' && (
-                        <button
-                          onClick={() => handleDispose(a._id)}
-                          className="text-red-600 hover:text-red-900 font-medium"
-                        >
-                          Mark as Disposed
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => handleMarkRepaired(a._id)}
+                            className="text-emerald-700 hover:text-emerald-900 font-medium"
+                          >
+                            Mark as Repaired
+                          </button>
+                          <button
+                            onClick={() => handleDispose(a)}
+                            className="text-red-600 hover:text-red-900 font-medium"
+                          >
+                            Dispose
+                          </button>
+                        </div>
                       )}
-                      {activeTab === 'disposed' && (
+                      {(activeTab === 'repaired' || activeTab === 'disposed') && (
                         <span className="text-gray-400">Archived</span>
                       )}
                     </td>

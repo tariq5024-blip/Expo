@@ -366,20 +366,20 @@ const Products = ({ readOnly = false }) => {
                       return q;
                     };
                     const isAssigned = (a) => a.assigned_to || (a.assigned_to_external && a.assigned_to_external.name);
-                    const isFaulty = (a) => String(a.status).toLowerCase() === 'faulty' || String(a.condition).toLowerCase() === 'faulty';
-                    const isUnderRepair = (a) => String(a.status).toLowerCase() === 'under repair' || String(a.condition).toLowerCase() === 'under repair';
-                    const isDisposed = (a) => String(a.status).toLowerCase() === 'disposed';
+                    const isFaulty = (a) => String(a.condition).toLowerCase() === 'faulty';
+                    const isRepaired = (a) => String(a.condition).toLowerCase() === 'repaired';
+                    const isMissing = (a) => String(a.status).toLowerCase() === 'missing';
                     const isInUseStatus = (a) => String(a.status).toLowerCase() === 'in use';
                     const sumQty = (predicate) => selectedAssets.reduce((sum, asset) => {
                       if (predicate(asset)) return sum + getQty(asset);
                       return sum;
                     }, 0);
                     const total = selectedAssets.reduce((sum, asset) => sum + getQty(asset), 0);
-                    const inUse = sumQty(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && (isAssigned(a) || isInUseStatus(a)));
-                    const inStore = sumQty(a => !isDisposed(a) && !isFaulty(a) && !isUnderRepair(a) && !(isAssigned(a) || isInUseStatus(a)));
+                    const inUse = sumQty(a => !isMissing(a) && (isAssigned(a) || isInUseStatus(a)));
+                    const inStore = sumQty(a => !isMissing(a) && !(isAssigned(a) || isInUseStatus(a)));
                     const faulty = sumQty(a => isFaulty(a));
-                    const underRepair = sumQty(a => isUnderRepair(a));
-                    const disposed = sumQty(a => String(a.status).toLowerCase() === 'disposed');
+                    const repaired = sumQty(a => isRepaired(a));
+                    const missing = sumQty(a => isMissing(a));
                     return (
                       <>
                         <div className="rounded-lg border bg-white p-3">
@@ -399,12 +399,12 @@ const Products = ({ readOnly = false }) => {
                           <div className="text-xl font-bold text-red-700">{faulty}</div>
                         </div>
                         <div className="rounded-lg border bg-amber-50 p-3 border-amber-100">
-                          <div className="text-xs text-amber-600">Under Repair</div>
-                          <div className="text-xl font-bold text-amber-700">{underRepair}</div>
+                          <div className="text-xs text-amber-600">Repaired</div>
+                          <div className="text-xl font-bold text-amber-700">{repaired}</div>
                         </div>
                         <div className="rounded-lg border bg-gray-50 p-3">
-                          <div className="text-xs text-gray-600">Disposed</div>
-                          <div className="text-xl font-bold text-gray-700">{disposed}</div>
+                          <div className="text-xs text-gray-600">Missing</div>
+                          <div className="text-xl font-bold text-gray-700">{missing}</div>
                         </div>
                       </>
                     );

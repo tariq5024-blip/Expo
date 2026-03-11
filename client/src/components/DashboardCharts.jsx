@@ -3,10 +3,9 @@ import PropTypes from 'prop-types';
 import { 
   Box, 
   CheckCircle, 
-  LayoutGrid, 
-  Trash2,
   TrendingUp,
   AlertCircle,
+  MapPinOff,
   Layers
 } from 'lucide-react';
 
@@ -76,9 +75,9 @@ const DashboardCharts = ({ stats }) => {
   const safeOverview = overview || {
     total: 0,
     inUse: 0,
-    spare: 0,
+    inStore: 0,
+    missing: 0,
     faulty: 0,
-    disposed: 0,
     pendingReturns: 0,
     pendingRequests: 0,
     assetTypes: 0
@@ -130,7 +129,7 @@ const DashboardCharts = ({ stats }) => {
     window.open(path, '_blank', 'noopener,noreferrer');
   };
 
-  // Bar: Spare / Faulty / Disposed (readings from stat cards)
+  // Bar: In Store / Faulty / Missing
   const barOptions = {
     chart: {
       type: 'bar',
@@ -156,7 +155,7 @@ const DashboardCharts = ({ stats }) => {
     },
     colors: [palette.primary],
     xaxis: {
-      categories: ['Spare', 'Faulty', 'Disposed'],
+      categories: ['In Store', 'Faulty', 'Missing'],
     },
     grid: {
       borderColor: '#e2e8f0',
@@ -174,7 +173,7 @@ const DashboardCharts = ({ stats }) => {
 
   const barSeries = [{
     name: 'Inventory Status',
-    data: [safeOverview.spare || 0, safeOverview.faulty || 0, safeOverview.disposed || 0]
+    data: [safeOverview.inStore || 0, safeOverview.faulty || 0, safeOverview.missing || 0]
   }];
 
   // Growth Chart Options
@@ -235,12 +234,12 @@ const DashboardCharts = ({ stats }) => {
           onClick={() => navigateToAssets('In Use')}
         />
         <StatCard 
-          title="Spare" 
-          value={safeOverview.spare} 
-          icon={LayoutGrid} 
+          title="In Store" 
+          value={safeOverview.inStore} 
+          icon={Box} 
           color="amber" 
-          subText="Ready to assign"
-          onClick={() => navigateToAssets('Spare')}
+          subText="Available inventory"
+          onClick={() => navigateToAssets('In Store')}
         />
         <StatCard 
           title="Faulty" 
@@ -251,12 +250,12 @@ const DashboardCharts = ({ stats }) => {
           onClick={() => navigateToAssets('Faulty')}
         />
         <StatCard 
-          title="Disposed" 
-          value={safeOverview.disposed} 
-          icon={Trash2} 
+          title="Missing" 
+          value={safeOverview.missing} 
+          icon={MapPinOff} 
           color="gray" 
-          subText="Write-off history"
-          onClick={() => navigateToAssets('Disposed')}
+          subText="Needs investigation"
+          onClick={() => navigateToAssets('Missing')}
         />
         <StatCard 
           title="Asset Types" 
@@ -275,7 +274,7 @@ const DashboardCharts = ({ stats }) => {
           <Chart options={donutOptions} series={donutSeries} type="donut" height={300} />
         </div>
         <div className="bg-app-card p-6 rounded-xl">
-          <h3 className="text-app-main font-bold mb-4">Spare vs Faulty vs Disposed</h3>
+          <h3 className="text-app-main font-bold mb-4">In Store vs Faulty vs Missing</h3>
           <Chart options={barOptions} series={barSeries} type="bar" height={300} />
         </div>
       </div>

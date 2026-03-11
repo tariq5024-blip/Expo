@@ -29,7 +29,7 @@ const TechAssets = () => {
       'Returned/New': [],
       'Returned/Used': [],
       'Returned/Faulty': [],
-      'Returned/Under Repair': []
+      'Returned/Repaired': []
     };
     
     const q = query.toLowerCase();
@@ -44,12 +44,12 @@ const TechAssets = () => {
         }
         return 'Received/Used';
       }
-      if (lastByMe && /^Returned\/(New|Used|Faulty|Under Repair)$/i.test(lastByMe.action)) {
+      if (lastByMe && /^Returned\/(New|Used|Faulty|Repaired)$/i.test(lastByMe.action)) {
         const cond = lastByMe.action.split('/')[1];
         if (cond === 'New') return 'Returned/New';
         if (cond === 'Used') return 'Returned/Used';
         if (cond === 'Faulty') return 'Returned/Faulty';
-        if (cond === 'Under Repair') return 'Returned/Under Repair';
+        if (cond === 'Repaired') return 'Returned/Repaired';
         return 'Returned/Faulty';
       }
       if (lastByMe && lastByMe.action === 'Reported Faulty') return 'Returned/Faulty';

@@ -234,10 +234,12 @@ const Dashboard = () => {
                     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${
                       asset.status === 'In Use'
                         ? 'bg-emerald-50 text-emerald-700'
-                        : asset.status === 'Spare'
-                          ? 'bg-amber-50 text-amber-700'
-                          : asset.status === 'Faulty'
+                        : asset.status === 'In Store'
+                          ? 'bg-sky-50 text-sky-700'
+                          : String(asset.condition || '').toLowerCase().includes('faulty')
                             ? 'bg-rose-50 text-rose-700'
+                            : asset.status === 'Missing'
+                              ? 'bg-orange-50 text-orange-700'
                             : 'bg-slate-100 text-slate-700'
                     }`}>
                       {asset.status || 'Unknown'}

@@ -11,39 +11,16 @@ const AdminTechnicianAssets = () => {
   const [total, setTotal] = useState(0);
 
   const getDerivedStatus = (asset) => {
-    // 1. Condition-based statuses (Priority)
     const cond = String(asset.condition || '').toLowerCase();
-    if (cond.includes('faulty') || asset.status === 'Faulty') {
+    if (cond.includes('faulty')) {
       return { label: 'Faulty', color: 'bg-red-100 text-red-800' };
     }
-    if (cond.includes('repair') || asset.status === 'Under Repair') {
-      return { label: 'Under Repair', color: 'bg-amber-100 text-amber-800' };
+    if (cond.includes('repair')) {
+      return { label: 'Repaired', color: 'bg-amber-100 text-amber-800' };
     }
-    if (cond.includes('disposed') || asset.status === 'Disposed') {
-      return { label: 'Disposed', color: 'bg-gray-100 text-gray-800' };
-    }
-    if (cond.includes('scrap') || asset.status === 'Scrapped') {
-      return { label: 'Scrapped', color: 'bg-gray-100 text-gray-800' };
-    }
-
-    if (asset.status === 'Testing') {
-      return { label: 'Testing', color: 'bg-indigo-100 text-indigo-800' };
-    }
-
-    // 2. Assignment status
     if (asset.assigned_to) {
       return { label: 'In Use', color: 'bg-blue-100 text-blue-800' };
     }
-
-    // 3. Spare status (Only for Available New/Used)
-    if (asset.status === 'New') {
-      return { label: 'In Store (New)', color: 'bg-green-100 text-green-800' };
-    }
-    if (asset.status === 'Used') {
-      return { label: 'In Store (Used)', color: 'bg-green-100 text-green-800' };
-    }
-
-    // 4. Fallback
     return { label: asset.status, color: 'bg-gray-100 text-gray-800' };
   };
 
@@ -180,10 +157,7 @@ const AdminTechnicianAssets = () => {
                     <td className="px-6 py-4">{a.ticket_number || '-'}</td>
                     <td className="px-6 py-4">{a.store?.name}</td>
                     <td className="px-6 py-4">
-                      {a.status === 'New' ? 'Spare (New)' : 
-                       a.status === 'Used' ? 'Spare (Used)' : 
-                       a.status === 'Faulty' ? 'Faulty' : 
-                       a.status === 'Disposed' ? 'Disposed' : a.status}
+                      {a.condition || '-'}
                     </td>
                     <td className="px-6 py-4">
                       {(() => {

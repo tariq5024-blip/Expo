@@ -313,6 +313,7 @@ const connectDB = async () => {
     // scy@expo.com, it@expo.com, noc@expo.com / admin123
     await seedStoresAndUsers();
     dropSerialUniqueIndex();
+    dropStoreNameGlobalUniqueIndex();
 
     if (!backupJobStarted) {
       backupJobStarted = true;
@@ -405,6 +406,20 @@ const dropSerialUniqueIndex = async () => {
     if (serialIndex) {
       await collection.dropIndex('serialNumber_1');
       console.log('Dropped unique index on serialNumber');
+    }
+  } catch (error) {
+    // Index might not exist, ignore error
+  }
+};
+
+const dropStoreNameGlobalUniqueIndex = async () => {
+  try {
+    const collection = mongoose.connection.collection('stores');
+    const indexes = await collection.indexes();
+    const globalNameIndex = indexes.find((idx) => idx.name === 'name_1' && idx.unique);
+    if (globalNameIndex) {
+      await collection.dropIndex('name_1');
+      console.log('Dropped global unique index on stores.name');
     }
   } catch (error) {
     // Index might not exist, ignore error

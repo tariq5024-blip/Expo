@@ -14,6 +14,7 @@ const Stores = () => {
   const [editingName, setEditingName] = useState('');
 
   const fetchStores = useCallback(async () => {
+    if (!activeStore?._id) return;
     try {
       const res = await api.get(`/stores?parent=${activeStore._id}&includeAssetTotals=true`);
       setStores(res.data);
@@ -36,8 +37,8 @@ const Stores = () => {
       });
       setNewName('');
       fetchStores();
-    } catch {
-      alert('Error adding store');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error adding store');
     }
   };
 
@@ -46,8 +47,8 @@ const Stores = () => {
     try {
       await api.delete(`/stores/${id}`);
       fetchStores();
-    } catch {
-      alert('Error deleting store');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error deleting store');
     }
   };
   
@@ -68,8 +69,8 @@ const Stores = () => {
       });
       cancelEdit();
       fetchStores();
-    } catch {
-      alert('Error updating store');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error updating store');
     }
   };
 

@@ -4,7 +4,7 @@ const storeSchema = new mongoose.Schema({
   name: {
     type: String,
     required: true,
-    unique: true
+    trim: true
   },
   isMainStore: {
     type: Boolean,
@@ -50,5 +50,8 @@ const storeSchema = new mongoose.Schema({
     updatedAt: { type: Date, default: null }
   }
 }, { timestamps: true });
+
+// Keep names unique only within the same parent store scope.
+storeSchema.index({ parentStore: 1, name: 1 }, { unique: true, collation: { locale: 'en', strength: 2 } });
 
 module.exports = mongoose.model('Store', storeSchema);

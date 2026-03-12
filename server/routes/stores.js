@@ -4,6 +4,9 @@ const Store = require('../models/Store');
 const Asset = require('../models/Asset');
 const mongoose = require('mongoose');
 const { protect, admin } = require('../middleware/authMiddleware');
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const normalizeName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+const normalizeKey = (value) => normalizeName(value).toLowerCase();
 
 // @desc    Get all stores (with optional filtering)
 // @route   GET /api/stores
@@ -89,36 +92,37 @@ router.get('/', protect, async (req, res) => {
 
     if (req.query.includeAssetTotals === 'true' && stores.length > 0) {
       const match = {};
-
-      // Scope by parent store (main store) and its child locations
       let allowedStoreIds = [];
-      if (req.query.parent) {
+      if (req.query.parent && mongoose.Types.ObjectId.isValid(String(req.query.parent))) {
         const parentId = new mongoose.Types.ObjectId(req.query.parent);
-        allowedStoreIds = [parentId, ...stores.map(s => s._id)];
-      } else if (req.activeStore) {
-        allowedStoreIds = [new mongoose.Types.ObjectId(req.activeStore)];
+        allowedStoreIds = [parentId, ...stores.map((s) => s._id)];
+      } else if (req.activeStore && mongoose.Types.ObjectId.isValid(String(req.activeStore))) {
+        allowedStoreIds = [new mongoose.Types.ObjectId(req.activeStore), ...stores.map((s) => s._id)];
       }
       if (allowedStoreIds.length > 0) {
         match.store = { $in: allowedStoreIds };
       }
 
-      const totals = await Asset.aggregate([
+      const childStoreIds = new Set(stores.map((s) => String(s._id)));
+      const locationToStoreId = stores.reduce((acc, s) => {
+        acc[normalizeKey(s.name)] = String(s._id);
+        return acc;
+      }, {});
+
+      const grouped = await Asset.aggregate([
         { $match: match },
         {
           $project: {
-            locLower: { $toLower: { $ifNull: ['$location', ''] } },
+            store: 1,
+            disposed: { $ifNull: ['$disposed', false] },
+            locLower: { $toLower: { $trim: { input: { $ifNull: ['$location', ''] } } } },
             statusLower: { $toLower: { $ifNull: ['$status', ''] } },
             condLower: { $toLower: { $ifNull: ['$condition', ''] } },
             assigned_to: 1,
             assigned_to_external: 1,
             qty: {
               $cond: [
-                {
-                  $and: [
-                    { $ne: ['$quantity', null] },
-                    { $gt: ['$quantity', 0] }
-                  ]
-                },
+                { $and: [{ $ne: ['$quantity', null] }, { $gt: ['$quantity', 0] }] },
                 '$quantity',
                 1
               ]
@@ -127,28 +131,16 @@ router.get('/', protect, async (req, res) => {
         },
         {
           $group: {
-            _id: '$locLower',
-            total: { $sum: '$qty' },
-            disposed: {
+            _id: { store: '$store', loc: '$locLower' },
+            available: {
               $sum: {
                 $cond: [
                   {
                     $or: [
-                      { $eq: ['$statusLower', 'disposed'] },
-                      { $eq: ['$condLower', 'disposed'] }
-                    ]
-                  },
-                  '$qty',
-                  0
-                ]
-              }
-            },
-            installed: {
-              $sum: {
-                $cond: [
-                  {
-                    $or: [
+                      { $eq: ['$disposed', true] },
                       { $eq: ['$statusLower', 'in use'] },
+                      { $eq: ['$statusLower', 'missing'] },
+                      { $eq: ['$condLower', 'faulty'] },
                       { $ifNull: ['$assigned_to', false] },
                       {
                         $and: [
@@ -158,8 +150,8 @@ router.get('/', protect, async (req, res) => {
                       }
                     ]
                   },
-                  '$qty',
-                  0
+                  0,
+                  '$qty'
                 ]
               }
             }
@@ -167,18 +159,25 @@ router.get('/', protect, async (req, res) => {
         }
       ]);
 
-      const totalsMap = totals.reduce((acc, t) => {
-        const total = t.total || 0;
-        const disposed = t.disposed || 0;
-        const installed = t.installed || 0;
-        const available = Math.max(total - disposed - installed, 0);
-        acc[String(t._id || '')] = available;
-        return acc;
-      }, {});
+      const totalsByStore = {};
+      for (const row of grouped) {
+        const available = Number(row?.available || 0);
+        if (available <= 0) continue;
 
-      stores = stores.map(s => ({
+        const storeId = String(row?._id?.store || '');
+        if (childStoreIds.has(storeId)) {
+          totalsByStore[storeId] = (totalsByStore[storeId] || 0) + available;
+          continue;
+        }
+
+        const locKey = normalizeKey(row?._id?.loc || '');
+        const mapped = locationToStoreId[locKey];
+        if (mapped) totalsByStore[mapped] = (totalsByStore[mapped] || 0) + available;
+      }
+
+      stores = stores.map((s) => ({
         ...s,
-        availableAssetCount: totalsMap[String((s.name || '').toLowerCase())] || 0
+        availableAssetCount: totalsByStore[String(s._id)] || 0
       }));
     }
 
@@ -216,13 +215,29 @@ router.post('/', protect, admin, async (req, res) => {
       }
     }
 
-    const store = await Store.create({ 
-      name, 
+    const cleanName = normalizeName(name);
+    if (!cleanName) {
+      return res.status(400).json({ message: 'Location name is required' });
+    }
+
+    const existing = await Store.findOne({
+      parentStore: finalParentStore || null,
+      name: { $regex: new RegExp(`^${escapeRegex(cleanName)}$`, 'i') }
+    }).lean();
+    if (existing) {
+      return res.status(400).json({ message: 'A location with this name already exists in this store' });
+    }
+
+    const store = await Store.create({
+      name: cleanName,
       isMainStore: finalIsMainStore,
       parentStore: finalParentStore
     });
     res.status(201).json(store);
   } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(400).json({ message: 'A location with this name already exists in this store' });
+    }
     res.status(400).json({ message: error.message });
   }
 });
@@ -255,7 +270,21 @@ router.put('/:id', protect, admin, async (req, res) => {
         }
       }
 
-      store.name = req.body.name || store.name;
+      const cleanName = normalizeName(req.body.name || store.name);
+      if (!cleanName) {
+        return res.status(400).json({ message: 'Location name is required' });
+      }
+
+      const existing = await Store.findOne({
+        _id: { $ne: store._id },
+        parentStore: store.parentStore || null,
+        name: { $regex: new RegExp(`^${escapeRegex(cleanName)}$`, 'i') }
+      }).lean();
+      if (existing) {
+        return res.status(400).json({ message: 'A location with this name already exists in this store' });
+      }
+
+      store.name = cleanName;
       
       // Only allow structure changes if Super Admin
       if (req.user.role === 'Super Admin') {
@@ -273,6 +302,9 @@ router.put('/:id', protect, admin, async (req, res) => {
       res.status(404).json({ message: 'Store not found' });
     }
   } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(400).json({ message: 'A location with this name already exists in this store' });
+    }
     res.status(400).json({ message: error.message });
   }
 });

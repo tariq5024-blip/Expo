@@ -22,7 +22,7 @@ const { backupDatabase } = require('../backup_db');
 const Setting = require('../models/Setting');
 const { sendStoreEmail, buildTransport } = require('../utils/storeEmail');
 
-const maxBackupUploadMb = Number.parseInt(process.env.MAX_BACKUP_UPLOAD_MB || '250', 10);
+const maxBackupUploadMb = Number.parseInt(process.env.MAX_BACKUP_UPLOAD_MB || '1024', 10);
 const MAX_BACKUP_UPLOAD_BYTES = Math.max(10, maxBackupUploadMb) * 1024 * 1024;
 const backupUploadTempDir = path.join(__dirname, '../uploads/tmp-backups');
 if (!fs.existsSync(backupUploadTempDir)) {
@@ -80,7 +80,58 @@ const handleUpload = (uploader) => (req, res, next) => {
 const parseUploadedBackupPayload = async (file) => {
   if (!file?.path) throw new Error('Uploaded backup file path is missing');
   const content = await fs.promises.readFile(file.path, 'utf8');
-  return JSON.parse(content);
+  const normalizedContent = String(content || '').replace(/^\uFEFF/, '');
+  if (!normalizedContent.trim()) {
+    throw new Error('Backup file is empty');
+  }
+  return JSON.parse(normalizedContent);
+};
+
+const normalizeBackupCollections = (payload) => {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid backup format. Expected a JSON object.');
+  }
+
+  if (payload.collections && typeof payload.collections === 'object') {
+    return payload.collections;
+  }
+
+  // Backward compatibility: legacy backup shape with top-level arrays.
+  const legacyKeys = [
+    'users',
+    'stores',
+    'assets',
+    'requests',
+    'activityLogs',
+    'purchaseOrders',
+    'vendors',
+    'passes',
+    'permits',
+    'assetCategories'
+  ];
+  const hasLegacyShape = legacyKeys.some((key) => Array.isArray(payload[key]));
+  if (hasLegacyShape) {
+    const normalized = {};
+    legacyKeys.forEach((key) => {
+      normalized[key] = Array.isArray(payload[key]) ? payload[key] : [];
+    });
+    return normalized;
+  }
+
+  if (typeof payload.message === 'string' && payload.message.length > 0) {
+    throw new Error(`This file appears to be an error response, not a backup file: ${payload.message}`);
+  }
+
+  throw new Error('Invalid backup format. Expected an Expo backup JSON file.');
+};
+
+const getBackupAssetsFromPayload = (payload) => {
+  const collections = normalizeBackupCollections(payload);
+  return Array.isArray(collections.assets) ? collections.assets : [];
+};
+
+const getBackupCollectionsFromPayload = (payload) => {
+  return normalizeBackupCollections(payload);
 };
 
 const cleanupUploadedBackupFile = async (file) => {
@@ -437,10 +488,7 @@ router.post('/restore-from-file', protect, superAdmin, heavyOpsLimiter, handleUp
 
   try {
     const payload = await parseUploadedBackupPayload(req.file);
-    if (!payload || typeof payload !== 'object' || !payload.collections || typeof payload.collections !== 'object') {
-      return res.status(400).json({ message: 'Invalid backup format. Expected an Expo backup JSON file.' });
-    }
-    const collections = payload.collections;
+    const collections = getBackupCollectionsFromPayload(payload);
 
     await User.deleteMany({});
     await Store.deleteMany({});
@@ -483,7 +531,7 @@ router.post('/backup-upload/scan', protect, superAdmin, heavyOpsLimiter, handleU
 
   try {
     const payload = await parseUploadedBackupPayload(req.file);
-    const assets = Array.isArray(payload?.collections?.assets) ? payload.collections.assets : [];
+    const assets = getBackupAssetsFromPayload(payload);
     const fileName = req.file.originalname || `backup-${Date.now()}.json`;
 
     if (assets.length === 0) {

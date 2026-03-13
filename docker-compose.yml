@@ -40,7 +40,7 @@ services:
       EMERGENCY_RESET_SECRET: ${EMERGENCY_RESET_SECRET:-emergency_unlock}
       ENABLE_CSRF: ${ENABLE_CSRF:-true}
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
-      MAX_BACKUP_UPLOAD_MB: ${MAX_BACKUP_UPLOAD_MB:-250}
+      MAX_BACKUP_UPLOAD_MB: ${MAX_BACKUP_UPLOAD_MB:-1024}
     ports:
       - "5000:5000"
     volumes:

@@ -261,7 +261,7 @@ const Portal = () => {
   };
 
   const allowedBackupTypes = ['application/json', 'text/plain'];
-  const maxBackupFileSize = 250 * 1024 * 1024;
+  const maxBackupFileSize = 1024 * 1024 * 1024;
 
   const validateBackupFiles = (files) => {
     const valid = [];
@@ -274,7 +274,7 @@ const Portal = () => {
         return;
       }
       if (file.size > maxBackupFileSize) {
-        errors.push(`${file.name}: exceeds 250MB limit`);
+        errors.push(`${file.name}: exceeds 1024MB limit`);
         return;
       }
       valid.push(file);

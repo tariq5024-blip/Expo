@@ -111,20 +111,22 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-app-page space-y-6 text-app-main">
-      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold text-app-main flex items-center gap-3">
-            Dashboard
-            {loading && <Activity className="w-5 h-5 text-app-accent animate-pulse" />}
-          </h1>
-          <p className="text-app-muted mt-1">Welcome back, {user?.name}. Here is the latest system snapshot.</p>
-        </div>
+      <div className="rounded-2xl border border-app-card bg-app-card p-5 md:p-6 shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold text-app-main flex items-center gap-3">
+              Dashboard
+              {loading && <Activity className="w-5 h-5 text-app-accent animate-pulse" />}
+            </h1>
+            <p className="text-app-muted mt-1">Welcome back, {user?.name}. Here is the latest system snapshot.</p>
+          </div>
 
-        <div className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1.5 text-xs font-medium ${systemOk ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-            <div className={`w-2 h-2 rounded-full ${systemOk ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-            <span>
-              {systemOk ? 'System Operational' : 'Connectivity Issue'}
-            </span>
+          <div className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1.5 text-xs font-medium ${systemOk ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+              <div className={`w-2 h-2 rounded-full ${systemOk ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+              <span>
+                {systemOk ? 'System Operational' : 'Connectivity Issue'}
+              </span>
+          </div>
         </div>
       </div>
 

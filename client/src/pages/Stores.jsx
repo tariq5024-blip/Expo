@@ -184,12 +184,19 @@ const Stores = () => {
                   <div className="flex justify-between items-start mb-2">
                     <span className="font-bold text-lg">{store.name}</span>
                   </div>
-                  <div className="mt-1 text-sm text-gray-600">
-                    Total available at location: <span className="font-semibold">{store.availableAssetCount ?? 0}</span>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                      Active Location
+                    </span>
+                    <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                      Ready for Assets
+                    </span>
                   </div>
-                  <div className="mt-2 text-xs text-indigo-600 font-medium">Click to view all assets in this location</div>
+                  <div className="mt-3 text-xs text-indigo-600 font-medium bg-indigo-50 border border-indigo-100 rounded-md px-2 py-1 inline-block">
+                    Click to open this location inventory
+                  </div>
                   {user?.role !== 'Viewer' && (
-                  <div className="flex gap-2 justify-end border-t pt-2">
+                  <div className="flex gap-2 justify-end border-t pt-2 mt-3">
                     <button onClick={(e) => { e.stopPropagation(); startEdit(store); }} className="text-amber-600 text-sm hover:underline">Edit</button>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(store._id); }} className="text-red-500 text-sm hover:underline">Delete</button>
                   </div>

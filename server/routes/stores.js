@@ -6,11 +6,6 @@ const mongoose = require('mongoose');
 const { protect, admin } = require('../middleware/authMiddleware');
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizeName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
-const normalizeKey = (value) =>
-  normalizeName(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
 
 // @desc    Get all stores (with optional filtering)
 // @route   GET /api/stores
@@ -18,6 +13,14 @@ const normalizeKey = (value) =>
 router.get('/', protect, async (req, res) => {
   try {
     const filter = {};
+    const q = String(req.query.q || '').trim();
+    const requestedPage = Number.parseInt(String(req.query.page || ''), 10);
+    const requestedLimit = Number.parseInt(String(req.query.limit || ''), 10);
+    const usePagination = Number.isFinite(requestedPage) || Number.isFinite(requestedLimit);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, 200)
+      : 50;
     
     // Filter by isMainStore
     if (req.query.main === 'true') {
@@ -34,6 +37,9 @@ router.get('/', protect, async (req, res) => {
     // Filter by deletionRequested
     if (req.query.deletionRequested === 'true') {
       filter.deletionRequested = true;
+    }
+    if (q) {
+      filter.name = { $regex: new RegExp(escapeRegex(q), 'i') };
     }
 
     // Role-Based Filtering
@@ -92,26 +98,29 @@ router.get('/', protect, async (req, res) => {
     }
 
     // Sort by name for better UX
-    let stores = await Store.find(filter).sort({ name: 1 }).lean();
+    let stores = [];
+    let total = 0;
+    if (usePagination) {
+      total = await Store.countDocuments(filter);
+      stores = await Store.find(filter)
+        .sort({ name: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean();
+    } else {
+      stores = await Store.find(filter).sort({ name: 1 }).lean();
+      total = stores.length;
+    }
 
     if (req.query.includeAssetTotals === 'true' && stores.length > 0) {
       const match = {};
-      let allowedStoreIds = [];
-      if (req.query.parent && mongoose.Types.ObjectId.isValid(String(req.query.parent))) {
-        const parentId = new mongoose.Types.ObjectId(req.query.parent);
-        allowedStoreIds = [parentId, ...stores.map((s) => s._id)];
-      } else if (req.activeStore && mongoose.Types.ObjectId.isValid(String(req.activeStore))) {
-        allowedStoreIds = [new mongoose.Types.ObjectId(req.activeStore), ...stores.map((s) => s._id)];
+      const storeIds = stores
+        .map((s) => String(s._id))
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+      if (storeIds.length > 0) {
+        match.store = { $in: storeIds };
       }
-      if (allowedStoreIds.length > 0) {
-        match.store = { $in: allowedStoreIds };
-      }
-
-      const childStoreIds = new Set(stores.map((s) => String(s._id)));
-      const locationToStoreId = stores.reduce((acc, s) => {
-        acc[normalizeKey(s.name)] = String(s._id);
-        return acc;
-      }, {});
 
       const grouped = await Asset.aggregate([
         { $match: match },
@@ -119,7 +128,6 @@ router.get('/', protect, async (req, res) => {
           $project: {
             store: 1,
             disposed: { $ifNull: ['$disposed', false] },
-            locLower: { $toLower: { $trim: { input: { $ifNull: ['$location', ''] } } } },
             statusLower: { $toLower: { $ifNull: ['$status', ''] } },
             condLower: { $toLower: { $ifNull: ['$condition', ''] } },
             assigned_to: 1,
@@ -135,7 +143,7 @@ router.get('/', protect, async (req, res) => {
         },
         {
           $group: {
-            _id: { store: '$store', loc: '$locLower' },
+            _id: '$store',
             available: {
               $sum: {
                 $cond: [
@@ -167,22 +175,26 @@ router.get('/', protect, async (req, res) => {
       for (const row of grouped) {
         const available = Number(row?.available || 0);
         if (available <= 0) continue;
-
-        const storeId = String(row?._id?.store || '');
-        if (childStoreIds.has(storeId)) {
-          totalsByStore[storeId] = (totalsByStore[storeId] || 0) + available;
-          continue;
-        }
-
-        const locKey = normalizeKey(row?._id?.loc || '');
-        const mapped = locationToStoreId[locKey];
-        if (mapped) totalsByStore[mapped] = (totalsByStore[mapped] || 0) + available;
+        const storeId = String(row?._id || '');
+        totalsByStore[storeId] = (totalsByStore[storeId] || 0) + available;
       }
 
       stores = stores.map((s) => ({
         ...s,
         availableAssetCount: totalsByStore[String(s._id)] || 0
       }));
+    }
+
+    if (usePagination) {
+      return res.json({
+        items: stores,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / limit))
+        }
+      });
     }
 
     res.json(stores);

@@ -67,14 +67,21 @@ const limiter = rateLimit({
   legacyHeaders: false,
   // In 3-tier deployments, multiple users can share same source IP.
   // Never block auth endpoints with global API limiter.
-  skip: (req) =>
-    req.path === '/api/healthz' ||
-    req.path === '/api/readyz' ||
-    req.path.startsWith('/api/auth/'),
+  skip: (req) => {
+    // Note: limiter is mounted on /api, so req.path values do NOT include /api prefix.
+    if (req.path === '/healthz' || req.path === '/readyz') return true;
+    if (req.path.startsWith('/auth/')) return true;
+    // Public branding/config endpoint should never block app bootstrap.
+    if (req.path === '/system/public-config') return true;
+    return false;
+  },
   message: { message: 'Too many API requests, please try again later.' }
 });
-// Apply limiter only on API routes; never throttle static index/assets.
-app.use('/api', limiter);
+// Apply limiter only on API routes in production; in dev this can mask
+// real issues and cause local app bootstrap to appear hung.
+if (isProd) {
+  app.use('/api', limiter);
+}
 // Prevent NoSQL injection
 app.use(mongoSanitize());
 
@@ -311,63 +318,58 @@ let mongod = null;
 
 // Connect to MongoDB
 const connectDB = async () => {
-  try {
-    const timeout = process.env.NODE_ENV === 'production' ? 30000 : 5000;
-    await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: timeout,
-      socketTimeoutMS: 45000,
-    });
-    console.log('MongoDB Connected to:', process.env.MONGO_URI);
-    
-    // Always enforce required operational accounts on startup so updates/deploys
-    // cannot break default credentials.
-    // Required accounts:
-    // superadmin@expo.com / superadmin123
-    // scy@expo.com, it@expo.com, noc@expo.com / admin123
-    await seedStoresAndUsers();
-    dropSerialUniqueIndex();
-    dropStoreNameGlobalUniqueIndex();
+  let mongoUri = process.env.MONGO_URI;
 
-    if (!backupJobStarted) {
-      backupJobStarted = true;
-      const oneDayMs = 24 * 60 * 60 * 1000;
-
-      const runBackup = async () => {
-        try {
-          const dir = await backupDatabase();
-          console.log('Automatic daily backup completed:', dir);
-        } catch (err) {
-          console.error('Automatic daily backup failed:', err.message || err);
-        }
-      };
-
-      setTimeout(() => {
-        runBackup();
-        setInterval(runBackup, oneDayMs);
-      }, 5 * 60 * 1000);
+  // Dev fallback for local reliability when no external DB is configured.
+  if (!mongoUri && !isProd) {
+    if (!mongod) {
+      console.log('MONGO_URI is missing. Starting in-memory MongoDB for development...');
+      const { MongoMemoryServer } = require('mongodb-memory-server');
+      mongod = await MongoMemoryServer.create();
     }
-  } catch (err) {
-    console.error('MongoDB Connection Error:', err);
-    
-    // Fallback to in-memory MongoDB for development
-    if (process.env.NODE_ENV !== 'production' && !mongod) {
-      console.log('Attempting to start in-memory MongoDB...');
+    mongoUri = mongod.getUri();
+    process.env.MONGO_URI = mongoUri;
+  }
+
+  if (!mongoUri) {
+    throw new Error('MONGO_URI is required in production.');
+  }
+
+  const timeout = isProd ? 30000 : 5000;
+  await mongoose.connect(mongoUri, {
+    serverSelectionTimeoutMS: timeout,
+    socketTimeoutMS: 45000,
+  });
+  console.log('MongoDB Connected to:', mongoUri);
+
+  // Always enforce required operational accounts on startup so updates/deploys
+  // cannot break default credentials.
+  await seedStoresAndUsers();
+  dropSerialUniqueIndex();
+  dropStoreNameGlobalUniqueIndex();
+
+  if (!backupJobStarted) {
+    backupJobStarted = true;
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    let backupRunning = false;
+
+    const runBackup = async () => {
+      if (backupRunning) return;
+      backupRunning = true;
       try {
-        const { MongoMemoryServer } = require('mongodb-memory-server');
-        mongod = await MongoMemoryServer.create();
-        const uri = mongod.getUri();
-        console.log('In-memory MongoDB started at:', uri);
-        process.env.MONGO_URI = uri;
-        
-        // Retry immediately with new URI
-        return connectDB();
-      } catch (memErr) {
-        console.error('Failed to start in-memory MongoDB:', memErr);
+        const dir = await backupDatabase();
+        console.log('Automatic daily backup completed:', dir);
+      } catch (err) {
+        console.error('Automatic daily backup failed:', err.message || err);
+      } finally {
+        backupRunning = false;
       }
-    }
+    };
 
-    // Retry connection after 5 seconds
-    setTimeout(connectDB, 5000);
+    setTimeout(() => {
+      runBackup();
+      setInterval(runBackup, oneDayMs);
+    }, 5 * 60 * 1000);
   }
 };
 
@@ -384,7 +386,29 @@ mongoose.connection.on('error', (err) => {
   console.error('MongoDB error:', err);
 });
 
-connectDB();
+let serverInstance = null;
+
+const connectDBWithRetry = async () => {
+  const maxRetries = Number.parseInt(process.env.DB_CONNECT_MAX_RETRIES || (isProd ? '10' : '0'), 10);
+  let attempt = 0;
+  let delayMs = 2000;
+
+  while (true) {
+    try {
+      await connectDB();
+      return;
+    } catch (err) {
+      attempt += 1;
+      console.error(`MongoDB Connection Error (attempt ${attempt}):`, err);
+      const shouldStop = maxRetries > 0 && attempt >= maxRetries;
+      if (shouldStop) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 30000);
+    }
+  }
+};
 
 // Seed Default Stores
 const seedStores = async () => {
@@ -465,20 +489,32 @@ app.use((req, res) => {
   res.status(404).send('Not Found');
 });
 
-const PORT = process.env.PORT || 5000;
-const serverInstance = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-const shutdown = async (signal) => {
+const shutdown = async () => {
   try {
     await mongoose.connection.close();
   } catch {}
   try {
-    serverInstance.close(() => {
-      process.exit(0);
-    });
+    if (serverInstance) {
+      serverInstance.close(() => {
+        process.exit(0);
+      });
+      return;
+    }
+    process.exit(0);
   } catch {
     process.exit(0);
   }
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+const startServer = async () => {
+  await connectDBWithRetry();
+  const PORT = process.env.PORT || 5000;
+  serverInstance = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+};
+
+startServer().catch((error) => {
+  console.error('Server startup failed:', error);
+  process.exit(1);
+});

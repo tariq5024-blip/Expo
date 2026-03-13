@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const Asset = require('../models/Asset');
@@ -21,19 +22,82 @@ const { backupDatabase } = require('../backup_db');
 const Setting = require('../models/Setting');
 const { sendStoreEmail, buildTransport } = require('../utils/storeEmail');
 
-const upload = multer({ storage: multer.memoryStorage() });
-const bulkUpload = multer({
-  storage: multer.memoryStorage(),
+const maxBackupUploadMb = Number.parseInt(process.env.MAX_BACKUP_UPLOAD_MB || '250', 10);
+const MAX_BACKUP_UPLOAD_BYTES = Math.max(10, maxBackupUploadMb) * 1024 * 1024;
+const backupUploadTempDir = path.join(__dirname, '../uploads/tmp-backups');
+if (!fs.existsSync(backupUploadTempDir)) {
+  fs.mkdirSync(backupUploadTempDir, { recursive: true });
+}
+
+const backupDiskStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, backupUploadTempDir),
+  filename: (req, file, cb) => {
+    const safeName = String(file.originalname || 'backup.json').replace(/[^a-zA-Z0-9._-]/g, '_');
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}-${safeName}`);
+  }
+});
+
+const backupUpload = multer({
+  storage: backupDiskStorage,
   limits: {
-    fileSize: 10 * 1024 * 1024
+    fileSize: MAX_BACKUP_UPLOAD_BYTES
   },
   fileFilter: (req, file, cb) => {
-    const okType = file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json');
+    const okType = file.mimetype === 'application/json' || file.mimetype === 'text/plain' || file.originalname.toLowerCase().endsWith('.json');
     if (!okType) {
       return cb(new Error(`Invalid file type for ${file.originalname}. Only .json backups are allowed.`));
     }
     cb(null, true);
   }
+});
+const bulkUpload = multer({
+  storage: backupDiskStorage,
+  limits: {
+    fileSize: MAX_BACKUP_UPLOAD_BYTES
+  },
+  fileFilter: (req, file, cb) => {
+    const okType = file.mimetype === 'application/json' || file.mimetype === 'text/plain' || file.originalname.toLowerCase().endsWith('.json');
+    if (!okType) {
+      return cb(new Error(`Invalid file type for ${file.originalname}. Only .json backups are allowed.`));
+    }
+    cb(null, true);
+  }
+});
+
+const handleUpload = (uploader) => (req, res, next) => {
+  uploader.single('backup')(req, res, (error) => {
+    if (!error) return next();
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: `Backup file is too large. Maximum size is ${Math.floor(MAX_BACKUP_UPLOAD_BYTES / (1024 * 1024))} MB.` });
+      }
+      return res.status(400).json({ message: error.message || 'Upload failed' });
+    }
+    return res.status(400).json({ message: error.message || 'Upload failed' });
+  });
+};
+
+const parseUploadedBackupPayload = async (file) => {
+  if (!file?.path) throw new Error('Uploaded backup file path is missing');
+  const content = await fs.promises.readFile(file.path, 'utf8');
+  return JSON.parse(content);
+};
+
+const cleanupUploadedBackupFile = async (file) => {
+  if (!file?.path) return;
+  try {
+    await fs.promises.unlink(file.path);
+  } catch {
+    // Best-effort cleanup
+  }
+};
+
+const heavyOpsLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many heavy operations. Please try again later.' }
 });
 
 // Branding logo upload (disk storage)
@@ -291,7 +355,7 @@ router.post('/theme', protect, admin, async (req, res) => {
 // @desc    Trigger database backup
 // @route   POST /api/system/backup
 // @access  Private/Admin
-router.post('/backup', protect, admin, async (req, res) => {
+router.post('/backup', protect, admin, heavyOpsLimiter, async (req, res) => {
   try {
     const backupDir = await backupDatabase();
     res.json({ message: 'Backup completed successfully', path: backupDir });
@@ -366,15 +430,17 @@ router.get('/backup-file', protect, superAdmin, async (req, res) => {
 // @desc    Restore database from uploaded backup file
 // @route   POST /api/system/restore-from-file
 // @access  Private/SuperAdmin
-router.post('/restore-from-file', protect, superAdmin, upload.single('backup'), async (req, res) => {
+router.post('/restore-from-file', protect, superAdmin, heavyOpsLimiter, handleUpload(backupUpload), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'Backup file is required' });
   }
 
   try {
-    const content = req.file.buffer.toString('utf8');
-    const payload = JSON.parse(content);
-    const collections = payload.collections || {};
+    const payload = await parseUploadedBackupPayload(req.file);
+    if (!payload || typeof payload !== 'object' || !payload.collections || typeof payload.collections !== 'object') {
+      return res.status(400).json({ message: 'Invalid backup format. Expected an Expo backup JSON file.' });
+    }
+    const collections = payload.collections;
 
     await User.deleteMany({});
     await Store.deleteMany({});
@@ -402,20 +468,21 @@ router.post('/restore-from-file', protect, superAdmin, upload.single('backup'), 
   } catch (error) {
     console.error('Error restoring from backup file:', error);
     res.status(500).json({ message: error.message || 'Failed to restore from backup file' });
+  } finally {
+    await cleanupUploadedBackupFile(req.file);
   }
 });
 
 // @desc    Scan backup file and detect duplicate conflicts
 // @route   POST /api/system/backup-upload/scan
 // @access  Private/SuperAdmin
-router.post('/backup-upload/scan', protect, superAdmin, bulkUpload.single('backup'), async (req, res) => {
+router.post('/backup-upload/scan', protect, superAdmin, heavyOpsLimiter, handleUpload(bulkUpload), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'Backup file is required' });
   }
 
   try {
-    const content = req.file.buffer.toString('utf8');
-    const payload = JSON.parse(content);
+    const payload = await parseUploadedBackupPayload(req.file);
     const assets = Array.isArray(payload?.collections?.assets) ? payload.collections.assets : [];
     const fileName = req.file.originalname || `backup-${Date.now()}.json`;
 
@@ -516,13 +583,15 @@ router.post('/backup-upload/scan', protect, superAdmin, bulkUpload.single('backu
     });
   } catch (error) {
     res.status(400).json({ message: error.message || 'Failed to parse backup file' });
+  } finally {
+    await cleanupUploadedBackupFile(req.file);
   }
 });
 
 // @desc    Apply conflict resolution for scanned backups
 // @route   POST /api/system/backup-upload/apply
 // @access  Private/SuperAdmin
-router.post('/backup-upload/apply', protect, superAdmin, async (req, res) => {
+router.post('/backup-upload/apply', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
   try {
     const {
       scanIds = [],
@@ -915,7 +984,7 @@ router.post('/request-reset', protect, admin, async (req, res) => {
 // @desc    Reset database (keep users)
 // @route   POST /api/system/reset
 // @access  Private/SuperAdmin
-router.post('/reset', protect, superAdmin, async (req, res) => {
+router.post('/reset', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
   const { password, storeId, includeUsers } = req.body;
   
   if (!password) {

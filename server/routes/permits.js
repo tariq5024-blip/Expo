@@ -7,13 +7,13 @@ const path = require('path');
 const fs = require('fs');
 
 // Multer Config
+const uploadRoot = path.join(__dirname, '../uploads');
 const storage = multer.diskStorage({
   destination(req, file, cb) {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir);
+    if (!fs.existsSync(uploadRoot)) {
+      fs.mkdirSync(uploadRoot, { recursive: true });
     }
-    cb(null, uploadDir);
+    cb(null, uploadRoot);
   },
   filename(req, file, cb) {
     cb(null, `permit-${Date.now()}-${file.originalname}`);
@@ -22,6 +22,9 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024
+  },
   fileFilter: function (req, file, cb) {
     const filetypes = /jpeg|jpg|png|pdf/;
     const extname = filetypes.test(path.extname(file.originalname).toLowerCase());

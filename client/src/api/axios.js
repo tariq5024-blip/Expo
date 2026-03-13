@@ -5,6 +5,7 @@ const api = axios.create({
   withCredentials: true,
   xsrfCookieName: 'XSRF-TOKEN',
   xsrfHeaderName: 'X-XSRF-TOKEN',
+  timeout: 15000,
 });
 
 api.interceptors.request.use(

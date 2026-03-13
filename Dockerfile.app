@@ -1,13 +1,14 @@
-FROM node:18-alpine AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app/server
 COPY server/package*.json ./
 RUN npm ci --omit=dev --no-audit --prefer-offline
 
-FROM node:18-alpine
+FROM node:20-bookworm-slim
 ENV NODE_ENV=production
 ENV PORT=5000
 WORKDIR /app/server
-RUN adduser -D -u 10001 appuser
+RUN groupadd --gid 10001 appuser \
+  && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser
 COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/ ./
 # Ensure runtime directories exist and are writable

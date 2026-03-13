@@ -1,0 +1,100 @@
+services:
+  mongo:
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep 1 >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+    # Compose engine limits (non-swarm)
+    mem_limit: 1024m
+    cpus: 1.50
+    pids_limit: 300
+    # Log rotation caps
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        mode: non-blocking
+        max-buffer-size: "4m"
+
+  app:
+    restart: unless-stopped
+    init: true
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # Runtime hardening
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /run:rw,nosuid,nodev,size=64m
+    # Writable runtime data paths
+    volumes:
+      - app_uploads:/app/server/uploads
+      - app_backups:/app/server/backups
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5000/api/healthz', (r)=>process.exit(r.statusCode===200?0:1)).on('error', ()=>process.exit(1));"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 35s
+    # Compose engine limits (non-swarm)
+    mem_limit: 1024m
+    cpus: 1.50
+    pids_limit: 300
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    # Log rotation caps
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        mode: non-blocking
+        max-buffer-size: "4m"
+
+  web:
+    restart: unless-stopped
+    init: true
+    depends_on:
+      app:
+        condition: service_healthy
+    # Runtime hardening
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /var/cache/nginx:rw,nosuid,nodev,size=64m
+      - /var/run:rw,nosuid,nodev,size=16m
+      - /run:rw,nosuid,nodev,size=16m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    # Compose engine limits (non-swarm)
+    mem_limit: 256m
+    cpus: 0.75
+    pids_limit: 150
+    # Log rotation caps
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "5"
+        mode: non-blocking
+        max-buffer-size: "2m"

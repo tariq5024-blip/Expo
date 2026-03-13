@@ -74,29 +74,50 @@ export const AuthProvider = ({ children }) => {
       const storedActiveStore = localStorage.getItem('activeStore');
 
       if (storedUser) {
+        let parsedStoredUser = null;
         try {
-          // Verify session with server
-          const res = await api.get('/auth/me');
-          setUser(res.data); // Update with fresh data from server
-          
+          // Hydrate from local storage first to survive browser refreshes
+          // when the session check is temporarily unavailable.
+          parsedStoredUser = JSON.parse(storedUser);
+          setUser(parsedStoredUser);
+
           if (storedActiveStore) {
             setActiveStore(JSON.parse(storedActiveStore));
           }
+
+          // Verify session with server
+          const res = await api.get('/auth/me');
+          setUser(res.data); // Update with fresh data from server
+
+          // Keep local cache in sync with server user payload
+          localStorage.setItem('user', JSON.stringify(res.data));
         } catch (error) {
-          // If 401/403, clear local storage (session expired/invalid)
-          console.error('Session verification failed:', error);
-          localStorage.removeItem('user');
-          localStorage.removeItem('activeStore');
-          setUser(null);
-          setActiveStore(null);
+          const status = error?.response?.status;
+          const isUnauthorized = status === 401 || status === 403;
+
+          if (isUnauthorized) {
+            // Session is really invalid, clear local state.
+            localStorage.removeItem('user');
+            localStorage.removeItem('activeStore');
+            setUser(null);
+            setActiveStore(null);
+          } else {
+            // Temporary network/backend issue: preserve local session state.
+            console.error('Session verification deferred due to transient error:', error);
+            if (!parsedStoredUser) {
+              localStorage.removeItem('user');
+              localStorage.removeItem('activeStore');
+              setUser(null);
+              setActiveStore(null);
+            }
+          }
         }
       }
       setLoading(false);
     };
 
-    fetchBranding();
     verifySession();
-  }, [fetchBranding]);
+  }, []);
 
   useEffect(() => {
     if (loading) return;
@@ -106,25 +127,27 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     setGlobalLoading(true);
-    const response = await api.post('/auth/login', { email, password });
-    const userData = response.data;
-    
-    localStorage.setItem('user', JSON.stringify(userData));
-    setUser(userData);
+    try {
+      const response = await api.post('/auth/login', { email, password });
+      const userData = response.data;
 
-    // If regular admin/technician, set their assigned store as active
-    if (userData.role !== 'Super Admin' && userData.assignedStore) {
-      setActiveStore(userData.assignedStore);
-      localStorage.setItem('activeStore', JSON.stringify(userData.assignedStore));
-    } else if (userData.role === 'Super Admin') {
-      // Super Admin: Clear active store initially (force selection) unless we want to persist last choice
-      // For now, let's clear it to force Portal selection
-      setActiveStore(null);
-      localStorage.removeItem('activeStore');
+      localStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
+
+      // If regular admin/technician, set their assigned store as active
+      if (userData.role !== 'Super Admin' && userData.assignedStore) {
+        setActiveStore(userData.assignedStore);
+        localStorage.setItem('activeStore', JSON.stringify(userData.assignedStore));
+      } else if (userData.role === 'Super Admin') {
+        // Super Admin: Clear active store initially (force selection).
+        setActiveStore(null);
+        localStorage.removeItem('activeStore');
+      }
+
+      return userData;
+    } finally {
+      setGlobalLoading(false);
     }
-
-    setGlobalLoading(false);
-    return userData;
   };
 
   const logout = async () => {
@@ -162,7 +185,14 @@ export const AuthProvider = ({ children }) => {
   
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {loading ? (
+        <div className="min-h-screen flex items-center justify-center bg-app-page">
+          <div className="flex flex-col items-center gap-3 text-app-main">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-sm text-slate-500">Loading application...</p>
+          </div>
+        </div>
+      ) : children}
     </AuthContext.Provider>
   );
 };

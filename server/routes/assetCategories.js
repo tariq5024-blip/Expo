@@ -34,9 +34,14 @@ const resizeImage = async (filePath) => {
 };
 
 // Configure multer for image upload
+const uploadRoot = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadRoot)) {
+  fs.mkdirSync(uploadRoot, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination(req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, uploadRoot);
   },
   filename(req, file, cb) {
     cb(null, `product-${Date.now()}${path.extname(file.originalname)}`);
@@ -45,6 +50,9 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024
+  },
   fileFilter: function (req, file, cb) {
     const filetypes = /jpg|jpeg|png|webp/;
     const extname = filetypes.test(path.extname(file.originalname).toLowerCase());

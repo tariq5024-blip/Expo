@@ -3,21 +3,32 @@ const router = express.Router();
 const multer = require('multer');
 const sharp = require('sharp');
 const path = require('path');
+const fs = require('fs');
 const { protect, admin } = require('../middleware/authMiddleware');
 const Product = require('../models/Product');
 const Asset = require('../models/Asset');
 
 // Ensure uploads are placed under server/uploads relative to this file
+const uploadRoot = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadRoot)) {
+  fs.mkdirSync(uploadRoot, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, 'uploads'));
+    cb(null, uploadRoot);
   },
   filename: (req, file, cb) => {
     const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, `${unique}-${file.originalname.replace(/\s+/g, '_')}`);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024
+  }
+});
 
 async function resizeImage(filePath) {
   try {

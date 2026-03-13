@@ -235,10 +235,15 @@ const Portal = () => {
   const handleRestoreFromFile = async (file) => {
     if (!file) return;
     if (restoreLoading) return;
+    const { valid, errors } = validateBackupFiles([file]);
+    if (errors.length > 0 || valid.length === 0) {
+      alert(`File rejected:\n${errors.join('\n') || 'Invalid backup file.'}`);
+      return;
+    }
     if (!window.confirm('Restoring will overwrite current data with the backup file. Continue?')) return;
 
     const formData = new FormData();
-    formData.append('backup', file);
+    formData.append('backup', valid[0]);
 
     try {
       setRestoreLoading(true);
@@ -255,8 +260,8 @@ const Portal = () => {
     }
   };
 
-  const allowedBackupTypes = ['application/json'];
-  const maxBackupFileSize = 10 * 1024 * 1024;
+  const allowedBackupTypes = ['application/json', 'text/plain'];
+  const maxBackupFileSize = 250 * 1024 * 1024;
 
   const validateBackupFiles = (files) => {
     const valid = [];
@@ -269,7 +274,7 @@ const Portal = () => {
         return;
       }
       if (file.size > maxBackupFileSize) {
-        errors.push(`${file.name}: exceeds 10MB limit`);
+        errors.push(`${file.name}: exceeds 250MB limit`);
         return;
       }
       valid.push(file);
@@ -961,7 +966,7 @@ const Portal = () => {
                       <span className="font-semibold text-slate-800">Restore From Backup File</span>
                       <input
                         type="file"
-                        accept="application/json"
+                        accept="application/json,.json,text/plain"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) {
@@ -987,7 +992,7 @@ const Portal = () => {
                       <input
                         type="file"
                         multiple
-                        accept="application/json,.json"
+                        accept="application/json,.json,text/plain"
                         onChange={(e) => {
                           handleBulkFilePick(e.target.files);
                           e.target.value = '';

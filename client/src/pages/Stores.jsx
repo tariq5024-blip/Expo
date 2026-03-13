@@ -6,9 +6,15 @@ import { useNavigate } from 'react-router-dom';
 const Stores = () => {
   const { activeStore, user } = useAuth();
   const navigate = useNavigate();
+  const pageSize = 50;
   const [stores, setStores] = useState([]);
   const [newName, setNewName] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [loading, setLoading] = useState(false);
   
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
@@ -16,12 +22,36 @@ const Stores = () => {
   const fetchStores = useCallback(async () => {
     if (!activeStore?._id) return;
     try {
-      const res = await api.get(`/stores?parent=${activeStore._id}&includeAssetTotals=true`);
-      setStores(res.data);
+      setLoading(true);
+      const params = new URLSearchParams({
+        parent: activeStore._id,
+        includeAssetTotals: 'true',
+        page: String(page),
+        limit: String(pageSize)
+      });
+      if (debouncedSearch.trim()) {
+        params.set('q', debouncedSearch.trim());
+      }
+      const res = await api.get(`/stores?${params.toString()}`);
+      const items = Array.isArray(res.data) ? res.data : (res.data?.items || []);
+      const pagination = res.data?.pagination;
+      setStores(items);
+      setTotalPages(Math.max(1, pagination?.totalPages || 1));
+      setTotalItems(Number(pagination?.total || items.length || 0));
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoading(false);
     }
-  }, [activeStore]);
+  }, [activeStore, debouncedSearch, page]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
   useEffect(() => {
     if (activeStore) {
@@ -36,6 +66,7 @@ const Stores = () => {
         name: newName
       });
       setNewName('');
+      setPage(1);
       fetchStores();
     } catch (err) {
       alert(err.response?.data?.message || 'Error adding store');
@@ -167,6 +198,36 @@ const Stores = () => {
             </div>
           );
         })}
+      </div>
+      {loading && (
+        <div className="text-sm text-gray-500 mt-4">Loading locations...</div>
+      )}
+      {!loading && stores.length === 0 && (
+        <div className="text-sm text-gray-500 mt-4">No locations found.</div>
+      )}
+      <div className="mt-4 flex items-center justify-between">
+        <div className="text-xs text-gray-500">
+          Showing {stores.length} of {totalItems} locations
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1 || loading}
+            className="px-3 py-1 border rounded text-sm disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-600">Page {page} / {totalPages}</span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages || loading}
+            className="px-3 py-1 border rounded text-sm disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
       </div>
     </div>
   );

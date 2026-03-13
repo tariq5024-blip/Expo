@@ -4,21 +4,33 @@ const PurchaseOrder = require('../models/PurchaseOrder');
 const { protect, admin, adminOrViewer } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const xlsx = require('xlsx');
 const Vendor = require('../models/Vendor');
 const Store = require('../models/Store');
 
 // Multer Config
+const uploadRoot = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadRoot)) {
+  fs.mkdirSync(uploadRoot, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination(req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, uploadRoot);
   },
   filename(req, file, cb) {
     cb(null, `${Date.now()}-${file.originalname}`);
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 10
+  }
+});
 
 async function applyViewerStoreFilter(req, filter) {
   if (req.user?.role !== 'Viewer') {

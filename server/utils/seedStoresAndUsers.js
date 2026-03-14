@@ -85,10 +85,8 @@ const seedStoresAndUsers = async () => {
       superAdmin.email = superAdminEmail;
       superAdmin.role = 'Super Admin';
       superAdmin.assignedStore = null;
-      // Keep default deploy credentials deterministic per user requirement.
-      superAdmin.password = superAdminHashedPassword;
       await superAdmin.save();
-      console.log(`Updated Super Admin defaults: ${superAdminEmail} / superadmin123`);
+      console.log(`Updated Super Admin profile: ${superAdminEmail}`);
     }
 
     // 3. Create Default Store Admins
@@ -127,10 +125,8 @@ const seedStoresAndUsers = async () => {
           adminUser.email = String(adminData.email).toLowerCase();
           adminUser.role = 'Admin';
           adminUser.assignedStore = store._id;
-          // Keep default deploy credentials deterministic per user requirement.
-          adminUser.password = hashedPassword;
           await adminUser.save();
-          console.log(`Updated defaults for ${adminData.email} / ${adminData.password}`);
+          console.log(`Updated profile for ${adminData.email}`);
         }
       } else {
         console.error(`Store ${adminData.storeName} not found for admin ${adminData.email}`);

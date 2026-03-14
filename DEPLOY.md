@@ -23,6 +23,7 @@ Edit `.env.docker` and set secure values:
 
 - `JWT_SECRET`
 - `COOKIE_SECRET`
+- `EMAIL_CONFIG_ENCRYPTION_KEY`
 - `EMERGENCY_RESET_SECRET`
 - `MONGO_URI` (if using external Mongo instead of compose Mongo)
 
@@ -31,6 +32,19 @@ Recommended secret generation example:
 ```bash
 openssl rand -hex 32
 ```
+
+Generate and persist `EMAIL_CONFIG_ENCRYPTION_KEY` (Linux):
+
+```bash
+EMAIL_CONFIG_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+printf '\nEMAIL_CONFIG_ENCRYPTION_KEY=%s\n' "$EMAIL_CONFIG_ENCRYPTION_KEY" >> .env.docker
+```
+
+Important:
+
+- Set this key before first production start that uses SMTP settings.
+- Keep this key stable across restarts/deploys, or stored SMTP passwords cannot be decrypted.
+- If rotating this key, re-save SMTP settings after rotation.
 
 ## 2) Deploy (Recommended)
 

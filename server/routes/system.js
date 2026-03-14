@@ -24,11 +24,14 @@ const bcrypt = require('bcryptjs');
 const { backupDatabase } = require('../backup_db');
 const Setting = require('../models/Setting');
 const { sendStoreEmail, buildTransport } = require('../utils/storeEmail');
+const { encryptEmailSecret, decryptEmailSecret } = require('../utils/emailSecretCrypto');
 const {
   BACKUP_ROOT,
+  CURRENT_BACKUP_FORMAT_VERSION,
   createBackupArtifact,
   restoreBackupArtifact,
   restoreFromUploadedZip,
+  restoreFromJsonPayload,
   createBackupLog
 } = require('../utils/backupRecovery');
 const ResilienceJob = require('../models/ResilienceJob');
@@ -242,6 +245,7 @@ const validateJsonBackupPayload = (payload) => {
   const counts = summarizeCollections(collections);
   const totalRecords = Object.values(counts).reduce((a, b) => a + b, 0);
   const sourceVersion = payload?.meta?.app_version || payload?.meta?.appVersion || 'unknown';
+  const backupFormatVersion = Number(payload?.meta?.backup_format_version ?? payload?.meta?.backupFormatVersion ?? 1) || 1;
   const version = buildVersionCompatibility(sourceVersion);
   let status = version.status;
   const issues = [];
@@ -257,6 +261,7 @@ const validateJsonBackupPayload = (payload) => {
     ok: status !== 'blocked',
     status,
     format: 'json',
+    backupFormatVersion,
     backupType: payload?.meta?.backup_type || payload?.meta?.backupType || 'unknown',
     version,
     issues,
@@ -324,6 +329,7 @@ const validateZipBackupFile = async (zipFilePath) => {
     ok: status !== 'blocked',
     status,
     format: 'zip',
+    backupFormatVersion: Number(meta?.backup_format_version ?? meta?.backupFormatVersion ?? 1) || 1,
     backupType: meta?.backup_type || meta?.backupType || 'unknown',
     version,
     issues,
@@ -662,7 +668,10 @@ router.get('/backup-file', protect, superAdmin, async (req, res) => {
     const payload = {
       meta: {
         createdAt: new Date().toISOString(),
-        version: 1
+        version: 1,
+        app_version: appPackage.version || 'unknown',
+        backup_format_version: CURRENT_BACKUP_FORMAT_VERSION,
+        backup_type: 'Full'
       },
       collections: {
         users,
@@ -776,9 +785,9 @@ router.post('/backups/:id/restore', protect, superAdmin, heavyOpsLimiter, async 
       return res.status(404).json({ message: 'Backup file does not exist on server' });
     }
     await BackupArtifact.updateOne({ _id: backup._id }, { $set: { status: 'restoring' } });
-    await restoreBackupArtifact({ backupArtifact: backup, user: req.user, createSafetyBackup: true });
+    const result = await restoreBackupArtifact({ backupArtifact: backup, user: req.user, createSafetyBackup: true });
     await BackupArtifact.updateOne({ _id: backup._id }, { $set: { status: 'ready' } });
-    res.json({ message: 'System restore completed successfully' });
+    res.json({ message: 'System restore completed successfully', result });
   } catch (error) {
     await BackupArtifact.updateOne({ _id: req.params.id }, { $set: { status: 'failed' } }).catch(() => {});
     res.status(500).json({ message: error.message || 'Restore failed' });
@@ -801,33 +810,13 @@ router.post('/backups/upload-restore', protect, superAdmin, heavyOpsLimiter, han
     });
     const lower = String(req.file.originalname || '').toLowerCase();
     if (lower.endsWith('.zip') || req.file.mimetype === 'application/zip') {
-      await restoreFromUploadedZip({ zipPath: req.file.path, user: req.user });
-      return res.json({ message: 'System restore completed successfully', checksum });
+      const result = await restoreFromUploadedZip({ zipPath: req.file.path, user: req.user });
+      return res.json({ message: 'System restore completed successfully', checksum, result });
     }
-    // Fallback: keep legacy JSON restore compatibility via existing route behavior
+    // Fallback: keep legacy JSON restore compatibility via schema-tolerant restore flow
     const payload = await parseUploadedBackupPayload(req.file);
-    const collections = getBackupCollectionsFromPayload(payload);
-    await User.deleteMany({});
-    await Store.deleteMany({});
-    await Asset.deleteMany({});
-    await Request.deleteMany({});
-    await ActivityLog.deleteMany({});
-    await PurchaseOrder.deleteMany({});
-    await Vendor.deleteMany({});
-    await Pass.deleteMany({});
-    await Permit.deleteMany({});
-    await AssetCategory.deleteMany({});
-    if (collections.users?.length) await User.insertMany(collections.users, { ordered: false });
-    if (collections.stores?.length) await Store.insertMany(collections.stores, { ordered: false });
-    if (collections.assets?.length) await Asset.insertMany(collections.assets, { ordered: false });
-    if (collections.requests?.length) await Request.insertMany(collections.requests, { ordered: false });
-    if (collections.activityLogs?.length) await ActivityLog.insertMany(collections.activityLogs, { ordered: false });
-    if (collections.purchaseOrders?.length) await PurchaseOrder.insertMany(collections.purchaseOrders, { ordered: false });
-    if (collections.vendors?.length) await Vendor.insertMany(collections.vendors, { ordered: false });
-    if (collections.passes?.length) await Pass.insertMany(collections.passes, { ordered: false });
-    if (collections.permits?.length) await Permit.insertMany(collections.permits, { ordered: false });
-    if (collections.assetCategories?.length) await AssetCategory.insertMany(collections.assetCategories, { ordered: false });
-    return res.json({ message: 'Legacy JSON restore completed successfully', checksum });
+    const result = await restoreFromJsonPayload({ payload, user: req.user });
+    return res.json({ message: 'Legacy JSON restore completed successfully', checksum, result });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Restore failed' });
   } finally {
@@ -869,8 +858,8 @@ router.post('/backups/emergency-restore', protect, superAdmin, heavyOpsLimiter, 
   try {
     const latestFull = await BackupArtifact.findOne({ backupType: 'Full', status: 'ready' }).sort({ createdAt: -1 });
     if (!latestFull) return res.status(404).json({ message: 'No full backup found' });
-    await restoreBackupArtifact({ backupArtifact: latestFull, user: req.user, createSafetyBackup: true });
-    res.json({ message: 'Emergency restore completed', backupId: latestFull._id });
+    const result = await restoreBackupArtifact({ backupArtifact: latestFull, user: req.user, createSafetyBackup: true });
+    res.json({ message: 'Emergency restore completed', backupId: latestFull._id, result });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Emergency restore failed' });
   }
@@ -948,31 +937,8 @@ router.post('/restore-from-file', protect, superAdmin, heavyOpsLimiter, handleUp
 
   try {
     const payload = await parseUploadedBackupPayload(req.file);
-    const collections = getBackupCollectionsFromPayload(payload);
-
-    await User.deleteMany({});
-    await Store.deleteMany({});
-    await Asset.deleteMany({});
-    await Request.deleteMany({});
-    await ActivityLog.deleteMany({});
-    await PurchaseOrder.deleteMany({});
-    await Vendor.deleteMany({});
-    await Pass.deleteMany({});
-    await Permit.deleteMany({});
-    await AssetCategory.deleteMany({});
-
-    if (collections.users?.length) await User.insertMany(collections.users, { ordered: false });
-    if (collections.stores?.length) await Store.insertMany(collections.stores, { ordered: false });
-    if (collections.assets?.length) await Asset.insertMany(collections.assets, { ordered: false });
-    if (collections.requests?.length) await Request.insertMany(collections.requests, { ordered: false });
-    if (collections.activityLogs?.length) await ActivityLog.insertMany(collections.activityLogs, { ordered: false });
-    if (collections.purchaseOrders?.length) await PurchaseOrder.insertMany(collections.purchaseOrders, { ordered: false });
-    if (collections.vendors?.length) await Vendor.insertMany(collections.vendors, { ordered: false });
-    if (collections.passes?.length) await Pass.insertMany(collections.passes, { ordered: false });
-    if (collections.permits?.length) await Permit.insertMany(collections.permits, { ordered: false });
-    if (collections.assetCategories?.length) await AssetCategory.insertMany(collections.assetCategories, { ordered: false });
-
-    res.json({ message: 'Restore completed successfully' });
+    const result = await restoreFromJsonPayload({ payload, user: req.user });
+    res.json({ message: 'Restore completed successfully', result });
   } catch (error) {
     console.error('Error restoring from backup file:', error);
     res.status(500).json({ message: error.message || 'Failed to restore from backup file' });
@@ -1227,7 +1193,7 @@ router.get('/email-config', protect, admin, async (req, res) => {
         smtpHost: cfg.smtpHost || '',
         smtpPort: cfg.smtpPort || 587,
         username: cfg.username || '',
-        password: cfg.password || '',
+        password: cfg.password ? '********' : '',
         encryption: cfg.encryption || 'TLS',
         fromEmail: cfg.fromEmail || '',
         fromName: cfg.fromName || '',
@@ -1266,16 +1232,24 @@ router.put('/email-config', protect, admin, async (req, res) => {
       collectionApprovalRecipients,
       enabled
     } = req.body;
-
-    if (!smtpHost || !smtpPort || !username || !password) {
-      return res.status(400).json({ message: 'SMTP host, port, username and password are required' });
-    }
     if (!['TLS', 'SSL'].includes(String(encryption).toUpperCase())) {
       return res.status(400).json({ message: 'Encryption must be TLS or SSL' });
     }
 
     const existingStore = await Store.findById(storeId).lean();
     if (!existingStore) return res.status(404).json({ message: 'Store not found' });
+    const existingPasswordRaw = String(existingStore?.emailConfig?.password || '');
+    const existingPasswordPlain = decryptEmailSecret(existingPasswordRaw);
+    const submittedPassword = String(password || '').trim();
+    const usingExistingPassword = !submittedPassword || submittedPassword === '********';
+    const resolvedPassword = usingExistingPassword ? existingPasswordPlain : submittedPassword;
+    const passwordForStorage = usingExistingPassword
+      ? existingPasswordRaw
+      : encryptEmailSecret(resolvedPassword);
+
+    if (!smtpHost || !smtpPort || !username || !resolvedPassword || !passwordForStorage) {
+      return res.status(400).json({ message: 'SMTP host, port, username and password are required' });
+    }
     const mergedRecipients = notificationRecipients === undefined
       ? (Array.isArray(existingStore?.emailConfig?.notificationRecipients) ? existingStore.emailConfig.notificationRecipients : [])
       : normalizeRecipientList(notificationRecipients);
@@ -1291,7 +1265,7 @@ router.put('/email-config', protect, admin, async (req, res) => {
         smtpHost: String(smtpHost).trim(),
         smtpPort: Number(smtpPort),
         username: String(username).trim(),
-        password: String(password),
+        password: passwordForStorage,
         encryption: String(encryption).toUpperCase(),
         fromEmail: String(fromEmail || username).trim(),
         fromName: String(fromName || '').trim(),
@@ -1330,12 +1304,16 @@ router.post('/email-config/test', protect, admin, async (req, res) => {
     if (!store) return res.status(404).json({ message: 'Store not found' });
     const cfg = store.emailConfig || {};
     if (!cfg.enabled) return res.status(400).json({ message: 'Email config is disabled for this store' });
+    const decodedPassword = decryptEmailSecret(cfg.password);
+    if (!decodedPassword) {
+      return res.status(400).json({ message: 'Store email password is unavailable. Please re-save email configuration.' });
+    }
 
     const forceConfig = {
       smtpHost: cfg.smtpHost,
       smtpPort: cfg.smtpPort,
       username: cfg.username,
-      password: cfg.password,
+      password: decodedPassword,
       encryption: cfg.encryption,
       fromEmail: cfg.fromEmail || cfg.username,
       fromName: cfg.fromName || store.name || 'Expo Asset',

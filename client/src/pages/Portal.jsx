@@ -23,6 +23,7 @@ const Portal = () => {
   const [restoreFileName, setRestoreFileName] = useState('');
   const [restoreFile, setRestoreFile] = useState(null);
   const [backupValidation, setBackupValidation] = useState(null);
+  const [lastRestoreReport, setLastRestoreReport] = useState(null);
   const [validatingBackup, setValidatingBackup] = useState(false);
   const [bulkFiles, setBulkFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
@@ -373,13 +374,45 @@ const Portal = () => {
     }
   };
 
+  const extractRestoreReport = (responseData) => {
+    const result = responseData?.result;
+    if (result?.restoreReport) return result.restoreReport;
+    if (result && (result.verification || result.restoredCollections || result.backupFormatVersionDetected)) return result;
+    if (responseData?.restoreReport) return responseData.restoreReport;
+    return null;
+  };
+
+  const handleDownloadRestoreReport = () => {
+    if (!lastRestoreReport) return;
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const payload = {
+        generatedAt: new Date().toISOString(),
+        generatedBy: user?.email || user?.name || 'unknown',
+        report: lastRestoreReport
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `restore-report-${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      alert('Failed to download restore report: ' + (error?.message || 'Unknown error'));
+    }
+  };
+
   const handleRestoreBackupArtifact = async (backup) => {
     if (!window.confirm('This will overwrite current system data. Continue?')) return;
     try {
       setRestoringBackupId(backup._id);
-      await api.post(`/system/backups/${backup._id}/restore`);
-      alert('Restore completed successfully. The system will reload.');
-      window.location.reload();
+      const res = await api.post(`/system/backups/${backup._id}/restore`);
+      const report = extractRestoreReport(res.data);
+      setLastRestoreReport(report);
+      alert('Restore completed successfully. Review restore report below.');
     } catch (error) {
       alert('Restore failed: ' + (error.response?.data?.message || error.message));
     } finally {
@@ -392,9 +425,10 @@ const Portal = () => {
     if (!window.confirm('Emergency restore will restore the latest full backup immediately. Continue?')) return;
     try {
       setEmergencyRestoreLoading(true);
-      await api.post('/system/backups/emergency-restore');
-      alert('Emergency restore completed. The system will reload.');
-      window.location.reload();
+      const res = await api.post('/system/backups/emergency-restore');
+      const report = extractRestoreReport(res.data);
+      setLastRestoreReport(report);
+      alert('Emergency restore completed. Review restore report below.');
     } catch (error) {
       alert('Emergency restore failed: ' + (error.response?.data?.message || error.message));
     } finally {
@@ -448,11 +482,12 @@ const Portal = () => {
 
     try {
       setRestoreLoading(true);
-      await api.post('/system/backups/upload-restore', formData, {
+      const res = await api.post('/system/backups/upload-restore', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      alert('Restore completed successfully. The system will reload.');
-      window.location.reload();
+      const report = extractRestoreReport(res.data);
+      setLastRestoreReport(report);
+      alert('Restore completed successfully. Review restore report below.');
     } catch (error) {
       console.error(error);
       alert('Restore failed: ' + (error.response?.data?.message || error.message));
@@ -1263,17 +1298,6 @@ const Portal = () => {
                     >
                       {backupLoading ? 'Preparing backup…' : 'Download Backup File'}
                     </button>
-                    <button
-                      onClick={handleEmergencyRestore}
-                      disabled={emergencyRestoreLoading}
-                      className={`inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-medium shadow-sm ${
-                        emergencyRestoreLoading
-                          ? 'bg-red-300 text-red-800 cursor-not-allowed'
-                          : 'bg-red-600 text-white hover:bg-red-700'
-                      }`}
-                    >
-                      {emergencyRestoreLoading ? 'Emergency Restore…' : 'Emergency Restore (Latest Full)'}
-                    </button>
                     <label className="flex flex-col gap-2 text-xs text-slate-600 border border-slate-200 rounded-lg p-3 bg-white">
                       <span className="font-semibold text-slate-800">Upload Backup File From USB / Computer</span>
                       <input
@@ -1328,6 +1352,38 @@ const Portal = () => {
                         {restoreLoading ? 'Restoring...' : 'Restore This Backup'}
                       </button>
                     </label>
+                    {lastRestoreReport && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-900 space-y-1">
+                        <div className="font-semibold uppercase">Restore Verification Report</div>
+                        <div>
+                          Backup Format: detected v{lastRestoreReport?.backupFormatVersionDetected ?? '-'} {'->'} applied v{lastRestoreReport?.backupFormatVersionApplied ?? '-'}
+                        </div>
+                        <div>
+                          Verification: users={lastRestoreReport?.verification?.usersCount ?? 0}, stores={lastRestoreReport?.verification?.storesCount ?? 0}, assets={lastRestoreReport?.verification?.assetsCount ?? 0}, superAdmin={lastRestoreReport?.verification?.hasSuperAdmin ? 'yes' : 'no'}
+                        </div>
+                        <div>
+                          Restored Collections: {
+                            Object.entries(lastRestoreReport?.restoredCollections || {})
+                              .map(([name, count]) => `${name}:${count}`)
+                              .join(', ') || 'none'
+                          }
+                        </div>
+                        {Array.isArray(lastRestoreReport?.skippedCollections) && lastRestoreReport.skippedCollections.length > 0 && (
+                          <div>
+                            Skipped Collections: {lastRestoreReport.skippedCollections.join(', ')}
+                          </div>
+                        )}
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={handleDownloadRestoreReport}
+                            className="inline-flex items-center justify-center px-3 py-1.5 rounded-md text-[11px] font-medium bg-emerald-700 text-white hover:bg-emerald-800"
+                          >
+                            Download Restore Report (JSON)
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
                       <table className="min-w-full text-[11px]">
                         <thead className="bg-slate-50">
@@ -1371,284 +1427,6 @@ const Portal = () => {
                           ))}
                         </tbody>
                       </table>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
-                      <div className="text-xs font-semibold text-slate-800">Cloud Backup (Disaster Recovery)</div>
-                      {cloudLoading ? (
-                        <div className="text-[11px] text-slate-500">Loading cloud settings...</div>
-                      ) : (
-                        <>
-                          <label className="inline-flex items-center gap-2 text-[11px] text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(cloudConfig.enabled)}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, enabled: e.target.checked }))}
-                            />
-                            Enable cloud backup sync
-                          </label>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            <select
-                              value={cloudConfig.provider || 's3'}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, provider: e.target.value }))}
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            >
-                              <option value="s3">AWS S3</option>
-                              <option value="r2">Cloudflare R2</option>
-                              <option value="supabase">Supabase Storage</option>
-                            </select>
-                            <input
-                              value={cloudConfig.bucket || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, bucket: e.target.value }))}
-                              placeholder="Bucket"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                            <input
-                              value={cloudConfig.region || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, region: e.target.value }))}
-                              placeholder="Region"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                            <input
-                              value={cloudConfig.endpoint || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, endpoint: e.target.value }))}
-                              placeholder="Endpoint (optional for S3, required for R2)"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                            <input
-                              value={cloudConfig.accessKeyId || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, accessKeyId: e.target.value }))}
-                              placeholder="Access Key ID"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                            <input
-                              value={cloudConfig.secretAccessKey || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, secretAccessKey: e.target.value }))}
-                              placeholder="Secret Access Key"
-                              type="password"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                            <input
-                              value={cloudConfig.url || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, url: e.target.value }))}
-                              placeholder="Supabase URL"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                            <input
-                              value={cloudConfig.serviceRoleKey || ''}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, serviceRoleKey: e.target.value }))}
-                              placeholder="Supabase Service Role Key"
-                              type="password"
-                              className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                            />
-                          </div>
-                          <label className="inline-flex items-center gap-2 text-[11px] text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(cloudConfig.forcePathStyle)}
-                              onChange={(e) => setCloudConfig((p) => ({ ...p, forcePathStyle: e.target.checked }))}
-                            />
-                            Force path-style addressing (recommended for R2/compatible)
-                          </label>
-                          <div>
-                            <button
-                              onClick={saveCloudBackupConfig}
-                              disabled={cloudSaving}
-                              className="px-3 py-1.5 rounded-md text-xs font-medium bg-blue-600 text-white disabled:opacity-50"
-                            >
-                              {cloudSaving ? 'Saving...' : 'Save Cloud Backup Settings'}
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
-                      <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-slate-800">Resilience Control Center</span>
-                          <span className="text-[11px] text-slate-500">
-                            Shadow lag: {resilienceStatus?.shadow?.lag ?? '-'} | Verify: {resilienceStatus?.verification?.status || 'unknown'}
-                          </span>
-                        </div>
-                        {resilienceLoading ? (
-                          <div className="text-[11px] text-slate-500">Loading resilience status...</div>
-                        ) : (
-                          <>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                              <input
-                                type="datetime-local"
-                                value={restoreTargetTimestamp}
-                                onChange={(e) => setRestoreTargetTimestamp(e.target.value)}
-                                className="px-2 py-1.5 text-[11px] rounded border border-slate-300 bg-white"
-                              />
-                              <button
-                                onClick={handlePreviewRestoreToTime}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-slate-700 text-white hover:bg-slate-800"
-                              >
-                                Preview Restore-To-Time
-                              </button>
-                              <button
-                                onClick={handleApplyRestoreToTime}
-                                disabled={restoreToTimeLoading}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-amber-600 text-white disabled:opacity-50"
-                              >
-                                {restoreToTimeLoading ? 'Applying...' : 'Apply Restore-To-Time'}
-                              </button>
-                            </div>
-                            {restoreToTimePreview && (
-                              <div className="text-[11px] text-slate-700 bg-slate-50 border border-slate-200 rounded-md p-2">
-                                <div>Snapshot: {restoreToTimePreview?.snapshot?.fileName || '-'}</div>
-                                <div>Snapshot At: {restoreToTimePreview?.snapshot?.createdAt ? new Date(restoreToTimePreview.snapshot.createdAt).toLocaleString() : '-'}</div>
-                                <div>Replay Entries: {restoreToTimePreview?.replayEntries ?? 0}</div>
-                              </div>
-                            )}
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                onClick={() => handleShadowSync(false)}
-                                disabled={shadowSyncLoading}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-600 text-white disabled:opacity-50"
-                              >
-                                {shadowSyncLoading ? 'Syncing...' : 'Sync Shadow'}
-                              </button>
-                              <button
-                                onClick={() => handleShadowSync(true)}
-                                disabled={shadowSyncLoading}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-700 text-white disabled:opacity-50"
-                              >
-                                Full Shadow Resync
-                              </button>
-                              <button
-                                onClick={handleVerifyLatestBackup}
-                                disabled={verifyResilienceLoading}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-emerald-600 text-white disabled:opacity-50"
-                              >
-                                {verifyResilienceLoading ? 'Verifying...' : 'Verify Latest Backup'}
-                              </button>
-                              <button
-                                onClick={handlePromoteShadow}
-                                disabled={promoteShadowLoading}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-rose-600 text-white disabled:opacity-50"
-                              >
-                                {promoteShadowLoading ? 'Promoting...' : 'Promote Shadow'}
-                              </button>
-                              <button
-                                onClick={handleFailbackLatest}
-                                disabled={failbackLoading}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-slate-800 text-white disabled:opacity-50"
-                              >
-                                {failbackLoading ? 'Failback...' : 'Failback Latest Backup'}
-                              </button>
-                              <button
-                                onClick={fetchResilienceStatus}
-                                className="px-3 py-1.5 rounded-md text-xs font-medium bg-slate-200 text-slate-700"
-                              >
-                                Refresh Status
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-slate-800">Bulk Backup Upload (Super Admin)</span>
-                        <UploadCloud size={14} className="text-slate-500" />
-                      </div>
-                      <input
-                        type="file"
-                        multiple
-                        accept="application/json,.json,text/plain"
-                        onChange={(e) => {
-                          handleBulkFilePick(e.target.files);
-                          e.target.value = '';
-                        }}
-                        className="block w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
-                      />
-                      {bulkFiles.length > 0 && (
-                        <div className="space-y-2">
-                          {bulkFiles.map((file) => (
-                            <div key={file.name} className="text-[11px] text-slate-600">
-                              <div className="flex justify-between">
-                                <span>{file.name}</span>
-                                <span>{uploadProgress[file.name] || 0}%</span>
-                              </div>
-                              <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-indigo-500 transition-all"
-                                  style={{ width: `${uploadProgress[file.name] || 0}%` }}
-                                />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="flex gap-2 flex-wrap">
-                        <button
-                          onClick={handleBulkScanUpload}
-                          disabled={bulkUploading || bulkFiles.length === 0}
-                          className="px-3 py-1.5 rounded-md text-xs font-medium bg-indigo-600 text-white disabled:opacity-50"
-                        >
-                          {bulkUploading ? 'Scanning...' : 'Scan for Duplicates'}
-                        </button>
-                        <select
-                          value={defaultConflictAction}
-                          onChange={(e) => setDefaultConflictAction(e.target.value)}
-                          className="px-2 py-1.5 text-xs rounded-md border border-slate-300 bg-white"
-                        >
-                          <option value="skip">Skip All</option>
-                          <option value="replace">Replace All</option>
-                          <option value="merge">Merge All</option>
-                          <option value="force_add">Force Add All</option>
-                        </select>
-                        <button
-                          onClick={handleApplyBulkRestore}
-                          disabled={bulkApplying || bulkScanIds.length === 0}
-                          className="px-3 py-1.5 rounded-md text-xs font-medium bg-emerald-600 text-white disabled:opacity-50"
-                        >
-                          {bulkApplying ? 'Applying...' : 'Apply Restore'}
-                        </button>
-                      </div>
-                      {bulkSummary && (
-                        <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-2">
-                          <div className="flex items-center gap-1 font-semibold mb-1"><CheckCircle2 size={12} /> Restore Summary</div>
-                          Processed: {bulkSummary.totalProcessed}, Added: {bulkSummary.added}, Updated: {bulkSummary.updated}, Skipped: {bulkSummary.skipped}, Conflicts Resolved: {bulkSummary.conflictsResolved}
-                        </div>
-                      )}
-                      {bulkConflicts.length > 0 && (
-                        <div className="max-h-56 overflow-auto border border-slate-200 rounded-md bg-white">
-                          <table className="min-w-full text-[11px]">
-                            <thead className="bg-slate-50 sticky top-0">
-                              <tr className="text-left text-slate-600">
-                                <th className="px-2 py-1">Asset</th>
-                                <th className="px-2 py-1">Serial</th>
-                                <th className="px-2 py-1">Existing</th>
-                                <th className="px-2 py-1">Backup</th>
-                                <th className="px-2 py-1">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {bulkConflicts.map((row) => (
-                                <tr key={row.rowId} className="border-t border-slate-100">
-                                  <td className="px-2 py-1 text-slate-800">{row.assetName || '-'}</td>
-                                  <td className="px-2 py-1 text-slate-600">{row.serialNumber || '-'}</td>
-                                  <td className="px-2 py-1 text-slate-600">{row.existingRecord?.uniqueId || row.existingRecord?._id}</td>
-                                  <td className="px-2 py-1 text-slate-600">{row.backupRecord?.uniqueId || '-'}</td>
-                                  <td className="px-2 py-1">
-                                    <select
-                                      value={conflictActions[row.rowId]?.action || defaultConflictAction}
-                                      onChange={(e) => setConflictAction(row.rowId, e.target.value)}
-                                      className="px-2 py-1 rounded border border-slate-300 bg-white"
-                                    >
-                                      <option value="skip">Skip</option>
-                                      <option value="replace">Replace</option>
-                                      <option value="merge">Edit / Merge</option>
-                                      <option value="force_add">Force Add</option>
-                                    </select>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>

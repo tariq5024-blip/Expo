@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const Store = require('../models/Store');
 const EmailLog = require('../models/EmailLog');
 const User = require('../models/User');
+const { decryptEmailSecret } = require('./emailSecretCrypto');
 
 const resolveStoreId = (storeRef) => {
   if (!storeRef) return null;
@@ -16,12 +17,13 @@ const getStoreEmailConfig = async (storeId) => {
   const store = await Store.findById(id).lean();
   if (!store?.emailConfig?.enabled) return null;
   const cfg = store.emailConfig;
-  if (!cfg.smtpHost || !cfg.smtpPort || !cfg.username || !cfg.password) return null;
+  const decodedPassword = decryptEmailSecret(cfg.password);
+  if (!cfg.smtpHost || !cfg.smtpPort || !cfg.username || !decodedPassword) return null;
   return {
     smtpHost: cfg.smtpHost,
     smtpPort: Number(cfg.smtpPort),
     username: cfg.username,
-    password: cfg.password,
+    password: decodedPassword,
     encryption: cfg.encryption || 'TLS',
     fromEmail: cfg.fromEmail || cfg.username,
     fromName: cfg.fromName || store.name || 'Expo Asset',

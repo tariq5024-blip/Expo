@@ -15,6 +15,7 @@ const csrf = require('csurf');
 const cron = require('node-cron');
 const auditLogger = require('./utils/logger');
 const { createBackupArtifact } = require('./utils/backupRecovery');
+const { migrateStoreEmailPasswords } = require('./utils/migrateEmailSecrets');
 const {
   startCommandJournaling,
   syncShadowDatabase,
@@ -102,7 +103,11 @@ const shouldUseSecureCookie = (req) => {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
   return Boolean(req.secure || forwardedProto === 'https');
 };
-app.use(cookieParser(process.env.COOKIE_SECRET || 'dev-cookie-secret'));
+const cookieSecret = String(process.env.COOKIE_SECRET || '');
+if (isProd && !cookieSecret) {
+  throw new Error('COOKIE_SECRET is required in production.');
+}
+app.use(cookieParser(cookieSecret || 'dev-cookie-secret'));
 
 app.use(compression({
   level: 6,
@@ -114,9 +119,15 @@ app.use(compression({
     return compression.filter(req, res);
   }
 }));
-// CORS: allow configured origin, otherwise allow any for dev (with credentials)
-const allowedOrigin = process.env.CORS_ORIGIN;
-app.use(cors(allowedOrigin ? { origin: allowedOrigin, credentials: true } : { origin: true, credentials: true }));
+// CORS: require explicit allowlist in production when credentials are enabled.
+const allowedOrigin = String(process.env.CORS_ORIGIN || '').trim();
+if (isProd && !allowedOrigin) {
+  throw new Error('CORS_ORIGIN is required in production.');
+}
+const allowedOrigins = allowedOrigin
+  ? allowedOrigin.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -177,7 +188,7 @@ if (enableCsrf) {
       key: 'csrfSecret',
       httpOnly: true,
       sameSite: 'lax',
-      secure: false,
+      secure: isProd,
       path: '/',
     }
   });
@@ -392,9 +403,19 @@ const connectDB = async () => {
   }
   console.log('MongoDB Connected to:', mongoUri);
   startCommandJournaling();
+  try {
+    const migration = await migrateStoreEmailPasswords();
+    if (!migration.skipped) {
+      console.log(`Email secret migration complete. migrated=${migration.migrated}, unreadable=${migration.unreadable || 0}`);
+    } else {
+      console.log(`Email secret migration skipped: ${migration.reason}`);
+    }
+  } catch (migrationError) {
+    console.error('Email secret migration failed:', migrationError.message || migrationError);
+  }
 
-  // Always enforce required operational accounts on startup so updates/deploys
-  // cannot break default credentials.
+  // Ensure required operational accounts exist on startup without resetting
+  // credentials for existing users.
   await seedStoresAndUsers();
   dropSerialUniqueIndex();
   dropStoreNameGlobalUniqueIndex();

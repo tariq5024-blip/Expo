@@ -30,7 +30,7 @@ const storeSchema = new mongoose.Schema({
   },
   appTheme: {
     type: String,
-    enum: ['default', 'ocean', 'emerald', 'sunset', 'midnight', 'mono'],
+    enum: ['default', 'ocean', 'emerald', 'sunset', 'midnight', 'mono', 'glossy', 'astraLight', 'astraExecutive'],
     default: 'default'
   },
   emailConfig: {

@@ -33,6 +33,49 @@ const ALLOWED_ENV_EXPORT = [
   'MAX_BACKUP_UPLOAD_MB',
   'CORS_ORIGIN'
 ];
+const CURRENT_BACKUP_FORMAT_VERSION = 2;
+
+const COLLECTION_NAME_ALIASES = new Map([
+  ['users', 'users'],
+  ['user', 'users'],
+  ['stores', 'stores'],
+  ['store', 'stores'],
+  ['assets', 'assets'],
+  ['asset', 'assets'],
+  ['requests', 'requests'],
+  ['request', 'requests'],
+  ['activitylogs', 'activitylogs'],
+  ['activitylog', 'activitylogs'],
+  ['activityLogs', 'activitylogs'],
+  ['purchaseorders', 'purchaseorders'],
+  ['purchaseorder', 'purchaseorders'],
+  ['purchaseOrders', 'purchaseorders'],
+  ['vendors', 'vendors'],
+  ['vendor', 'vendors'],
+  ['passes', 'passes'],
+  ['pass', 'passes'],
+  ['permits', 'permits'],
+  ['permit', 'permits'],
+  ['assetcategories', 'assetcategories'],
+  ['assetcategory', 'assetcategories'],
+  ['assetCategories', 'assetcategories'],
+  ['products', 'products'],
+  ['product', 'products'],
+  ['tools', 'tools'],
+  ['tool', 'tools'],
+  ['consumables', 'consumables'],
+  ['consumable', 'consumables'],
+  ['settings', 'settings'],
+  ['setting', 'settings'],
+  ['emaillogs', 'emaillogs'],
+  ['emailLog', 'emaillogs'],
+  ['collectionapprovals', 'collectionapprovals'],
+  ['collectionApproval', 'collectionapprovals'],
+  ['unregisteredassets', 'unregisteredassets'],
+  ['unregisteredAsset', 'unregisteredassets']
+]);
+
+const ALLOWED_RESTORE_COLLECTIONS = new Set(Array.from(COLLECTION_NAME_ALIASES.values()));
 
 const OBJECT_ID_FIELD_NAMES = new Set([
   '_id',
@@ -83,6 +126,21 @@ const shouldCoerceToObjectId = (key = '', parentKey = '') => {
   return false;
 };
 
+const normalizeCollectionName = (collectionName = '') => {
+  const raw = String(collectionName || '').trim();
+  if (!raw) return '';
+  if (COLLECTION_NAME_ALIASES.has(raw)) return COLLECTION_NAME_ALIASES.get(raw);
+  const lower = raw.toLowerCase();
+  if (COLLECTION_NAME_ALIASES.has(lower)) return COLLECTION_NAME_ALIASES.get(lower);
+  return lower;
+};
+
+const parseBackupFormatVersion = (meta = {}) => {
+  const direct = Number(meta?.backup_format_version ?? meta?.backupFormatVersion ?? 1);
+  if (Number.isFinite(direct) && direct > 0) return Math.floor(direct);
+  return 1;
+};
+
 const coerceDocObjectIds = (value, key = '', parentKey = '') => {
   if (Array.isArray(value)) {
     return value.map((item) => coerceDocObjectIds(item, '', key || parentKey));
@@ -119,6 +177,127 @@ const coerceDocObjectIds = (value, key = '', parentKey = '') => {
     return new mongoose.Types.ObjectId(value);
   }
   return value;
+};
+
+const normalizeAssetDoc = (doc = {}) => {
+  const out = { ...doc };
+  if (!out.status || typeof out.status !== 'string') out.status = 'In Store';
+  if (!out.condition || typeof out.condition !== 'string') out.condition = 'New';
+  if (!Number.isFinite(Number(out.quantity))) out.quantity = 1;
+  const normalizedStatus = String(out.status).trim().toLowerCase();
+  if (normalizedStatus === 'spare') out.status = 'In Store';
+  if (normalizedStatus === 'under repair') out.status = 'In Store';
+  return out;
+};
+
+const normalizeStoreDoc = (doc = {}) => {
+  const out = { ...doc };
+  if (!out.appTheme) out.appTheme = 'default';
+  if (!out.emailConfig || typeof out.emailConfig !== 'object') out.emailConfig = {};
+  if (typeof out.emailConfig.enabled !== 'boolean') out.emailConfig.enabled = false;
+  return out;
+};
+
+const normalizeUserDoc = (doc = {}) => {
+  const out = { ...doc };
+  if (!out.notificationPreferences || typeof out.notificationPreferences !== 'object') {
+    out.notificationPreferences = {};
+  }
+  if (out.notificationPreferences.enabled === undefined) {
+    out.notificationPreferences.enabled = true;
+  }
+  return out;
+};
+
+const normalizeDocForCollection = (collectionName, doc) => {
+  if (!doc || typeof doc !== 'object') return null;
+  const key = normalizeCollectionName(collectionName);
+  if (key === 'assets') return normalizeAssetDoc(doc);
+  if (key === 'stores') return normalizeStoreDoc(doc);
+  if (key === 'users') return normalizeUserDoc(doc);
+  return doc;
+};
+
+const migrateGroupedCollectionsToCurrent = (grouped, fromVersion = 1) => {
+  const migrated = new Map(grouped);
+  let version = Number(fromVersion || 1);
+  while (version < CURRENT_BACKUP_FORMAT_VERSION) {
+    if (version === 1) {
+      if (migrated.has('assets')) {
+        const nextAssets = (migrated.get('assets') || []).map((doc) => normalizeAssetDoc(doc));
+        migrated.set('assets', nextAssets);
+      }
+    }
+    version += 1;
+  }
+  return { grouped: migrated, appliedVersion: version };
+};
+
+const sanitizeGroupedCollections = (grouped) => {
+  const cleaned = new Map();
+  const skippedCollections = [];
+  for (const [rawName, docs] of grouped.entries()) {
+    const normalizedName = normalizeCollectionName(rawName);
+    if (!normalizedName || !ALLOWED_RESTORE_COLLECTIONS.has(normalizedName)) {
+      skippedCollections.push(String(rawName || ''));
+      continue;
+    }
+    const normalizedDocs = Array.isArray(docs)
+      ? docs
+        .filter((doc) => doc && typeof doc === 'object')
+        .map((doc) => normalizeDocForCollection(normalizedName, doc))
+        .filter(Boolean)
+      : [];
+    cleaned.set(normalizedName, normalizedDocs);
+  }
+  return { grouped: cleaned, skippedCollections };
+};
+
+const runPostRestoreBackfill = async () => {
+  await mongoose.connection.db.collection('assets').updateMany(
+    { status: { $exists: false } },
+    { $set: { status: 'In Store' } }
+  );
+  await mongoose.connection.db.collection('assets').updateMany(
+    { condition: { $exists: false } },
+    { $set: { condition: 'New' } }
+  );
+  await mongoose.connection.db.collection('assets').updateMany(
+    {
+      $or: [
+        { quantity: { $exists: false } },
+        { quantity: null }
+      ]
+    },
+    { $set: { quantity: 1 } }
+  );
+  await mongoose.connection.db.collection('stores').updateMany(
+    { appTheme: { $exists: false } },
+    { $set: { appTheme: 'default' } }
+  );
+  await mongoose.connection.db.collection('users').updateMany(
+    { 'notificationPreferences.enabled': { $exists: false } },
+    { $set: { 'notificationPreferences.enabled': true } }
+  );
+};
+
+const verifyRestoredState = async () => {
+  const db = mongoose.connection.db;
+  const [usersCount, storesCount, assetsCount] = await Promise.all([
+    db.collection('users').countDocuments({}),
+    db.collection('stores').countDocuments({}),
+    db.collection('assets').countDocuments({})
+  ]);
+  const hasSuperAdmin = Boolean(await db.collection('users').findOne({
+    email: 'superadmin@expo.com',
+    role: 'Super Admin'
+  }));
+  return {
+    usersCount,
+    storesCount,
+    assetsCount,
+    hasSuperAdmin
+  };
 };
 
 const ensureDir = async (dirPath) => {
@@ -331,6 +510,7 @@ const createBackupArtifact = async ({
     const meta = {
       backup_date: now.toISOString(),
       app_version: appVersion,
+      backup_format_version: CURRENT_BACKUP_FORMAT_VERSION,
       database_version: 'mongodb',
       backup_type: backupType,
       trigger,
@@ -404,7 +584,7 @@ const parseNdjsonDatabase = async (filePath) => {
   const grouped = new Map();
   for (const line of lines) {
     const entry = mongoose.mongo.BSON.EJSON.parse(line, { relaxed: false });
-    const col = String(entry.collection || '').trim();
+    const col = normalizeCollectionName(entry.collection);
     if (!col) continue;
     if (!grouped.has(col)) grouped.set(col, []);
     grouped.get(col).push(coerceDocObjectIds(entry.doc));
@@ -412,15 +592,13 @@ const parseNdjsonDatabase = async (filePath) => {
   return grouped;
 };
 
-const parseJsonDatabase = async (filePath) => {
-  const raw = await fsp.readFile(filePath, 'utf8');
-  const parsed = mongoose.mongo.BSON.EJSON.parse(String(raw || '').replace(/^\uFEFF/, '') || '{}', { relaxed: false });
+const parseJsonPayloadToGrouped = (parsed) => {
   const grouped = new Map();
 
   // Newer compatibility format: [{ collection, doc }, ...]
   if (Array.isArray(parsed)) {
     for (const entry of parsed) {
-      const col = String(entry?.collection || '').trim();
+      const col = normalizeCollectionName(entry?.collection);
       if (!col || !entry?.doc || typeof entry.doc !== 'object') continue;
       if (!grouped.has(col)) grouped.set(col, []);
       grouped.get(col).push(coerceDocObjectIds(entry.doc));
@@ -438,11 +616,22 @@ const parseJsonDatabase = async (filePath) => {
   if (collections && typeof collections === 'object') {
     for (const [collectionName, docs] of Object.entries(collections)) {
       if (!Array.isArray(docs)) continue;
-      grouped.set(collectionName, docs.filter((doc) => doc && typeof doc === 'object').map((doc) => coerceDocObjectIds(doc)));
+      const normalizedName = normalizeCollectionName(collectionName);
+      if (!normalizedName) continue;
+      grouped.set(
+        normalizedName,
+        docs.filter((doc) => doc && typeof doc === 'object').map((doc) => coerceDocObjectIds(doc))
+      );
     }
   }
 
   return grouped;
+};
+
+const parseJsonDatabase = async (filePath) => {
+  const raw = await fsp.readFile(filePath, 'utf8');
+  const parsed = mongoose.mongo.BSON.EJSON.parse(String(raw || '').replace(/^\uFEFF/, '') || '{}', { relaxed: false });
+  return parseJsonPayloadToGrouped(parsed);
 };
 
 const restoreFromExtractedBackup = async (extractedDir) => {
@@ -456,14 +645,33 @@ const restoreFromExtractedBackup = async (extractedDir) => {
   const databaseJsonFile = path.join(backupDir, 'database.json');
   const filesSource = path.join(backupDir, 'files');
   const settingsFile = path.join(backupDir, 'settings.json');
+  const metaFile = path.join(backupDir, 'meta.json');
 
   if (!fs.existsSync(databaseNdjsonFile) && !fs.existsSync(databaseJsonFile)) {
     throw new Error('Backup file is invalid: database export is missing (database.ndjson or database.json)');
   }
 
-  const grouped = fs.existsSync(databaseNdjsonFile)
+  const groupedRaw = fs.existsSync(databaseNdjsonFile)
     ? await parseNdjsonDatabase(databaseNdjsonFile)
     : await parseJsonDatabase(databaseJsonFile);
+  let meta = {};
+  if (fs.existsSync(metaFile)) {
+    try {
+      meta = JSON.parse(String(await fsp.readFile(metaFile, 'utf8') || '{}').replace(/^\uFEFF/, ''));
+    } catch {
+      meta = {};
+    }
+  }
+  const detectedVersion = parseBackupFormatVersion(meta);
+  const migrated = migrateGroupedCollectionsToCurrent(groupedRaw, detectedVersion);
+  const sanitized = sanitizeGroupedCollections(migrated.grouped);
+  const grouped = sanitized.grouped;
+  const restoreReport = {
+    backupFormatVersionDetected: detectedVersion,
+    backupFormatVersionApplied: migrated.appliedVersion,
+    skippedCollections: sanitized.skippedCollections,
+    restoredCollections: {}
+  };
   const applyRestoreWithoutTransaction = async () => {
     for (const [collectionName] of grouped.entries()) {
       await mongoose.connection.db.collection(collectionName).deleteMany({});
@@ -471,6 +679,7 @@ const restoreFromExtractedBackup = async (extractedDir) => {
     for (const [collectionName, docs] of grouped.entries()) {
       if (!docs.length) continue;
       await mongoose.connection.db.collection(collectionName).insertMany(docs, { ordered: false });
+      restoreReport.restoredCollections[collectionName] = docs.length;
     }
   };
 
@@ -489,6 +698,7 @@ const restoreFromExtractedBackup = async (extractedDir) => {
       for (const [collectionName, docs] of grouped.entries()) {
         if (!docs.length) continue;
         await mongoose.connection.db.collection(collectionName).insertMany(docs, { session, ordered: false });
+        restoreReport.restoredCollections[collectionName] = docs.length;
       }
     });
   } catch (error) {
@@ -518,6 +728,9 @@ const restoreFromExtractedBackup = async (extractedDir) => {
       }
     }
   }
+  await runPostRestoreBackfill();
+  restoreReport.verification = await verifyRestoredState();
+  return restoreReport;
 };
 
 const extractBackupZip = async (zipPath) => {
@@ -541,8 +754,9 @@ const restoreBackupArtifact = async ({ backupArtifact, user, createSafetyBackup 
     }
 
     extractDir = await extractBackupZip(backupArtifact.filePath);
+    let restoreReport = null;
     await withJournalCaptureSuspended(async () => {
-      await restoreFromExtractedBackup(extractDir);
+      restoreReport = await restoreFromExtractedBackup(extractDir);
     });
     await createBackupLog({
       action: 'backup_restored',
@@ -561,7 +775,7 @@ const restoreBackupArtifact = async ({ backupArtifact, user, createSafetyBackup 
         backupName: backupArtifact?.fileName || backupArtifact?.name || ''
       }
     }).catch(() => {});
-    return { ok: true, safetyBackupId: safetyBackup?._id || null };
+    return { ok: true, safetyBackupId: safetyBackup?._id || null, restoreReport };
   } catch (error) {
     await createBackupLog({
       action: 'restore_failed',
@@ -593,10 +807,76 @@ const restoreFromUploadedZip = async ({ zipPath, user }) => {
   return restoreBackupArtifact({ backupArtifact: pseudoArtifact, user, createSafetyBackup: true });
 };
 
+const restoreFromJsonPayload = async ({ payload, user = null }) => {
+  const groupedRaw = parseJsonPayloadToGrouped(payload);
+  const detectedVersion = parseBackupFormatVersion(payload?.meta || {});
+  const migrated = migrateGroupedCollectionsToCurrent(groupedRaw, detectedVersion);
+  const sanitized = sanitizeGroupedCollections(migrated.grouped);
+  const grouped = sanitized.grouped;
+  const restoreReport = {
+    backupFormatVersionDetected: detectedVersion,
+    backupFormatVersionApplied: migrated.appliedVersion,
+    skippedCollections: sanitized.skippedCollections,
+    restoredCollections: {}
+  };
+  const session = await mongoose.startSession();
+  const applyWithoutTransaction = async () => {
+    for (const [collectionName] of grouped.entries()) {
+      await mongoose.connection.db.collection(collectionName).deleteMany({});
+    }
+    for (const [collectionName, docs] of grouped.entries()) {
+      if (!docs.length) continue;
+      await mongoose.connection.db.collection(collectionName).insertMany(docs, { ordered: false });
+      restoreReport.restoredCollections[collectionName] = docs.length;
+    }
+  };
+  const isTransactionNotSupported = (error) => {
+    const msg = String(error?.message || '').toLowerCase();
+    return msg.includes('transaction numbers are only allowed on a replica set member or mongos')
+      || msg.includes('replica set');
+  };
+  try {
+    await withJournalCaptureSuspended(async () => {
+      try {
+        await session.withTransaction(async () => {
+          for (const [collectionName] of grouped.entries()) {
+            await mongoose.connection.db.collection(collectionName).deleteMany({}, { session });
+          }
+          for (const [collectionName, docs] of grouped.entries()) {
+            if (!docs.length) continue;
+            await mongoose.connection.db.collection(collectionName).insertMany(docs, { session, ordered: false });
+            restoreReport.restoredCollections[collectionName] = docs.length;
+          }
+        });
+      } catch (error) {
+        if (!isTransactionNotSupported(error)) throw error;
+        await applyWithoutTransaction();
+      }
+      await runPostRestoreBackfill();
+    });
+
+    restoreReport.verification = await verifyRestoredState();
+    await appendJournalEntry({
+      opType: 'restore',
+      collectionName: 'system',
+      actor: user,
+      metadata: {
+        mode: 'json-payload-restore',
+        detectedVersion
+      }
+    }).catch(() => {});
+    return restoreReport;
+  } finally {
+    await session.endSession();
+  }
+};
+
 module.exports = {
   BACKUP_ROOT,
+  CURRENT_BACKUP_FORMAT_VERSION,
   createBackupArtifact,
   restoreBackupArtifact,
   restoreFromUploadedZip,
+  restoreFromJsonPayload,
   createBackupLog
 };

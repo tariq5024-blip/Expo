@@ -31,6 +31,14 @@ function capitalizeWords(s) {
   if (!s) return s;
   return String(s).toUpperCase();
 }
+
+const getScopedStoreId = (req) => String(req.activeStore || req.user?.assignedStore || '').trim();
+const hasAssetStoreAccess = (req, storeId) => {
+  if (req.user?.role === 'Super Admin') return true;
+  const scopedStoreId = getScopedStoreId(req);
+  if (!scopedStoreId) return false;
+  return String(storeId || '') === scopedStoreId;
+};
 // Helper to generate Unique ID
 async function generateUniqueId(assetType) {
   let prefix = 'AST';
@@ -2172,6 +2180,9 @@ router.post('/assign', protect, admin, async (req, res) => {
     if (assets.length !== normalizedIds.length) {
       return res.status(404).json({ message: 'One or more assets were not found' });
     }
+    if (!assets.every((asset) => hasAssetStoreAccess(req, asset.store))) {
+      return res.status(403).json({ message: 'One or more assets are outside your store scope' });
+    }
 
     const disposedAssets = assets.filter((a) => a.disposed === true);
     if (disposedAssets.length > 0) {
@@ -2369,6 +2380,9 @@ router.post('/dispose', protect, admin, async (req, res) => {
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
     }
+    if (!hasAssetStoreAccess(req, asset.store)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
     if (asset.disposed === true) {
       return res.status(400).json({ message: 'Asset is already disposed' });
     }
@@ -2417,12 +2431,16 @@ router.post('/unassign', protect, admin, async (req, res) => {
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
     }
+    if (!hasAssetStoreAccess(req, asset.store)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
 
     if (!asset.assigned_to && (!asset.assigned_to_external || !asset.assigned_to_external.name)) {
       return res.status(400).json({ message: 'Asset is not currently assigned' });
     }
 
     let previousUser = 'Unknown';
+    const previousAssigneeEmail = asset.assigned_to?.email || '';
     if (asset.assigned_to) {
       previousUser = asset.assigned_to.name;
       asset.assigned_to = null;
@@ -2455,10 +2473,10 @@ router.post('/unassign', protect, admin, async (req, res) => {
       details: `Unassigned asset ${asset.name} (SN: ${asset.serial_number}) from ${previousUser}`,
       store: asset.store
     });
-    if (asset.assigned_to?.email) {
+    if (previousAssigneeEmail) {
       await notifyAssetEvent({
         asset,
-        recipientEmail: asset.assigned_to.email,
+        recipientEmail: previousAssigneeEmail,
         subject: 'Asset Unassigned',
         lines: [
           'An asset assigned to you has been returned to store.',
@@ -2582,6 +2600,9 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
     const asset = await Asset.findById(assetId);
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
+    }
+    if (!hasAssetStoreAccess(req, asset.store)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
     }
 
     if (asset.assigned_to) {
@@ -2740,6 +2761,9 @@ router.post('/faulty', protect, restrictViewer, async (req, res) => {
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
     }
+    if (!hasAssetStoreAccess(req, asset.store)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
 
     if (asset.status !== 'Missing') {
       asset.status = 'In Store';
@@ -2836,6 +2860,9 @@ router.post('/return', protect, restrictViewer, async (req, res) => {
     const asset = await Asset.findById(assetId);
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
+    }
+    if (!hasAssetStoreAccess(req, asset.store)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
     }
     // Convert condition
     const condRaw = String(condition || '').trim().toLowerCase();
@@ -3084,6 +3111,9 @@ router.put('/:id', protect, admin, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id);
     if (asset) {
+      if (!hasAssetStoreAccess(req, asset.store)) {
+        return res.status(403).json({ message: 'Asset is outside your store scope' });
+      }
       const oldSerial = asset.serial_number;
       let prodName = product_name ? String(product_name) : '';
       asset.name = name ? capitalizeWords(name) : asset.name;
@@ -3167,6 +3197,9 @@ router.delete('/:id', protect, admin, async (req, res) => {
     try {
         const asset = await Asset.findById(req.params.id);
         if (asset) {
+            if (!hasAssetStoreAccess(req, asset.store)) {
+              return res.status(403).json({ message: 'Asset is outside your store scope' });
+            }
             const serial = asset.serial_number;
             await asset.deleteOne();
 

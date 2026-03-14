@@ -40,3 +40,6 @@ server/uploads/
 # Backups and archives
 backups/
 *.zip
+
+# Generated backup artifacts
+server/storage/immutable-backups/

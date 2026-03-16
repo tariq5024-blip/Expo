@@ -4,7 +4,7 @@
   "private": true,
   "description": "Root script to manage build and deployment for Expo Stores",
   "scripts": {
-    "build": "cd server && npm install && cd ../client && npm install && npm run build",
+    "build": "npm ci --prefix server && npm ci --prefix client && npm run build --prefix client",
     "start": "cd server && node server.js",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "dev:3000": "PORT=3000 NODE_ENV=production node server/server.js",

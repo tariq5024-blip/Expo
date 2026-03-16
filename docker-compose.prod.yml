@@ -82,7 +82,7 @@ services:
       - /var/run:rw,nosuid,nodev,size=16m
       - /run:rw,nosuid,nodev,size=16m
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/healthz || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 8

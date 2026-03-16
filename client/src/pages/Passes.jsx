@@ -367,6 +367,7 @@ const Passes = () => {
   const [gatePassLogoUrl, setGatePassLogoUrl] = useState('/gatepass-logo.svg');
 
   const printRef = useRef();
+  const printTimerRef = useRef(null);
   const handlePrint = useReactToPrint({
     content: () => printRef.current,
     documentTitle: 'Gate Pass',
@@ -625,11 +626,18 @@ const Passes = () => {
 
   const openPrint = (pass) => {
     setSelectedPass(pass);
-    setTimeout(() => {
+    if (printTimerRef.current) clearTimeout(printTimerRef.current);
+    printTimerRef.current = setTimeout(() => {
       handlePrint();
     }, 500);
   };
   
+  useEffect(() => {
+    return () => {
+      if (printTimerRef.current) clearTimeout(printTimerRef.current);
+    };
+  }, []);
+
   const openView = (pass) => {
     setSelectedPass(pass);
     setViewPass(pass);
@@ -664,7 +672,7 @@ const Passes = () => {
       </div>
 
       {/* List */}
-      <div className="bg-white rounded shadow overflow-hidden">
+      <div className="bg-white rounded shadow overflow-x-auto">
         <table className="min-w-full">
           <thead className="bg-gray-50 border-b">
             <tr>

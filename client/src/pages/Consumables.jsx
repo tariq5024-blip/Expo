@@ -20,16 +20,17 @@ const Consumables = () => {
   const canWrite = user?.role === 'Admin' || user?.role === 'Super Admin';
   const [rows, setRows] = useState([]);
   const [searchName, setSearchName] = useState('');
+  const [debouncedSearchName, setDebouncedSearchName] = useState('');
   const [form, setForm] = useState(formDefaults);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(null);
   const [historyModal, setHistoryModal] = useState({ open: false, name: '', rows: [] });
 
-  const load = async () => {
+  const load = async (nameFilter = debouncedSearchName) => {
     try {
       setLoading(true);
-      const res = await api.get('/consumables', { params: { name: searchName || undefined } });
+      const res = await api.get('/consumables', { params: { name: nameFilter || undefined } });
       setRows(res.data || []);
     } catch (error) {
       console.error('Failed to load consumables:', error);
@@ -39,9 +40,14 @@ const Consumables = () => {
   };
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const t = setTimeout(() => setDebouncedSearchName(searchName), 300);
+    return () => clearTimeout(t);
   }, [searchName]);
+
+  useEffect(() => {
+    load(debouncedSearchName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearchName]);
 
   const onChange = (e) => {
     const { name, value } = e.target;

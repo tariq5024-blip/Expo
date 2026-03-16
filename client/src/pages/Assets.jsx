@@ -45,6 +45,7 @@ const COLUMN_OPTIONS = [
   ['price', 'Price'],
   ['action', 'Action']
 ];
+const ALLOWED_STATUS_FILTERS = new Set(['In Store', 'In Use', 'Missing']);
 
 const Assets = () => {
   const location = useLocation();
@@ -450,15 +451,14 @@ const Assets = () => {
     }
   };
 
-  const allowedStatusFilters = new Set(['In Store', 'In Use', 'Missing']);
-  const normalizeUrlStatusFilter = (rawStatus) => {
+  const normalizeUrlStatusFilter = useCallback((rawStatus) => {
     const value = String(rawStatus || '').trim();
     if (!value) return { status: '', condition: '' };
-    if (allowedStatusFilters.has(value)) return { status: value, condition: '' };
+    if (ALLOWED_STATUS_FILTERS.has(value)) return { status: value, condition: '' };
     // Backward compatibility: older links use status=Faulty while UI filter is condition-based.
     if (value.toLowerCase() === 'faulty') return { status: '', condition: 'Faulty' };
     return { status: '', condition: '' };
-  };
+  }, []);
 
   // Sync category & status params from URL
   useEffect(() => {
@@ -469,7 +469,7 @@ const Assets = () => {
     setFilterLocation(locationParam || '');
     setFilterStoreId(storeParam || '');
     if (actionParam === 'add') setShowAddModal(true);
-  }, [productParam, statusParam, actionParam, locationParam, storeParam]);
+  }, [productParam, statusParam, actionParam, locationParam, storeParam, normalizeUrlStatusFilter]);
 
 
   // Hierarchical State for Add/Import

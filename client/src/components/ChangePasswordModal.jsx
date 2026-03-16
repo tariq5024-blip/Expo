@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, Lock, Eye, EyeOff } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
@@ -13,6 +13,15 @@ const ChangePasswordModal = ({ isOpen, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const closeTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -47,7 +56,7 @@ const ChangePasswordModal = ({ isOpen, onClose }) => {
       setNewPassword('');
       setConfirmPassword('');
 
-      setTimeout(() => {
+      closeTimerRef.current = setTimeout(() => {
         onClose();
         setSuccess('');
       }, 1500);

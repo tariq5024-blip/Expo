@@ -149,13 +149,49 @@ async function createAssignmentGatePass({
   return pass;
 }
 
+const getPublicBaseUrl = (req) => {
+  const envBase = String(process.env.PUBLIC_BASE_URL || '').trim();
+  if (envBase) {
+    return envBase.replace(/\/+$/, '');
+  }
+
+  const rawHost = String(req.get('host') || '').trim();
+  const requestProto = String(req.protocol || 'http').trim();
+  const candidate = rawHost ? `${requestProto}://${rawHost}` : '';
+  const allowedOrigins = String(process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (candidate) {
+    try {
+      const candidateUrl = new URL(candidate);
+      const isAllowed = allowedOrigins.length === 0 || allowedOrigins.some((origin) => {
+        try {
+          return new URL(origin).host === candidateUrl.host;
+        } catch {
+          return false;
+        }
+      });
+      if (isAllowed) return candidateUrl.origin;
+    } catch {
+      // fallback below
+    }
+  }
+
+  if (allowedOrigins.length > 0) {
+    return allowedOrigins[0].replace(/\/+$/, '');
+  }
+  return 'http://localhost:5000';
+};
+
 const buildCollectionApprovalHtml = ({ title, message, token, approved = false }) => {
   const safeTitle = String(title || '');
   const safeMessage = String(message || '');
   if (approved) {
     return `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px;"><div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;"><h2 style="margin:0 0 12px 0;color:#0f172a;">${safeTitle}</h2><p style="color:#334155;margin:0;">${safeMessage}</p></div></body></html>`;
   }
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px;"><div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;"><h2 style="margin:0 0 12px 0;color:#0f172a;">${safeTitle}</h2><p style="color:#334155;margin:0 0 16px 0;">${safeMessage}</p><a href="/api/assets/collect-approval/${token}/approve" style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;padding:10px 16px;">Grant Permission</a></div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px;"><div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;"><h2 style="margin:0 0 12px 0;color:#0f172a;">${safeTitle}</h2><p style="color:#334155;margin:0 0 16px 0;">${safeMessage}</p><a href="/api/assets/collect-approval/${token}" style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;padding:10px 16px;">Open Approval Page</a></div></body></html>`;
 };
 
 function readUploadedWorkbook(file) {
@@ -2567,20 +2603,24 @@ router.get('/collect-approval/:token', async (req, res) => {
         approved: true
       }));
     }
-    return res.status(200).send(buildCollectionApprovalHtml({
-      title: 'Technician Collection Approval',
-      message: 'Click below to grant line manager permission for this collection request.',
-      token
-    }));
+    const csrfToken = typeof req.csrfToken === 'function' ? req.csrfToken() : '';
+    return res.status(200).send(`<!doctype html><html><head><meta charset="utf-8"><title>Technician Collection Approval</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px;"><div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;"><h2 style="margin:0 0 12px 0;color:#0f172a;">Technician Collection Approval</h2><p style="color:#334155;margin:0 0 16px 0;">Review and confirm to grant line manager permission for this collection request.</p><form method="POST" action="/api/assets/collect-approval/${token}/approve?_csrf=${encodeURIComponent(String(csrfToken || ''))}"><button type="submit" style="display:inline-block;background:#16a34a;color:#fff;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;">Grant Permission</button></form></div></body></html>`);
   } catch (error) {
     return res.status(500).send(`Approval error: ${error.message}`);
   }
 });
 
 // @desc    Approve technician collection request (public token)
-// @route   GET /api/assets/collect-approval/:token/approve
+// @route   POST /api/assets/collect-approval/:token/approve
 // @access  Public (token)
 router.get('/collect-approval/:token/approve', async (req, res) => {
+  const token = String(req.params.token || '').trim();
+  if (!token) return res.status(400).send('Invalid approval token');
+  const csrfToken = typeof req.csrfToken === 'function' ? req.csrfToken() : '';
+  return res.status(200).send(`<!doctype html><html><head><meta charset="utf-8"><title>Confirm Approval</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:24px;"><div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;"><h2 style="margin:0 0 12px 0;color:#0f172a;">Confirm Approval</h2><p style="color:#334155;margin:0 0 16px 0;">For security, approval now requires explicit confirmation.</p><form method="POST" action="/api/assets/collect-approval/${token}/approve?_csrf=${encodeURIComponent(String(csrfToken || ''))}"><button type="submit" style="display:inline-block;background:#16a34a;color:#fff;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;">Grant Permission</button></form></div></body></html>`);
+});
+
+router.post('/collect-approval/:token/approve', async (req, res) => {
   try {
     const token = String(req.params.token || '').trim();
     if (!token) return res.status(400).send('Invalid approval token');
@@ -2696,7 +2736,7 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
             }
 
             const token = crypto.randomBytes(24).toString('hex');
-            const approvalLink = `${req.protocol}://${req.get('host')}/api/assets/collect-approval/${token}`;
+            const approvalLink = `${getPublicBaseUrl(req)}/api/assets/collect-approval/${token}`;
             const expiresAt = new Date(Date.now() + (24 * 60 * 60 * 1000));
 
             pendingRequest = await CollectionApproval.create({

@@ -11,11 +11,6 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 const BackupArtifact = require('../models/BackupArtifact');
 const BackupLog = require('../models/BackupLog');
 const Setting = require('../models/Setting');
-const {
-  createImmutableManifestForArtifact,
-  appendJournalEntry,
-  withJournalCaptureSuspended
-} = require('./resilienceManager');
 
 const appPackage = require('../../package.json');
 
@@ -34,6 +29,7 @@ const ALLOWED_ENV_EXPORT = [
   'CORS_ORIGIN'
 ];
 const CURRENT_BACKUP_FORMAT_VERSION = 2;
+const getResilienceHelpers = () => require(path.join(__dirname, 'resilienceManager'));
 
 const COLLECTION_NAME_ALIASES = new Map([
   ['users', 'users'],
@@ -545,6 +541,7 @@ const createBackupArtifact = async ({
       user,
       details: `Backup ${backupType} created (${Math.round(stat.size / 1024)} KB)`
     });
+    const { createImmutableManifestForArtifact } = getResilienceHelpers();
     await createImmutableManifestForArtifact(artifact).catch(() => {});
 
     try {
@@ -755,6 +752,7 @@ const restoreBackupArtifact = async ({ backupArtifact, user, createSafetyBackup 
 
     extractDir = await extractBackupZip(backupArtifact.filePath);
     let restoreReport = null;
+    const { withJournalCaptureSuspended } = getResilienceHelpers();
     await withJournalCaptureSuspended(async () => {
       restoreReport = await restoreFromExtractedBackup(extractDir);
     });
@@ -765,6 +763,7 @@ const restoreBackupArtifact = async ({ backupArtifact, user, createSafetyBackup 
       user,
       details: `Restore completed${safetyBackup ? ` with safety backup ${safetyBackup.fileName}` : ''}`
     });
+    const { appendJournalEntry } = getResilienceHelpers();
     await appendJournalEntry({
       opType: 'restore',
       collectionName: 'system',
@@ -836,6 +835,7 @@ const restoreFromJsonPayload = async ({ payload, user = null }) => {
       || msg.includes('replica set');
   };
   try {
+    const { withJournalCaptureSuspended } = getResilienceHelpers();
     await withJournalCaptureSuspended(async () => {
       try {
         await session.withTransaction(async () => {
@@ -856,6 +856,7 @@ const restoreFromJsonPayload = async ({ payload, user = null }) => {
     });
 
     restoreReport.verification = await verifyRestoredState();
+    const { appendJournalEntry } = getResilienceHelpers();
     await appendJournalEntry({
       opType: 'restore',
       collectionName: 'system',

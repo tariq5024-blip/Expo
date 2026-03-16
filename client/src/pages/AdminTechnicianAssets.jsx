@@ -6,6 +6,7 @@ const AdminTechnicianAssets = () => {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState([]);
+  const [pendingActionId, setPendingActionId] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(25);
   const [total, setTotal] = useState(0);
@@ -66,6 +67,19 @@ const AdminTechnicianAssets = () => {
     }
   };
 
+  const handleReturnAction = async (assetId, action) => {
+    if (!assetId || pendingActionId) return;
+    try {
+      setPendingActionId(`${assetId}:${action}`);
+      await api.post(`/assets/return-${action}`, { assetId });
+      await loadAssets(search.trim(), page);
+    } catch (error) {
+      alert(error.response?.data?.message || `Failed to ${action} return request`);
+    } finally {
+      setPendingActionId('');
+    }
+  };
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Technician Assets</h1>
@@ -98,16 +112,18 @@ const AdminTechnicianAssets = () => {
                     <td className="px-6 py-4">
                       <div className="flex gap-3">
                         <button
-                          onClick={async () => { await api.post('/assets/return-approve', { assetId: a._id }); loadAssets(search.trim()); }}
+                          onClick={() => handleReturnAction(a._id, 'approve')}
+                          disabled={Boolean(pendingActionId)}
                           className="text-green-600"
                         >
-                          Approve
+                          {pendingActionId === `${a._id}:approve` ? 'Approving...' : 'Approve'}
                         </button>
                         <button
-                          onClick={async () => { await api.post('/assets/return-reject', { assetId: a._id }); loadAssets(search.trim()); }}
+                          onClick={() => handleReturnAction(a._id, 'reject')}
+                          disabled={Boolean(pendingActionId)}
                           className="text-red-600"
                         >
-                          Reject
+                          {pendingActionId === `${a._id}:reject` ? 'Rejecting...' : 'Reject'}
                         </button>
                       </div>
                     </td>

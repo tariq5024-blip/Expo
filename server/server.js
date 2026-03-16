@@ -103,6 +103,12 @@ const shouldUseSecureCookie = (req) => {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
   return Boolean(req.secure || forwardedProto === 'https');
 };
+const resolveSameSite = () => {
+  const raw = String(process.env.COOKIE_SAMESITE || 'lax').trim().toLowerCase();
+  if (raw === 'none') return 'none';
+  if (raw === 'strict') return 'strict';
+  return 'lax';
+};
 const cookieSecret = String(process.env.COOKIE_SECRET || '');
 if (isProd && !cookieSecret) {
   throw new Error('COOKIE_SECRET is required in production.');
@@ -183,11 +189,12 @@ app.get('/api/readyz', async (req, res) => {
 // CSRF protection
 const enableCsrf = String(process.env.ENABLE_CSRF || (isProd ? 'true' : 'false')).toLowerCase() === 'true';
 if (enableCsrf) {
+  const sameSite = resolveSameSite();
   const csrfProtection = csrf({
     cookie: {
       key: 'csrfSecret',
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite,
       secure: isProd,
       path: '/',
     }
@@ -200,7 +207,7 @@ if (enableCsrf) {
       const token = req.csrfToken();
       res.cookie('XSRF-TOKEN', token, {
         httpOnly: false,
-        sameSite: 'lax',
+        sameSite,
         secure: secureCookie,
         path: '/',
       });
@@ -212,10 +219,11 @@ if (enableCsrf) {
 } else {
   // Dev bypass (no CSRF checks)
   app.use((req, res, next) => {
+    const sameSite = resolveSameSite();
     req.csrfToken = () => 'dev-token-bypass';
     res.cookie('XSRF-TOKEN', 'dev-token-bypass', {
       httpOnly: false,
-      sameSite: 'lax',
+      sameSite,
       secure: false,
       path: '/',
     });
@@ -330,7 +338,7 @@ app.get('*', (req, res) => {
   } 
   
   // C. Fallback Warning Page (If build is missing)
-  res.status(200).send(`
+  res.status(503).send(`
     <div style="font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto;">
       <h1>API is running successfully (v1.0.2)</h1>
       <div style="background: #fff3cd; color: #856404; padding: 15px; border-radius: 4px; margin: 20px 0;">

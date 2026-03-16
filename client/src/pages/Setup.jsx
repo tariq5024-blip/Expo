@@ -56,14 +56,15 @@ const Setup = () => {
             api.get('/system/storage'),
             api.get('/system/stores')
           ]);
+          const safeStores = Array.isArray(storesRes.data) ? storesRes.data : [];
           setStorage(storageRes.data);
-          setStores(storesRes.data || []);
+          setStores(safeStores);
           
           // Filter for deletion requests
-          const requests = storesRes.data.filter(s => s.deletionRequested);
+          const requests = safeStores.filter((s) => s?.deletionRequested);
           setDeletionRequests(requests);
-          if (!selectedStoreId && storesRes.data?.length > 0) {
-            setSelectedStoreId(storesRes.data[0]._id);
+          if (safeStores.length > 0) {
+            setSelectedStoreId((prev) => prev || safeStores[0]._id);
           }
         } catch (e) {
           console.error(e);
@@ -71,7 +72,7 @@ const Setup = () => {
       };
       fetchData();
     }
-  }, [isMainAdmin, selectedStoreId]);
+  }, [isMainAdmin]);
 
   useEffect(() => {
     if (!canManageEmail) return;

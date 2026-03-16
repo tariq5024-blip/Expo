@@ -18,6 +18,7 @@ const Tools = () => {
   const { user } = useAuth();
   const [tools, setTools] = useState([]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(defaultForm);
@@ -29,13 +30,13 @@ const Tools = () => {
 
   const canWrite = user?.role === 'Admin' || user?.role === 'Super Admin';
 
-  const loadTools = async () => {
+  const loadTools = async ({ q, s } = {}) => {
     try {
       setLoading(true);
       const res = await api.get('/tools', {
         params: {
-          q: search || undefined,
-          status: status || undefined
+          q: q || undefined,
+          status: s || undefined
         }
       });
       setTools(res.data || []);
@@ -47,9 +48,13 @@ const Tools = () => {
   };
 
   useEffect(() => {
-    loadTools();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status]);
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    loadTools({ q: debouncedSearch, s: status });
+  }, [debouncedSearch, status]);
 
   const list = useMemo(() => tools, [tools]);
 
@@ -150,7 +155,7 @@ const Tools = () => {
             <option value="Maintenance">Maintenance</option>
             <option value="Retired">Retired</option>
           </select>
-          <button onClick={loadTools} className="rounded-lg px-4 py-2 bg-slate-900 text-white hover:bg-black">Refresh</button>
+          <button onClick={() => loadTools({ q: debouncedSearch, s: status })} className="rounded-lg px-4 py-2 bg-slate-900 text-white hover:bg-black">Refresh</button>
         </div>
       </div>
 

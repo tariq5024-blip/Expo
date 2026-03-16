@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Search, Clock, User, Calendar, AlertCircle, Activity } from 'lucide-react';
 import api from '../api/axios';
@@ -57,10 +57,13 @@ const ProductDetails = () => {
   };
 
   // Filter assets: search by Serial Number or Unique ID only (as requested)
-  const filteredAssets = assets.filter(asset => 
-    asset.serial_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    asset.uniqueId?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredAssets = useMemo(() => {
+    const q = String(searchTerm || '').toLowerCase();
+    return assets.filter((asset) =>
+      asset.serial_number?.toLowerCase().includes(q) ||
+      asset.uniqueId?.toLowerCase().includes(q)
+    );
+  }, [assets, searchTerm]);
 
   // Pagination Logic
   const totalPages = Math.ceil(filteredAssets.length / itemsPerPage);
@@ -74,7 +77,7 @@ const ProductDetails = () => {
   }, [searchTerm]);
 
   // Calculate stats
-  const stats = {
+  const stats = useMemo(() => ({
     total: assets.reduce((sum, a) => sum + (Number(a.quantity) > 0 ? Number(a.quantity) : 1), 0),
     inUse: assets.reduce((sum, a) => {
       const q = Number(a.quantity) > 0 ? Number(a.quantity) : 1;
@@ -111,7 +114,7 @@ const ProductDetails = () => {
       }
       return sum;
     }, 0)
-  };
+  }), [assets]);
 
   const getStatusBadge = (asset) => {
     const status = asset.status;
@@ -375,7 +378,7 @@ const ProductDetails = () => {
                       {asset.assigned_to ? (
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">
-                            {asset.assigned_to.name.charAt(0)}
+                            {String(asset.assigned_to?.name || '?').charAt(0)}
                           </div>
                           <span className="text-sm text-gray-900">{asset.assigned_to.name}</span>
                         </div>

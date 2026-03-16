@@ -915,7 +915,9 @@ const Portal = () => {
                     <h4 className="text-xl md:text-2xl font-bold text-slate-900 mb-1 group-hover:text-amber-600 transition-colors tracking-wide truncate">
                       {store.name}
                     </h4>
-                    <p className="text-xs md:text-sm text-slate-400 font-mono">ID: {store._id.substring(store._id.length - 6).toUpperCase()}</p>
+                    <p className="text-xs md:text-sm text-slate-400 font-mono">
+                      ID: {String(store?._id || 'N/A').slice(-6).toUpperCase()}
+                    </p>
                   </div>
 
                   <div className="relative z-10 pt-4 border-t border-slate-100 mt-4 md:mt-auto flex justify-between items-center w-full">

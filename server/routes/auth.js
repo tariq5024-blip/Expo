@@ -17,6 +17,12 @@ const shouldUseSecureCookie = (req) => {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
   return Boolean(req.secure || forwardedProto === 'https');
 };
+const resolveSameSite = () => {
+  const raw = String(process.env.COOKIE_SAMESITE || 'lax').trim().toLowerCase();
+  if (raw === 'none') return 'none';
+  if (raw === 'strict') return 'strict';
+  return 'lax';
+};
 
 // Login rate limiter (relaxed for internal use)
 const loginLimiter = rateLimit({
@@ -66,10 +72,11 @@ router.post('/login',
       const expires = new Date(Date.now() + maxAgeMs);
       await Session.create({ sid, user: user._id, expiresAt: expires });
       const cookieSecure = shouldUseSecureCookie(req);
+      const sameSite = resolveSameSite();
       res.cookie('sid', sid, {
         httpOnly: true,
         secure: cookieSecure,
-        sameSite: 'lax',
+        sameSite,
         path: '/',
         maxAge: maxAgeMs
       });
@@ -97,7 +104,8 @@ router.post('/logout', (req, res) => {
     Session.deleteOne({ sid }).catch(() => {});
   }
   const cookieSecure = shouldUseSecureCookie(req);
-  res.clearCookie('sid', { path: '/', secure: cookieSecure, sameSite: 'lax' });
+  const sameSite = resolveSameSite();
+  res.clearCookie('sid', { path: '/', secure: cookieSecure, sameSite });
   res.status(200).json({ message: 'Logged out' });
 });
 

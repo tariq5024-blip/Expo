@@ -53,7 +53,7 @@ const appPackage = require('../../package.json');
 
 const maxBackupUploadMb = Number.parseInt(process.env.MAX_BACKUP_UPLOAD_MB || '1024', 10);
 const MAX_BACKUP_UPLOAD_BYTES = Math.max(10, maxBackupUploadMb) * 1024 * 1024;
-const backupUploadTempDir = path.join(__dirname, '../uploads/tmp-backups');
+const backupUploadTempDir = path.join(__dirname, '../storage/tmp-backups');
 if (!fs.existsSync(backupUploadTempDir)) {
   fs.mkdirSync(backupUploadTempDir, { recursive: true });
 }
@@ -1821,25 +1821,29 @@ router.post('/resilience/marker', protect, superAdmin, async (req, res) => {
 // @route   POST /api/system/backups/upload-session/start
 // @access  Private/SuperAdmin
 router.post('/backups/upload-session/start', protect, superAdmin, async (req, res) => {
-  const fileName = String(req.body?.fileName || '').trim();
-  const totalChunks = Number.parseInt(String(req.body?.totalChunks || '0'), 10);
-  const totalSize = Number.parseInt(String(req.body?.totalSize || '0'), 10);
-  if (!fileName || !Number.isFinite(totalChunks) || totalChunks <= 0) {
-    return res.status(400).json({ message: 'fileName and totalChunks are required' });
+  try {
+    const fileName = String(req.body?.fileName || '').trim();
+    const totalChunks = Number.parseInt(String(req.body?.totalChunks || '0'), 10);
+    const totalSize = Number.parseInt(String(req.body?.totalSize || '0'), 10);
+    if (!fileName || !Number.isFinite(totalChunks) || totalChunks <= 0) {
+      return res.status(400).json({ message: 'fileName and totalChunks are required' });
+    }
+    const sessionId = cryptoRandomId();
+    const tempPath = path.join(backupUploadTempDir, `${sessionId}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}.part`);
+    UPLOAD_SESSIONS.set(sessionId, {
+      sessionId,
+      fileName,
+      totalChunks,
+      totalSize: Number.isFinite(totalSize) ? totalSize : 0,
+      tempPath,
+      received: new Set(),
+      createdAt: Date.now()
+    });
+    fs.writeFileSync(tempPath, '');
+    res.json({ sessionId });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to start upload session' });
   }
-  const sessionId = cryptoRandomId();
-  const tempPath = path.join(backupUploadTempDir, `${sessionId}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}.part`);
-  UPLOAD_SESSIONS.set(sessionId, {
-    sessionId,
-    fileName,
-    totalChunks,
-    totalSize: Number.isFinite(totalSize) ? totalSize : 0,
-    tempPath,
-    received: new Set(),
-    createdAt: Date.now()
-  });
-  fs.writeFileSync(tempPath, '');
-  res.json({ sessionId });
 });
 
 // @desc    Upload chunk for resumable backup upload
@@ -1891,7 +1895,7 @@ router.post('/backups/upload-session/complete', protect, superAdmin, async (req,
       sizeBytes: fs.statSync(finalPath).size
     });
     UPLOAD_SESSIONS.delete(sessionId);
-    res.json({ ok: true, filePath: finalPath, checksum, fileName: session.fileName });
+    res.json({ ok: true, checksum, fileName: session.fileName, storedAs: path.basename(finalPath) });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to finalize upload session' });
   }

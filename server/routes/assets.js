@@ -3148,6 +3148,48 @@ router.post('/return-reject', protect, admin, async (req, res) => {
 // @desc    Update asset
 // @route   PUT /api/assets/:id
 // @access  Private/Admin
+router.post('/:id/comment', protect, restrictViewer, async (req, res) => {
+  try {
+    const rawComment = String(req.body?.comment || '').trim();
+    if (!rawComment) {
+      return res.status(400).json({ message: 'Comment is required' });
+    }
+    if (rawComment.length > 500) {
+      return res.status(400).json({ message: 'Comment is too long (max 500 characters)' });
+    }
+
+    const asset = await Asset.findById(req.params.id);
+    if (!asset) {
+      return res.status(404).json({ message: 'Asset not found' });
+    }
+    if (!hasAssetStoreAccess(req, asset.store)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
+
+    asset.history.push({
+      action: 'Comment Added',
+      details: rawComment,
+      user: req.user.name,
+      ticket_number: asset.ticket_number || '',
+      date: new Date()
+    });
+    await asset.save();
+
+    await ActivityLog.create({
+      user: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      action: 'Asset Comment',
+      details: `Added comment on ${asset.name} (${asset.uniqueId || asset.serial_number || asset._id})`,
+      store: asset.store
+    });
+
+    res.json({ message: 'Comment added to asset history', asset });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 router.put('/:id', protect, admin, async (req, res) => {
   const {
     name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,

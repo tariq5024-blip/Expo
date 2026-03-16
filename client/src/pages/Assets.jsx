@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock } from 'lucide-react';
+import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock, MessageSquarePlus, GripVertical } from 'lucide-react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
@@ -17,6 +17,34 @@ const flattenProducts = (list, level = 0, ancestors = []) => {
   });
   return out;
 };
+
+const COLUMN_OPTIONS = [
+  ['uniqueId', 'Unique ID'],
+  ['name', 'Name'],
+  ['model', 'Model'],
+  ['serial', 'Serial'],
+  ['serialLast4', 'Serial Last 4'],
+  ['ticket', 'Ticket'],
+  ['poNumber', 'PO Number'],
+  ['mac', 'MAC Address'],
+  ['rfid', 'RFID'],
+  ['qr', 'QR Code'],
+  ['manufacturer', 'Manufacturer'],
+  ['condition', 'Condition'],
+  ['status', 'Status'],
+  ['prevStatus', 'Prev Status'],
+  ['store', 'Store'],
+  ['location', 'Location'],
+  ['quantity', 'Quantity'],
+  ['vendor', 'Vendor'],
+  ['source', 'Source'],
+  ['deliveredBy', 'Delivered By'],
+  ['deliveredAt', 'Delivered At'],
+  ['assignedTo', 'Assigned To'],
+  ['dateTime', 'Date & Time'],
+  ['price', 'Price'],
+  ['action', 'Action']
+];
 
 const Assets = () => {
   const location = useLocation();
@@ -95,6 +123,48 @@ const Assets = () => {
     } catch (error) {
       console.error('Error splitting asset:', error);
       alert(error.response?.data?.message || 'Failed to split asset');
+    }
+  };
+
+  const moveColumnOrder = (fromKey, toKey) => {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    setColumnOrder((prev) => {
+      const fromIndex = prev.indexOf(fromKey);
+      const toIndex = prev.indexOf(toKey);
+      if (fromIndex < 0 || toIndex < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const openCommentModal = (asset) => {
+    setAssetCommentModal({
+      isOpen: true,
+      asset,
+      comment: ''
+    });
+  };
+
+  const submitAssetComment = async () => {
+    const comment = String(assetCommentModal.comment || '').trim();
+    const assetId = assetCommentModal.asset?._id;
+    if (!assetId) return;
+    if (!comment) {
+      alert('Please enter a comment.');
+      return;
+    }
+    try {
+      setSavingComment(true);
+      await api.post(`/assets/${assetId}/comment`, { comment });
+      setAssetCommentModal({ isOpen: false, asset: null, comment: '' });
+      await fetchAssets(undefined, { silent: true });
+      alert('Comment added to asset history.');
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to add comment');
+    } finally {
+      setSavingComment(false);
     }
   };
 
@@ -280,6 +350,8 @@ const Assets = () => {
   const [fullProducts, setFullProducts] = useState([]);
   const [manualLoading, setManualLoading] = useState(false);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [dragColumnKey, setDragColumnKey] = useState('');
+  const [columnOrder, setColumnOrder] = useState(() => COLUMN_OPTIONS.map(([key]) => key));
   const [visibleColumns, setVisibleColumns] = useState({
     uniqueId: true,
     name: true,
@@ -310,6 +382,12 @@ const Assets = () => {
   const requestIdRef = useRef(0);
   const activeControllerRef = useRef(null);
   const hasHydratedFiltersRef = useRef(false);
+  const [assetCommentModal, setAssetCommentModal] = useState({
+    isOpen: false,
+    asset: null,
+    comment: ''
+  });
+  const [savingComment, setSavingComment] = useState(false);
 
   useEffect(() => {
     if (showRecentUploads) {
@@ -1059,6 +1137,139 @@ const Assets = () => {
     };
   }, []);
 
+  const columnMeta = useMemo(() => ({
+    uniqueId: { label: 'Unique ID', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell font-mono text-xs text-gray-600' },
+    name: { label: 'Name', thClass: '', tdClass: 'text-sm' },
+    model: { label: 'Model', thClass: 'hidden md:table-cell', tdClass: 'hidden md:table-cell text-sm' },
+    serial: { label: 'Serial', thClass: '', tdClass: 'text-sm' },
+    serialLast4: { label: 'Serial Last 4', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    ticket: { label: 'Ticket', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    poNumber: { label: 'PO Number', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    mac: { label: 'MAC Address', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    rfid: { label: 'RFID', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    qr: { label: 'QR Code', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    manufacturer: { label: 'Manufacturer', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-sm' },
+    condition: { label: 'Condition', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    status: { label: 'Status', thClass: '', tdClass: 'text-sm font-medium text-slate-700' },
+    prevStatus: { label: 'Prev Status', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    store: { label: 'Store', thClass: 'hidden sm:table-cell', tdClass: 'hidden sm:table-cell text-sm' },
+    location: { label: 'Location', thClass: 'hidden md:table-cell', tdClass: 'hidden md:table-cell text-sm' },
+    quantity: { label: 'Quantity', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    vendor: { label: 'Vendor', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    source: { label: 'Source', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    deliveredBy: { label: 'Delivered By', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    deliveredAt: { label: 'Delivered At', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    assignedTo: { label: 'Assigned To', thClass: 'hidden md:table-cell', tdClass: 'hidden md:table-cell text-sm' },
+    dateTime: { label: 'Date & Time', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-sm' },
+    price: { label: 'Price', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    action: { label: 'Action', thClass: '', tdClass: 'text-sm' }
+  }), []);
+
+  const orderedVisibleColumns = useMemo(() => {
+    return columnOrder.filter((key) => {
+      if (!visibleColumns[key]) return false;
+      if (key === 'action' && user?.role === 'Viewer') return false;
+      return true;
+    });
+  }, [columnOrder, visibleColumns, user?.role]);
+
+  const renderActionCell = (asset, key = 'action') => (
+    <td key={key} className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-col gap-1 sm:flex-row justify-center">
+        <button
+          onClick={() => handleEditClick(asset)}
+          className="text-amber-600 hover:text-amber-700 font-medium text-sm md:text-base"
+        >
+          Edit
+        </button>
+        <button
+          onClick={() => openCommentModal(asset)}
+          className="text-sky-600 hover:text-sky-800 font-medium text-sm md:text-base inline-flex items-center gap-1"
+          title="Add comment to asset history"
+        >
+          <MessageSquarePlus size={14} />
+          Comment
+        </button>
+        {asset.quantity > 1 && (
+          <button
+            onClick={() => handleSplitClick(asset)}
+            className="text-purple-600 hover:text-purple-900 font-medium text-sm md:text-base flex items-center gap-1"
+            title="Split / Report Faulty"
+          >
+            <Scissors size={14} />
+            Split
+          </button>
+        )}
+        {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
+          <button
+            onClick={() => handleUnassign(asset)}
+            className="text-orange-600 hover:text-orange-900 font-medium text-sm md:text-base"
+          >
+            Unassign
+          </button>
+        ) : (
+          <button
+            onClick={() => handleAssignClick(asset)}
+            className="text-green-600 hover:text-green-900 font-medium text-sm md:text-base"
+          >
+            Assign
+          </button>
+        )}
+        <button
+          onClick={() => handleDelete(asset._id)}
+          className="text-red-600 hover:text-red-900 font-medium text-sm md:text-base"
+        >
+          Delete
+        </button>
+      </div>
+    </td>
+  );
+
+  const renderAssetCell = (asset, key) => {
+    if (key === 'action') return renderActionCell(asset, key);
+
+    let value = '-';
+    if (key === 'uniqueId') value = asset.uniqueId || '-';
+    if (key === 'name') value = asset.name || '-';
+    if (key === 'model') value = asset.model_number || '-';
+    if (key === 'serial') value = asset.serial_number || '-';
+    if (key === 'serialLast4') value = asset.serial_last_4 || '-';
+    if (key === 'ticket') value = asset.ticket_number || '-';
+    if (key === 'poNumber') value = asset.po_number || '-';
+    if (key === 'mac') value = asset.mac_address || '-';
+    if (key === 'rfid') value = asset.rfid || '-';
+    if (key === 'qr') value = asset.qr_code || '-';
+    if (key === 'manufacturer') value = asset.manufacturer || '-';
+    if (key === 'condition') value = asset.condition || 'New / Excellent';
+    if (key === 'prevStatus') value = asset.previous_status || '-';
+    if (key === 'store') value = (asset.store?.parentStore?.name) || (asset.store?.name) || (activeStore?.name) || '-';
+    if (key === 'location') value = asset.location || '-';
+    if (key === 'quantity') value = asset.quantity ?? '-';
+    if (key === 'vendor') value = asset.vendor_name || '-';
+    if (key === 'source') value = asset.source || '-';
+    if (key === 'deliveredBy') value = asset.delivered_by_name || '-';
+    if (key === 'deliveredAt') value = asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : '-';
+    if (key === 'assignedTo') value = asset.assigned_to?.name || asset.assigned_to_external?.name || '-';
+    if (key === 'dateTime') value = asset.updatedAt ? new Date(asset.updatedAt).toLocaleString() : '-';
+    if (key === 'price') value = typeof asset.price === 'number' ? asset.price : '-';
+
+    if (key === 'status') {
+      return (
+        <td key={key} className={`px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center ${columnMeta[key]?.tdClass || ''}`}>
+          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${getDerivedStatus(asset).color}`}>
+            {asset.status || '-'}
+          </span>
+        </td>
+      );
+    }
+
+    return (
+      <td key={key} className={`px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center ${columnMeta[key]?.tdClass || ''}`}>
+        {value}
+      </td>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-app-page text-app-main">
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
@@ -1380,22 +1591,32 @@ const Assets = () => {
               </button>
               {showColumnMenu && (
                 <div className="absolute z-20 mt-2 right-0 bg-white border border-gray-200 shadow-xl rounded-lg p-3 w-64 max-h-72 overflow-auto">
-                  {[
-                    ['uniqueId','Unique ID'],['name','Name'],['model','Model'],['serial','Serial'],['serialLast4','Serial Last 4'],
-                    ['ticket','Ticket'],['poNumber','PO Number'],['mac','MAC Address'],['rfid','RFID'],['qr','QR Code'],['manufacturer','Manufacturer'],
-                    ['condition','Condition'],['status','Status'],['prevStatus','Prev Status'],['store','Store'],['location','Location'],
-                    ['quantity','Quantity'],['vendor','Vendor'],['source','Source'],['deliveredBy','Delivered By'],['deliveredAt','Delivered At'],
-                    ['assignedTo','Assigned To'],['dateTime','Date & Time'],['price','Price'],['action','Action']
-                  ].map(([key,label]) => (
-                    <label key={key} className="flex items-center gap-2 text-sm py-1 px-1 rounded hover:bg-gray-50">
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns[key]}
-                        onChange={(e) => setVisibleColumns(prev => ({ ...prev, [key]: e.target.checked }))}
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
+                  <p className="text-[11px] text-slate-500 mb-2">Drag to reorder columns</p>
+                  {columnOrder.map((key) => {
+                    const label = COLUMN_OPTIONS.find(([optionKey]) => optionKey === key)?.[1] || key;
+                    return (
+                      <div
+                        key={key}
+                        draggable
+                        onDragStart={() => setDragColumnKey(key)}
+                        onDragEnd={() => setDragColumnKey('')}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => {
+                          moveColumnOrder(dragColumnKey, key);
+                          setDragColumnKey('');
+                        }}
+                        className="flex items-center gap-2 text-sm py-1 px-1 rounded hover:bg-gray-50 cursor-move"
+                      >
+                        <GripVertical className="w-4 h-4 text-slate-400" />
+                        <input
+                          type="checkbox"
+                          checked={visibleColumns[key]}
+                          onChange={(e) => setVisibleColumns(prev => ({ ...prev, [key]: e.target.checked }))}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1568,31 +1789,14 @@ const Assets = () => {
                   <input onClick={(e) => e.stopPropagation()} type="checkbox" checked={selectedIds.length === assets.length && assets.length > 0} onChange={toggleSelectAll} />
                 </th>
               )}
-              {visibleColumns.uniqueId && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Unique ID</th>}
-              {visibleColumns.name && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>}
-              {visibleColumns.model && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Model</th>}
-              {visibleColumns.serial && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Serial</th>}
-              {visibleColumns.serialLast4 && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Serial Last 4</th>}
-              {visibleColumns.ticket && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Ticket</th>}
-              {visibleColumns.poNumber && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">PO Number</th>}
-              {visibleColumns.mac && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">MAC Address</th>}
-              {visibleColumns.rfid && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">RFID</th>}
-              {visibleColumns.qr && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">QR Code</th>}
-              {visibleColumns.manufacturer && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Manufacturer</th>}
-              {visibleColumns.condition && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Condition</th>}
-              {visibleColumns.status && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>}
-              {visibleColumns.prevStatus && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Prev Status</th>}
-              {visibleColumns.store && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Store</th>}
-              {visibleColumns.location && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Location</th>}
-              {visibleColumns.quantity && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Quantity</th>}
-              {visibleColumns.vendor && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Vendor</th>}
-              {visibleColumns.source && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Source</th>}
-              {visibleColumns.deliveredBy && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Delivered By</th>}
-              {visibleColumns.deliveredAt && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Delivered At</th>}
-              {visibleColumns.assignedTo && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Assigned To</th>}
-              {visibleColumns.dateTime && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Date & Time</th>}
-              {visibleColumns.price && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Price</th>}
-              {(visibleColumns.action && user?.role !== 'Viewer') && <th className="px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>}
+              {orderedVisibleColumns.map((key) => (
+                <th
+                  key={key}
+                  className={`px-3 py-2 md:px-6 md:py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider ${columnMeta[key]?.thClass || ''}`}
+                >
+                  {columnMeta[key]?.label || key}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-slate-100">
@@ -1603,91 +1807,7 @@ const Assets = () => {
                     <input type="checkbox" checked={selectedIds.includes(asset._id)} onChange={() => toggleSelect(asset._id)} />
                   </td>
                 )}
-                {visibleColumns.uniqueId && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap font-mono text-xs text-gray-600 text-center hidden lg:table-cell">{asset.uniqueId || '-'}</td>}
-                {visibleColumns.name && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.name}</td>}
-                {visibleColumns.model && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.model_number}</td>}
-                {visibleColumns.serial && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm">{asset.serial_number}</td>}
-                {visibleColumns.serialLast4 && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.serial_last_4 || '-'}</td>}
-                {visibleColumns.ticket && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.ticket_number || '-'}</td>}
-                {visibleColumns.poNumber && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.po_number || '-'}</td>}
-                {visibleColumns.mac && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.mac_address || '-'}</td>}
-                {visibleColumns.rfid && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.rfid || '-'}</td>}
-                {visibleColumns.qr && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.qr_code || '-'}</td>}
-                {visibleColumns.manufacturer && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">{asset.manufacturer || '-'}</td>}
-                {visibleColumns.condition && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.condition || 'New / Excellent'}</td>}
-                {visibleColumns.status && (
-                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm font-medium text-slate-700">
-                    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${getDerivedStatus(asset).color}`}>
-                      {asset.status || '-'}
-                    </span>
-                  </td>
-                )}
-                {visibleColumns.prevStatus && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.previous_status || '-'}</td>}
-                {visibleColumns.store && (
-                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden sm:table-cell">
-                    {(asset.store?.parentStore?.name) || (asset.store?.name) || (activeStore?.name) || '-'}
-                  </td>
-                )}
-                {visibleColumns.location && (
-                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">
-                    {asset.location || '-'}
-                  </td>
-                )}
-                {visibleColumns.quantity && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{asset.quantity ?? '-'}</td>}
-                {visibleColumns.vendor && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.vendor_name || '-'}</td>}
-                {visibleColumns.source && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.source || '-'}</td>}
-                {visibleColumns.deliveredBy && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.delivered_by_name || '-'}</td>}
-                {visibleColumns.deliveredAt && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-xs hidden xl:table-cell">{asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : '-'}</td>}
-                {visibleColumns.assignedTo && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden md:table-cell">{asset.assigned_to?.name || asset.assigned_to_external?.name || '-'}</td>}
-                {visibleColumns.dateTime && (
-                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden xl:table-cell">
-                    {asset.updatedAt ? new Date(asset.updatedAt).toLocaleString() : '-'}
-                  </td>
-                )}
-                {visibleColumns.price && <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm hidden lg:table-cell">{typeof asset.price === 'number' ? asset.price : '-'}</td>}
-                {(visibleColumns.action && user?.role !== 'Viewer') && (
-                  <td className="px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center text-sm" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex flex-col gap-1 sm:flex-row justify-center">
-                      <button 
-                        onClick={() => handleEditClick(asset)}
-                        className="text-amber-600 hover:text-amber-700 font-medium text-sm md:text-base"
-                      >
-                        Edit
-                      </button>
-                      {asset.quantity > 1 && (
-                        <button
-                          onClick={() => handleSplitClick(asset)}
-                          className="text-purple-600 hover:text-purple-900 font-medium text-sm md:text-base flex items-center gap-1"
-                          title="Split / Report Faulty"
-                        >
-                          <Scissors size={14} />
-                          Split
-                        </button>
-                      )}
-                      {(asset.assigned_to || (asset.assigned_to_external && asset.assigned_to_external.name)) ? (
-                        <button 
-                          onClick={() => handleUnassign(asset)}
-                          className="text-orange-600 hover:text-orange-900 font-medium text-sm md:text-base"
-                        >
-                          Unassign
-                        </button>
-                      ) : (
-                        <button 
-                          onClick={() => handleAssignClick(asset)}
-                          className="text-green-600 hover:text-green-900 font-medium text-sm md:text-base"
-                        >
-                          Assign
-                        </button>
-                      )}
-                      <button 
-                        onClick={() => handleDelete(asset._id)}
-                        className="text-red-600 hover:text-red-900 font-medium text-sm md:text-base"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                )}
+                {orderedVisibleColumns.map((key) => renderAssetCell(asset, key))}
               </tr>
             ))}
           </tbody>
@@ -1755,6 +1875,12 @@ const Assets = () => {
                   className="flex-1 flex items-center justify-center gap-2 bg-gray-50 text-gray-700 py-2 rounded-md text-sm font-medium hover:bg-gray-100 transition-colors border border-gray-200"
                 >
                   <Edit size={16} /> Edit
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); openCommentModal(asset); }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-sky-50 text-sky-700 py-2 rounded-md text-sm font-medium hover:bg-sky-100 transition-colors border border-sky-200"
+                >
+                  <MessageSquarePlus size={16} /> Comment
                 </button>
                 {user?.role !== 'Viewer' && asset.quantity > 1 && (
                   <button
@@ -2633,6 +2759,45 @@ const Assets = () => {
                 }`}
               >
                 {confirmModal.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Asset Comment Modal */}
+      {assetCommentModal.isOpen && assetCommentModal.asset && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[100]">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <h2 className="text-xl font-bold mb-2">Add Asset Comment</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Asset: <strong>{assetCommentModal.asset.name}</strong> ({assetCommentModal.asset.serial_number || '-'})
+            </p>
+            <textarea
+              value={assetCommentModal.comment}
+              onChange={(e) => setAssetCommentModal((prev) => ({ ...prev, comment: e.target.value }))}
+              rows={4}
+              maxLength={500}
+              className="w-full border border-gray-300 rounded-md shadow-sm p-2 resize-y"
+              placeholder="Write your comment here..."
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {String(assetCommentModal.comment || '').length}/500
+            </p>
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setAssetCommentModal({ isOpen: false, asset: null, comment: '' })}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                disabled={savingComment}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitAssetComment}
+                disabled={savingComment}
+                className="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700 disabled:opacity-50"
+              >
+                {savingComment ? 'Saving...' : 'Save Comment'}
               </button>
             </div>
           </div>

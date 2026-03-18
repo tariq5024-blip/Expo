@@ -91,7 +91,7 @@ MONGO_URI=mongodb://user:pass@10.96.133.213:27017/expo-stores
 PORT=5000
 JWT_SECRET=replace_with_secure_random_value
 COOKIE_SECRET=replace_with_secure_random_value
-COOKIE_SECURE=false
+COOKIE_SECURE=auto
 ENABLE_CSRF=true
 CORS_ORIGIN=http://10.96.133.181
 SEED_DEFAULTS=false
@@ -114,7 +114,7 @@ When `SEED_DEFAULTS=true` (recommended only for first bootstrap), backend startu
 - `it@expo.com` / `admin123`
 - `noc@expo.com` / `admin123`
 
-This is idempotent and safe across restarts, as long as MongoDB data persists.
+This is idempotent and safe across restarts, as long as MongoDB data persists. After first bootstrap, set `SEED_DEFAULTS=false` for production operation.
 
 Run backend:
 

@@ -35,10 +35,26 @@ const upload = multer({
     files: 10
   }
 });
+const asFiniteNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+const normalizeAttachmentPath = (inputPath) => {
+  const raw = String(inputPath || '').trim();
+  if (!raw) return '';
+  const withoutQuery = raw.split('?')[0].split('#')[0];
+  const normalized = `/${withoutQuery.replace(/^\/+/, '')}`;
+  if (!normalized.startsWith('/uploads/')) return '';
+  const baseName = path.basename(normalized);
+  if (!baseName) return '';
+  return `/uploads/${baseName}`;
+};
 const safeUnlinkUpload = (relativePath) => {
-  const normalized = String(relativePath || '').replace(/^\/+/, '');
+  const normalized = normalizeAttachmentPath(relativePath);
   if (!normalized) return;
-  const fullPath = path.join(__dirname, '..', normalized);
+  const fullPath = path.resolve(path.join(__dirname, '..', normalized.replace(/^\/+/, '')));
+  const uploadsRoot = path.resolve(uploadRoot) + path.sep;
+  if (!fullPath.startsWith(uploadsRoot)) return;
   try {
     if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
   } catch {
@@ -151,14 +167,32 @@ router.post('/', protect, admin, upload.array('attachments'), async (req, res) =
     }
 
     const attachments = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
-
-    const po = await PurchaseOrder.create({
-      ...req.body,
+    const safeItems = Array.isArray(req.body.items)
+      ? req.body.items.map((item = {}) => ({
+          itemName: String(item.itemName || '').trim(),
+          quantity: asFiniteNumber(item.quantity, 0),
+          rate: asFiniteNumber(item.rate, 0),
+          tax: asFiniteNumber(item.tax, 0),
+          total: asFiniteNumber(item.total, 0)
+        }))
+      : [];
+    const payload = {
       poNumber,
+      vendor: req.body.vendor,
+      orderDate: req.body.orderDate,
+      deliveryDate: req.body.deliveryDate || undefined,
+      items: safeItems,
+      subtotal: asFiniteNumber(req.body.subtotal, 0),
+      taxTotal: asFiniteNumber(req.body.taxTotal, 0),
+      grandTotal: asFiniteNumber(req.body.grandTotal, 0),
+      notes: String(req.body.notes || '').trim(),
+      status: req.body.status || 'Draft',
       attachments,
       createdBy: req.user._id,
       store: req.activeStore
-    });
+    };
+
+    const po = await PurchaseOrder.create(payload);
 
     res.status(201).json(po);
   } catch (error) {
@@ -198,7 +232,7 @@ router.put('/:id', protect, admin, upload.array('attachments'), async (req, res)
           : null);
       const keepSet = new Set(
         (Array.isArray(existingAttachments) ? existingAttachments : (po.attachments || []))
-          .map((item) => String(item || '').trim())
+          .map((item) => normalizeAttachmentPath(item))
           .filter(Boolean)
       );
       const previousAttachments = Array.isArray(po.attachments) ? po.attachments : [];
@@ -208,9 +242,24 @@ router.put('/:id', protect, admin, upload.array('attachments'), async (req, res)
         }
       });
       const updatedAttachments = [...Array.from(keepSet), ...newAttachments];
-      
-      // Update fields
-      Object.assign(po, req.body);
+      const items = Array.isArray(req.body.items)
+        ? req.body.items.map((item = {}) => ({
+            itemName: String(item.itemName || '').trim(),
+            quantity: asFiniteNumber(item.quantity, 0),
+            rate: asFiniteNumber(item.rate, 0),
+            tax: asFiniteNumber(item.tax, 0),
+            total: asFiniteNumber(item.total, 0)
+          }))
+        : po.items;
+      po.vendor = req.body.vendor || po.vendor;
+      po.orderDate = req.body.orderDate || po.orderDate;
+      po.deliveryDate = req.body.deliveryDate || null;
+      po.items = items;
+      po.subtotal = asFiniteNumber(req.body.subtotal, po.subtotal);
+      po.taxTotal = asFiniteNumber(req.body.taxTotal, po.taxTotal);
+      po.grandTotal = asFiniteNumber(req.body.grandTotal, po.grandTotal);
+      po.notes = req.body.notes !== undefined ? String(req.body.notes || '').trim() : po.notes;
+      po.status = req.body.status || po.status;
       po.attachments = updatedAttachments; // explicit set to ensure merge
 
       const updatedPO = await po.save();

@@ -5,6 +5,31 @@ const ActivityLog = require('../models/ActivityLog');
 const { protect, adminOrViewer, restrictViewer } = require('../middleware/authMiddleware');
 
 const normalize = (v) => String(v || '').trim();
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const toNumber = (v, fallback = 0) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
+  if (v && typeof v === 'object') {
+    if (v.value !== undefined) {
+      const n = Number(v.value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+    return fallback;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const sanitizeConsumableNumbers = (item) => {
+  if (!item) return;
+  item.quantity = Math.max(toNumber(item.quantity, 0), 0);
+  item.min_quantity = Math.max(toNumber(item.min_quantity, 0), 0);
+  if (Array.isArray(item.history)) {
+    item.history = item.history.map((entry) => ({
+      ...entry,
+      quantity: Math.max(toNumber(entry?.quantity, 0), 0)
+    }));
+  }
+};
 
 const canAccess = (req, item) => {
   if (req.user.role === 'Super Admin') return true;
@@ -17,7 +42,7 @@ const pushHistory = (item, { action, actor, quantity = 0, note = '' }) => {
     action,
     actorId: actor?._id || null,
     actorName: actor?.name || '',
-    quantity: Number(quantity) || 0,
+    quantity: Math.max(toNumber(quantity, 0), 0),
     note: normalize(note)
   });
 };
@@ -34,7 +59,7 @@ router.get('/', protect, async (req, res) => {
 
     if (q || byName) {
       const term = q || byName;
-      const rx = new RegExp(term, 'i');
+      const rx = new RegExp(escapeRegex(term), 'i');
       filter.$or = [
         { name: rx },
         { type: rx },
@@ -89,8 +114,8 @@ router.post('/', protect, adminOrViewer, restrictViewer, async (req, res) => {
       po_number: normalize(po_number),
       location: normalize(location),
       comment: normalize(comment),
-      quantity: Number(quantity) || 0,
-      min_quantity: Number(min_quantity) || 0,
+      quantity: Math.max(toNumber(quantity, 0), 0),
+      min_quantity: Math.max(toNumber(min_quantity, 0), 0),
       store: storeId
     });
 
@@ -125,8 +150,9 @@ router.put('/:id', protect, adminOrViewer, restrictViewer, async (req, res) => {
     fields.forEach((key) => {
       if (req.body[key] !== undefined) item[key] = normalize(req.body[key]);
     });
-    if (req.body.quantity !== undefined) item.quantity = Math.max(Number(req.body.quantity) || 0, 0);
-    if (req.body.min_quantity !== undefined) item.min_quantity = Math.max(Number(req.body.min_quantity) || 0, 0);
+    if (req.body.quantity !== undefined) item.quantity = Math.max(toNumber(req.body.quantity, 0), 0);
+    if (req.body.min_quantity !== undefined) item.min_quantity = Math.max(toNumber(req.body.min_quantity, 0), 0);
+    sanitizeConsumableNumbers(item);
 
     pushHistory(item, { action: 'Updated', actor: req.user, quantity: item.quantity, note: 'Consumable updated' });
     await item.save();
@@ -141,7 +167,7 @@ router.put('/:id', protect, adminOrViewer, restrictViewer, async (req, res) => {
 // @access  Private/Admin|Technician
 router.post('/:id/consume', protect, restrictViewer, async (req, res) => {
   try {
-    const qty = Math.max(Number(req.body.quantity) || 0, 0);
+    const qty = Math.max(toNumber(req.body.quantity, 0), 0);
     if (!qty) return res.status(400).json({ message: 'Quantity must be greater than 0' });
 
     const item = await Consumable.findById(req.params.id);
@@ -151,8 +177,10 @@ router.post('/:id/consume', protect, restrictViewer, async (req, res) => {
       return res.status(400).json({ message: `Not enough stock. Available: ${item.quantity}` });
     }
 
-    item.quantity -= qty;
+    sanitizeConsumableNumbers(item);
+    item.quantity = Math.max(toNumber(item.quantity, 0) - qty, 0);
     pushHistory(item, { action: 'Consumed', actor: req.user, quantity: qty, note: req.body?.comment || 'Consumed from panel' });
+    sanitizeConsumableNumbers(item);
     await item.save();
 
     await ActivityLog.create({
@@ -178,7 +206,9 @@ router.delete('/:id', protect, adminOrViewer, restrictViewer, async (req, res) =
     const item = await Consumable.findById(req.params.id);
     if (!item) return res.status(404).json({ message: 'Consumable not found' });
     if (!canAccess(req, item)) return res.status(403).json({ message: 'Not authorized for this store item' });
+    sanitizeConsumableNumbers(item);
     pushHistory(item, { action: 'Deleted', actor: req.user, quantity: item.quantity, note: 'Consumable removed' });
+    sanitizeConsumableNumbers(item);
     await item.save();
     await item.deleteOne();
     res.json({ message: 'Consumable removed' });

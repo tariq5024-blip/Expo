@@ -11,7 +11,7 @@ const SystemLogs = () => {
     const fetchLogs = async () => {
       try {
         const res = await api.get('/assets/activity-logs');
-        setLogs(res.data);
+        setLogs(Array.isArray(res.data) ? res.data : []);
         setError('');
       } catch (error) {
         console.error('Error fetching activity logs:', error);

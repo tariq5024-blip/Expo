@@ -28,7 +28,13 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-if rg -n "replace_with_secure_random_value|replace_with_64_hex_chars_or_base64_32_bytes|change_this_to_a_secure_random_string|change_me_to_random_32_bytes|emergency_unlock" "$ENV_FILE" >/dev/null 2>&1; then
+PLACEHOLDER_PATTERN="replace_with_secure_random_value|replace_with_64_hex_chars_or_base64_32_bytes|change_this_to_a_secure_random_string|change_me_to_random_32_bytes|emergency_unlock"
+if command -v rg >/dev/null 2>&1; then
+  MATCH_CMD=(rg -n "$PLACEHOLDER_PATTERN" "$ENV_FILE")
+else
+  MATCH_CMD=(grep -En "$PLACEHOLDER_PATTERN" "$ENV_FILE")
+fi
+if "${MATCH_CMD[@]}" >/dev/null 2>&1; then
   echo "$ENV_FILE still contains placeholder/insecure secret values." >&2
   echo "Update JWT_SECRET, COOKIE_SECRET, EMERGENCY_RESET_SECRET, and EMAIL_CONFIG_ENCRYPTION_KEY." >&2
   exit 1

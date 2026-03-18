@@ -51,7 +51,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   }
   
   if (!user) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   // Super Admin / Viewer Logic: Must have active store selected, unless on /portal

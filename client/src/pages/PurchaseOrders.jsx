@@ -4,6 +4,19 @@ import { useAuth } from '../context/AuthContext';
 import { Plus, Edit, Trash2, Eye, Printer, Paperclip, Download, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
+const asArray = (value) => (Array.isArray(value) ? value : []);
+const asNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+const formatMoney = (value) => asNumber(value, 0).toFixed(2);
+const dateInputValue = (value) => {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toISOString().split('T')[0];
+};
+
 const PurchaseOrders = ({ onImportClick, headerActions }) => {
   const { user } = useAuth();
   const [pos, setPos] = useState([]);
@@ -40,7 +53,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
   const fetchPOs = async () => {
     try {
       const res = await api.get('/purchase-orders');
-      setPos(res.data);
+      setPos(asArray(res.data));
     } catch (err) {
       console.error(err);
     }
@@ -49,7 +62,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
   const fetchVendors = async () => {
     try {
       const res = await api.get('/vendors');
-      setVendors(res.data.filter(v => v.status === 'Active'));
+      setVendors(asArray(res.data).filter(v => v.status === 'Active'));
     } catch (err) {
       console.error(err);
     }
@@ -188,18 +201,24 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
   const handleEdit = (po) => {
     setFormData({
       poNumber: po.poNumber || '',
-      vendor: po.vendor._id,
-      orderDate: po.orderDate.split('T')[0],
-      deliveryDate: po.deliveryDate ? po.deliveryDate.split('T')[0] : '',
-      items: po.items,
-      subtotal: po.subtotal,
-      taxTotal: po.taxTotal,
-      grandTotal: po.grandTotal,
-      notes: po.notes,
-      status: po.status
+      vendor: po.vendor?._id || po.vendor || '',
+      orderDate: dateInputValue(po.orderDate),
+      deliveryDate: dateInputValue(po.deliveryDate),
+      items: asArray(po.items).map((item = {}) => ({
+        itemName: item.itemName || '',
+        quantity: asNumber(item.quantity, 1),
+        rate: asNumber(item.rate, 0),
+        tax: asNumber(item.tax, 0),
+        total: asNumber(item.total, 0)
+      })),
+      subtotal: asNumber(po.subtotal, 0),
+      taxTotal: asNumber(po.taxTotal, 0),
+      grandTotal: asNumber(po.grandTotal, 0),
+      notes: po.notes || '',
+      status: po.status || 'Draft'
     });
     setExistingAttachments(po.attachments || []);
-    setSelectedVendorDetails(po.vendor);
+    setSelectedVendorDetails(po.vendor || null);
     setEditingId(po._id);
     setView('form');
   };
@@ -436,7 +455,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                       />
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {item.total.toFixed(2)}
+                      {formatMoney(item.total)}
                     </td>
                     <td className="px-4 py-2 text-center">
                       {!isReadOnly && (
@@ -497,15 +516,15 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
             <div className="bg-gray-50 p-4 rounded space-y-2">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
-                <span>{formData.subtotal.toFixed(2)}</span>
+                <span>{formatMoney(formData.subtotal)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Tax Total:</span>
-                <span>{formData.taxTotal.toFixed(2)}</span>
+                <span>{formatMoney(formData.taxTotal)}</span>
               </div>
               <div className="flex justify-between font-bold text-lg border-t pt-2 border-gray-300">
                 <span>Grand Total:</span>
-                <span>{formData.grandTotal.toFixed(2)}</span>
+                <span>{formatMoney(formData.grandTotal)}</span>
               </div>
             </div>
           </div>
@@ -604,7 +623,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {pos.map((po) => (
+            {asArray(pos).map((po) => (
               <tr key={po._id}>
                 <td className="px-6 py-4 whitespace-nowrap font-medium text-indigo-600">
                   <div className="flex items-center gap-2">
@@ -616,7 +635,7 @@ const PurchaseOrders = ({ onImportClick, headerActions }) => {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">{po.vendor?.name || 'Unknown'}</td>
                 <td className="px-6 py-4 whitespace-nowrap">{new Date(po.orderDate).toLocaleDateString()}</td>
-                <td className="px-6 py-4 whitespace-nowrap font-bold">{po.grandTotal.toFixed(2)}</td>
+                <td className="px-6 py-4 whitespace-nowrap font-bold">{formatMoney(po.grandTotal)}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                     po.status === 'Approved' ? 'bg-green-100 text-green-800' : 

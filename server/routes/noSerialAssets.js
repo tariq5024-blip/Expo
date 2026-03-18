@@ -4,6 +4,16 @@ const UnregisteredAsset = require('../models/UnregisteredAsset');
 const { protect, admin } = require('../middleware/authMiddleware');
 
 const LOW_STOCK_THRESHOLD = 5;
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const getScopedStoreId = (req) => String(req.activeStore || req.user?.assignedStore || '').trim();
+const hasNoSerialStoreAccess = (req, item) => {
+  if (req.user?.role === 'Super Admin') return true;
+  const scopedStoreId = getScopedStoreId(req);
+  const itemStoreId = String(item?.store || '').trim();
+  if (!scopedStoreId) return itemStoreId === '';
+  if (!itemStoreId) return true; // keep compatibility with legacy global no-serial rows
+  return scopedStoreId === itemStoreId;
+};
 
 // Technician portal: allow Admin, Super Admin, Viewer, Technician to view; only Admin to create/update/delete
 const allowViewNoSerial = (req, res, next) => {
@@ -29,7 +39,7 @@ router.get('/', protect, allowViewNoSerial, async (req, res) => {
     }
 
     if (q && String(q).trim()) {
-      const term = String(q).trim();
+      const term = escapeRegex(String(q).trim());
       andConditions.push({
         $or: [
           { asset_name: { $regex: term, $options: 'i' } },
@@ -43,10 +53,10 @@ router.get('/', protect, allowViewNoSerial, async (req, res) => {
     const filter = andConditions.length ? { $and: andConditions } : {};
 
     if (category && String(category).trim()) {
-      filter.category = { $regex: String(category).trim(), $options: 'i' };
+      filter.category = { $regex: escapeRegex(String(category).trim()), $options: 'i' };
     }
     if (location && String(location).trim()) {
-      filter.location = { $regex: String(location).trim(), $options: 'i' };
+      filter.location = { $regex: escapeRegex(String(location).trim()), $options: 'i' };
     }
 
     const assets = await UnregisteredAsset.find(filter)
@@ -113,6 +123,9 @@ router.put('/:id', protect, admin, async (req, res) => {
     const { asset_name, description, category, location, quantity } = req.body;
     const asset = await UnregisteredAsset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (!hasNoSerialStoreAccess(req, asset)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
 
     if (asset_name !== undefined) asset.asset_name = String(asset_name).trim();
     if (description !== undefined) asset.description = String(description).trim();
@@ -133,8 +146,12 @@ router.put('/:id', protect, admin, async (req, res) => {
 // @access  Private (Admin)
 router.delete('/:id', protect, admin, async (req, res) => {
   try {
-    const asset = await UnregisteredAsset.findByIdAndDelete(req.params.id);
+    const asset = await UnregisteredAsset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (!hasNoSerialStoreAccess(req, asset)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
+    await asset.deleteOne();
     res.json({ message: 'Deleted' });
   } catch (error) {
     console.error('Error deleting no-serial asset:', error);
@@ -151,6 +168,9 @@ router.post('/:id/consume', protect, allowAdminOrTechnician, async (req, res) =>
     const amount = Math.max(1, parseInt(consumeQty, 10) || 1);
     const asset = await UnregisteredAsset.findById(req.params.id);
     if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (!hasNoSerialStoreAccess(req, asset)) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
 
     if (asset.quantity < amount) {
       return res.status(400).json({

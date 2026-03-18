@@ -333,6 +333,7 @@ const Assets = () => {
   const [techSearch, setTechSearch] = useState('');
   const [showTechSuggestions, setShowTechSuggestions] = useState(false);
   const [recipientType, setRecipientType] = useState('Technician');
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
   const [otherRecipient, setOtherRecipient] = useState({
     name: '',
     email: '',
@@ -1092,6 +1093,7 @@ const Assets = () => {
   };
 
   const handleAssignSubmit = async () => {
+    if (assignSubmitting) return;
     if (recipientType === 'Technician' && !assignForm.technicianId) {
       alert('Please select a technician');
       return;
@@ -1125,6 +1127,7 @@ const Assets = () => {
       }
     }
     try {
+      setAssignSubmitting(true);
       const payload = {
         assetId: assigningAsset._id,
         assetIds: assigningAssetIds.length > 0 ? assigningAssetIds : [assigningAsset._id],
@@ -1153,6 +1156,8 @@ const Assets = () => {
     } catch (error) {
       console.error('Error assigning asset:', error);
       alert('Failed to assign asset');
+    } finally {
+      setAssignSubmitting(false);
     }
   };
 
@@ -2557,15 +2562,17 @@ const Assets = () => {
             <div className="mt-6 flex justify-end space-x-3">
               <button
                 onClick={() => { setAssigningAsset(null); setAssigningAssetIds([]); }}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
+                disabled={assignSubmitting}
+                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleAssignSubmit}
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                disabled={assignSubmitting}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
               >
-                Assign
+                {assignSubmitting ? 'Assigning...' : 'Assign'}
               </button>
             </div>
           </div>

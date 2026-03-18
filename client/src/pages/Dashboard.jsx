@@ -18,6 +18,30 @@ import {
 } from 'lucide-react';
 
 const DASHBOARD_VENDORS = ['All', 'Siemens', 'G42'];
+const normalizeStats = (raw) => {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const overview = src.overview && typeof src.overview === 'object' ? src.overview : {};
+  return {
+    ...src,
+    overview: {
+      total: Number(overview.total || 0),
+      inUse: Number(overview.inUse || 0),
+      inStore: Number(overview.inStore || 0),
+      missing: Number(overview.missing || 0),
+      faulty: Number(overview.faulty || 0),
+      pendingReturns: Number(overview.pendingReturns || 0),
+      pendingRequests: Number(overview.pendingRequests || 0),
+      assetTypes: Number(overview.assetTypes || 0)
+    },
+    conditions: src.conditions && typeof src.conditions === 'object' ? src.conditions : {},
+    products: Array.isArray(src.products) ? src.products : [],
+    models: Array.isArray(src.models) ? src.models : [],
+    locations: Array.isArray(src.locations) ? src.locations : [],
+    categories: Array.isArray(src.categories) ? src.categories : [],
+    growth: Array.isArray(src.growth) ? src.growth : [],
+    maintenanceVendors: src.maintenanceVendors && typeof src.maintenanceVendors === 'object' ? src.maintenanceVendors : { Siemens: 0, G42: 0, Other: 0 }
+  };
+};
 
 const Dashboard = () => {
   const { user, activeStore } = useAuth();
@@ -66,7 +90,7 @@ const Dashboard = () => {
             api.get('/assets', { params: recentParams })
           ]);
           if (isStale()) return;
-          setStats(statsResponse.data);
+          setStats(normalizeStats(statsResponse.data));
           setRecentAssets(recentResponse.data?.assets || recentResponse.data?.items || []);
           lastError = null;
           break;

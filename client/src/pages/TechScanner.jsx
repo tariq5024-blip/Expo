@@ -36,6 +36,36 @@ const TechScanner = () => {
     fetchStores();
   }, []);
 
+  const normalizeText = (value) => String(value || '').trim().toLowerCase();
+  const pickBestScannerMatch = (assetsList = [], query = '') => {
+    const q = normalizeText(query);
+    const list = Array.isArray(assetsList) ? assetsList : [];
+    if (!q || list.length === 0) return list[0] || null;
+
+    const byExactSerial = list.filter((item) => normalizeText(item?.serial_number) === q);
+    const candidates = byExactSerial.length > 0 ? byExactSerial : list;
+
+    const rank = (item) => {
+      const reserved = item?.reserved === true || normalizeText(item?.status) === 'reserved';
+      const statusText = normalizeText(item?.status);
+      const conditionText = normalizeText(item?.condition);
+      const repaired = conditionText.includes('repair') || statusText.includes('repair');
+      const faulty = conditionText.includes('faulty') || statusText.includes('faulty');
+      if (reserved) return 3;
+      if (repaired) return 2;
+      if (!faulty) return 1;
+      return 0;
+    };
+
+    return [...candidates].sort((a, b) => {
+      const scoreDiff = rank(b) - rank(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      const at = new Date(a?.updatedAt || 0).getTime();
+      const bt = new Date(b?.updatedAt || 0).getTime();
+      return bt - at;
+    })[0] || null;
+  };
+
   const searchAsset = async (query) => {
     if (loading) return;
     setLoading(true);
@@ -44,7 +74,7 @@ const TechScanner = () => {
     try {
       const res = await api.get('/assets/search', { params: { query } });
       if (res.data.length > 0) {
-        setAsset(res.data[0]); // Take the first match
+        setAsset(pickBestScannerMatch(res.data, query));
       } else {
         setMessage('Asset not found');
         setAsset(null);
@@ -110,7 +140,7 @@ const TechScanner = () => {
       }
       // Refresh asset
       const res = await api.get('/assets/search', { params: { query: asset.serial_number } });
-      setAsset(res.data[0]);
+      setAsset(pickBestScannerMatch(res.data, asset.serial_number));
     } catch (error) {
       setMessage(error.response?.data?.message || 'Action failed');
     } finally {
@@ -130,7 +160,7 @@ const TechScanner = () => {
       await api.post('/assets/return', { assetId: asset._id, condition: returnCondition, ticketNumber });
       setMessage(`Asset returned as ${returnCondition}`);
       const res = await api.get('/assets/search', { params: { query: asset.serial_number } });
-      setAsset(res.data[0]);
+      setAsset(pickBestScannerMatch(res.data, asset.serial_number));
     } catch (error) {
       setMessage(error.response?.data?.message || 'Return failed');
     } finally {
@@ -139,6 +169,12 @@ const TechScanner = () => {
   };
 
   const techLabel = (a) => {
+    if (a?.reserved) return 'Reserved';
+    const statusText = String(a?.status || '').toLowerCase();
+    const conditionText = String(a?.condition || '').toLowerCase();
+    if (statusText.includes('reserved')) return 'Reserved';
+    if (conditionText.includes('repair') || statusText.includes('repair')) return 'Repaired';
+    if (statusText.includes('faulty') || conditionText.includes('faulty')) return 'Faulty';
     const lastByMe = [...(a.history || [])].reverse().find(h => h.user === user?.name);
     const lastCollected = [...(a.history || [])].reverse().find(h => /^Collected\//.test(h.action) && h.user === user?.name);
     if (a.status === 'Used' && lastCollected) {
@@ -323,9 +359,9 @@ const TechScanner = () => {
             <div className="grid grid-cols-2 gap-4">
               <button 
                 onClick={() => handleAction('collect')}
-                disabled={loading || asset.assigned_to || asset.status === 'Missing' || String(asset.condition || '').toLowerCase().includes('faulty')}
+                disabled={loading || asset.reserved || asset.assigned_to || asset.status === 'Missing' || String(asset.condition || '').toLowerCase().includes('faulty')}
                 className={`py-3 rounded text-white font-medium ${
-                  (!loading && !asset.assigned_to && asset.status !== 'Missing' && !String(asset.condition || '').toLowerCase().includes('faulty'))
+                  (!loading && !asset.reserved && !asset.assigned_to && asset.status !== 'Missing' && !String(asset.condition || '').toLowerCase().includes('faulty'))
                     ? 'bg-green-600 hover:bg-green-700'
                     : 'bg-gray-400 cursor-not-allowed'
                 }`}

@@ -5,6 +5,7 @@ const ActivityLog = require('../models/ActivityLog');
 const { protect, adminOrViewer, restrictViewer } = require('../middleware/authMiddleware');
 
 const normalize = (v) => String(v || '').trim();
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const canAccessTool = (req, tool) => {
   if (!tool) return false;
@@ -37,7 +38,7 @@ router.get('/', protect, async (req, res) => {
 
     if (req.activeStore) filter.store = req.activeStore;
     if (status) filter.status = status;
-    if (location) filter.location = new RegExp(location, 'i');
+    if (location) filter.location = new RegExp(escapeRegex(location), 'i');
 
     if (mine) {
       filter.currentHolder = req.user._id;
@@ -49,7 +50,7 @@ router.get('/', protect, async (req, res) => {
     }
 
     if (q) {
-      const rx = new RegExp(q, 'i');
+      const rx = new RegExp(escapeRegex(q), 'i');
       filter.$and = filter.$and || [];
       filter.$and.push({
         $or: [

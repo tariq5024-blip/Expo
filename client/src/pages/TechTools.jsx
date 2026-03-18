@@ -1,6 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/axios';
 
+const toDisplay = (value, fallback = '-') => {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'object') {
+    if (value.value != null && value.value !== '') return String(value.value);
+    if (value.label != null && value.label !== '') return String(value.label);
+    return fallback;
+  }
+  return String(value);
+};
+
+const toNumber = (value, fallback = 0) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  if (typeof value === 'object' && value?.value != null) {
+    const parsed = Number(value.value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const TechTools = () => {
   const [tools, setTools] = useState([]);
   const [mine, setMine] = useState([]);
@@ -10,6 +30,7 @@ const TechTools = () => {
   const [consumableNameQuery, setConsumableNameQuery] = useState('');
   const [note, setNote] = useState('');
   const [consumeQty, setConsumeQty] = useState({});
+  const [actionBusy, setActionBusy] = useState({});
 
   const load = async () => {
     try {
@@ -53,34 +74,46 @@ const TechTools = () => {
   }, [consumables, consumableNameQuery]);
 
   const issueTool = async (toolId) => {
+    if (actionBusy[`issue-${toolId}`]) return;
     try {
+      setActionBusy((prev) => ({ ...prev, [`issue-${toolId}`]: true }));
       await api.post(`/tools/${toolId}/issue`, { comment: note });
       setNote('');
       await load();
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to get tool');
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [`issue-${toolId}`]: false }));
     }
   };
 
   const returnTool = async (toolId) => {
+    if (actionBusy[`return-${toolId}`]) return;
     try {
+      setActionBusy((prev) => ({ ...prev, [`return-${toolId}`]: true }));
       await api.post(`/tools/${toolId}/return`, { comment: note });
       setNote('');
       await load();
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to return tool');
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [`return-${toolId}`]: false }));
     }
   };
 
   const consumeItem = async (id) => {
+    if (actionBusy[`consume-${id}`]) return;
     const qty = Math.max(Number(consumeQty[id] || 1), 1);
     try {
+      setActionBusy((prev) => ({ ...prev, [`consume-${id}`]: true }));
       await api.post(`/consumables/${id}/consume`, { quantity: qty, comment: note });
       setConsumeQty((prev) => ({ ...prev, [id]: 1 }));
       setNote('');
       await load();
     } catch (error) {
       alert(error.response?.data?.message || 'Failed to consume item');
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [`consume-${id}`]: false }));
     }
   };
 
@@ -131,16 +164,20 @@ const TechTools = () => {
               <tr><td colSpan={8} className="px-3 py-4 text-slate-500">No available tools.</td></tr>
             ) : available.map((tool) => (
               <tr key={tool._id} className="border-t">
-                <td className="px-3 py-2">{tool.name}</td>
-                <td className="px-3 py-2">{tool.type || '-'}</td>
-                <td className="px-3 py-2">{tool.model || '-'}</td>
-                <td className="px-3 py-2">{tool.serial_number || '-'}</td>
-                <td className="px-3 py-2">{tool.mac_address || '-'}</td>
-                <td className="px-3 py-2">{tool.location || '-'}</td>
-                <td className="px-3 py-2">{tool.po_number || '-'}</td>
+                <td className="px-3 py-2">{toDisplay(tool.name)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.type)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.model)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.serial_number)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.mac_address)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.location)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.po_number)}</td>
                 <td className="px-3 py-2">
-                  <button onClick={() => issueTool(tool._id)} className="px-3 py-1 rounded bg-amber-600 text-black hover:bg-amber-700">
-                    Get Tool
+                  <button
+                    onClick={() => issueTool(tool._id)}
+                    disabled={Boolean(actionBusy[`issue-${tool._id}`])}
+                    className="px-3 py-1 rounded bg-amber-600 text-black hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {actionBusy[`issue-${tool._id}`] ? 'Getting...' : 'Get Tool'}
                   </button>
                 </td>
               </tr>
@@ -169,14 +206,18 @@ const TechTools = () => {
               <tr><td colSpan={6} className="px-3 py-4 text-slate-500">No issued tools.</td></tr>
             ) : myIssued.map((tool) => (
               <tr key={tool._id} className="border-t">
-                <td className="px-3 py-2">{tool.name}</td>
-                <td className="px-3 py-2">{tool.type || '-'}</td>
-                <td className="px-3 py-2">{tool.model || '-'}</td>
-                <td className="px-3 py-2">{tool.serial_number || '-'}</td>
-                <td className="px-3 py-2">{tool.location || '-'}</td>
+                <td className="px-3 py-2">{toDisplay(tool.name)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.type)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.model)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.serial_number)}</td>
+                <td className="px-3 py-2">{toDisplay(tool.location)}</td>
                 <td className="px-3 py-2">
-                  <button onClick={() => returnTool(tool._id)} className="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">
-                    Return Tool
+                  <button
+                    onClick={() => returnTool(tool._id)}
+                    disabled={Boolean(actionBusy[`return-${tool._id}`])}
+                    className="px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {actionBusy[`return-${tool._id}`] ? 'Returning...' : 'Return Tool'}
                   </button>
                 </td>
               </tr>
@@ -207,17 +248,17 @@ const TechTools = () => {
               <tr><td colSpan={8} className="px-3 py-4 text-slate-500">No consumables found.</td></tr>
             ) : filteredConsumables.map((item) => (
               <tr key={item._id} className="border-t">
-                <td className="px-3 py-2">{item.name}</td>
-                <td className="px-3 py-2">{item.type || '-'}</td>
-                <td className="px-3 py-2">{item.model || '-'}</td>
-                <td className="px-3 py-2">{item.serial_number || '-'}</td>
-                <td className="px-3 py-2">{item.location || '-'}</td>
-                <td className="px-3 py-2">{item.quantity}</td>
+                <td className="px-3 py-2">{toDisplay(item.name)}</td>
+                <td className="px-3 py-2">{toDisplay(item.type)}</td>
+                <td className="px-3 py-2">{toDisplay(item.model)}</td>
+                <td className="px-3 py-2">{toDisplay(item.serial_number)}</td>
+                <td className="px-3 py-2">{toDisplay(item.location)}</td>
+                <td className="px-3 py-2">{toNumber(item.quantity, 0)}</td>
                 <td className="px-3 py-2">
                   <input
                     type="number"
                     min="1"
-                    max={Math.max(Number(item.quantity || 0), 1)}
+                    max={Math.max(toNumber(item.quantity, 0), 1)}
                     value={consumeQty[item._id] || 1}
                     onChange={(e) => setConsumeQty((prev) => ({ ...prev, [item._id]: e.target.value }))}
                     className="w-20 border border-slate-300 rounded-lg px-2 py-1"
@@ -226,10 +267,10 @@ const TechTools = () => {
                 <td className="px-3 py-2">
                   <button
                     onClick={() => consumeItem(item._id)}
-                    disabled={Number(item.quantity || 0) <= 0}
-                    className={`px-3 py-1 rounded ${Number(item.quantity || 0) <= 0 ? 'bg-slate-200 text-slate-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                    disabled={toNumber(item.quantity, 0) <= 0 || Boolean(actionBusy[`consume-${item._id}`])}
+                    className={`px-3 py-1 rounded ${(toNumber(item.quantity, 0) <= 0 || actionBusy[`consume-${item._id}`]) ? 'bg-slate-200 text-slate-500' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
                   >
-                    Consume
+                    {actionBusy[`consume-${item._id}`] ? 'Consuming...' : 'Consume'}
                   </button>
                 </td>
               </tr>

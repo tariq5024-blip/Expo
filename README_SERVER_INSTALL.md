@@ -105,10 +105,10 @@ MONGO_URI=mongodb://expo_user:CHANGE_ME_STRONG_PASSWORD@10.96.133.213:27017/expo
 PORT=5000
 JWT_SECRET=REPLACE_WITH_LONG_RANDOM_SECRET
 COOKIE_SECRET=REPLACE_WITH_LONG_RANDOM_SECRET
-COOKIE_SECURE=false
+COOKIE_SECURE=auto
 ENABLE_CSRF=true
 CORS_ORIGIN=http://10.96.133.181
-SEED_DEFAULTS=true
+SEED_DEFAULTS=false
 ```
 
 Install + start:
@@ -183,7 +183,7 @@ Browser:
 - `http://10.96.133.181`
 - (IP-only production URL)
 
-Default users (with `SEED_DEFAULTS=true`):
+Default users (only when `SEED_DEFAULTS=true` during initial bootstrap):
 
 - `superadmin@expo.com` / `superadmin123`
 - `scy@expo.com` / `admin123`

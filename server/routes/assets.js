@@ -860,12 +860,35 @@ router.get('/stats', protect, async (req, res) => {
     }
 
     const quantityExpr = {
-      $cond: [
-        { $gt: ['$quantity', 0] },
-        '$quantity',
-        1
-      ]
+      $let: {
+        vars: {
+          qty: {
+            $convert: {
+              input: '$quantity',
+              to: 'double',
+              onError: 1,
+              onNull: 1
+            }
+          }
+        },
+        in: {
+          $cond: [
+            { $gt: ['$$qty', 0] },
+            '$$qty',
+            1
+          ]
+        }
+      }
     };
+    const toSafeLower = (field) => ({
+      $toLower: {
+        $trim: {
+          input: {
+            $toString: { $ifNull: [field, ''] }
+          }
+        }
+      }
+    });
 
     const sumQuantity = async (match) => {
       const result = await Asset.aggregate([
@@ -926,8 +949,8 @@ router.get('/stats', protect, async (req, res) => {
             condBucket: {
               $switch: {
                 branches: [
-                  { case: { $regexMatch: { input: { $ifNull: ['$condition', ''] }, regex: /new/i } }, then: 'New' },
-                  { case: { $regexMatch: { input: { $ifNull: ['$condition', ''] }, regex: /used/i } }, then: 'Used' }
+                  { case: { $regexMatch: { input: { $toString: { $ifNull: ['$condition', ''] } }, regex: /new/i } }, then: 'New' },
+                  { case: { $regexMatch: { input: { $toString: { $ifNull: ['$condition', ''] } }, regex: /used/i } }, then: 'Used' }
                 ],
                 default: 'Used'
               }
@@ -944,8 +967,8 @@ router.get('/stats', protect, async (req, res) => {
             _id: {
               $cond: [
                 { $gt: [{ $strLenCP: { $ifNull: ['$model_number', '' ] } }, 0] },
-                { $toLower: '$model_number' },
-                { $toLower: '$product_name' }
+                toSafeLower('$model_number'),
+                toSafeLower('$product_name')
               ]
             },
             count: { $sum: quantityExpr }
@@ -957,14 +980,14 @@ router.get('/stats', protect, async (req, res) => {
       ]),
       Asset.aggregate([
         { $match: filter },
-        { $group: { _id: { $toLower: '$product_name' }, count: { $sum: quantityExpr } } },
+        { $group: { _id: toSafeLower('$product_name'), count: { $sum: quantityExpr } } },
         { $match: { _id: { $ne: '' } } },
         { $sort: { count: -1 } },
         { $limit: 10 }
       ]),
       Asset.aggregate([
         { $match: filter },
-        { $group: { _id: { $toLower: '$location' }, count: { $sum: quantityExpr } } },
+        { $group: { _id: toSafeLower('$location'), count: { $sum: quantityExpr } } },
         { $match: { _id: { $ne: '' } } },
         { $sort: { count: -1 } },
         { $limit: 10 }
@@ -983,7 +1006,7 @@ router.get('/stats', protect, async (req, res) => {
               $or: [
                 { $eq: ['$status', 'In Use'] },
                 { $ne: ['$assigned_to', null] },
-                { $regexMatch: { input: { $ifNull: ['$assigned_to_external.name', '' ] }, regex: /.+/ } }
+                { $regexMatch: { input: { $toString: { $ifNull: ['$assigned_to_external.name', '' ] } }, regex: /.+/ } }
               ]
             },
             isFaulty: {
@@ -1013,7 +1036,7 @@ router.get('/stats', protect, async (req, res) => {
       ]),
       Asset.aggregate([
         { $match: filter },
-        { $group: { _id: { $toLower: '$model_number' } } },
+        { $group: { _id: toSafeLower('$model_number') } },
         { $match: { _id: { $ne: '' } } },
         { $count: 'count' }
       ]),
@@ -1159,7 +1182,7 @@ router.get('/search', protect, async (req, res) => {
     }
 
     const assets = await Asset.find(qObj)
-      .select('name model_number serial_number uniqueId store status condition location assigned_to updatedAt')
+      .select('name model_number serial_number uniqueId store status condition location assigned_to reserved updatedAt')
       .populate('store', 'name')
       .populate('assigned_to', 'name email')
       .lean();
@@ -3536,8 +3559,16 @@ router.put('/:id', protect, admin, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id);
     if (asset) {
-      if (!hasAssetStoreAccess(req, asset.store)) {
-        return res.status(403).json({ message: 'Asset is outside your store scope' });
+      if (req.user?.role !== 'Super Admin') {
+        const scopedStoreId = getScopedStoreId(req);
+        if (!scopedStoreId) {
+          return res.status(403).json({ message: 'Asset is outside your store scope' });
+        }
+        const scopedStoreIds = await getStoreIds(scopedStoreId);
+        const inScope = scopedStoreIds.some((id) => String(id) === String(asset.store || ''));
+        if (!inScope) {
+          return res.status(403).json({ message: 'Asset is outside your store scope' });
+        }
       }
       const oldSerial = asset.serial_number;
       let prodName = product_name ? String(product_name) : '';

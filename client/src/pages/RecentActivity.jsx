@@ -10,7 +10,7 @@ const RecentActivity = () => {
     const fetchRecent = async () => {
       try {
         const res = await api.get('/assets/recent-activity?limit=50'); // Increased limit for full page view
-        setRecent(res.data);
+        setRecent(Array.isArray(res.data) ? res.data : []);
       } catch (error) {
         console.error('Error fetching recent activity:', error);
       } finally {

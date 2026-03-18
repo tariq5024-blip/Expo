@@ -1061,11 +1061,13 @@ router.get('/backup-cloud-config', protect, superAdmin, async (req, res) => {
   try {
     const doc = await Setting.findOne({ key: 'backupCloudConfig' }).lean();
     const value = doc?.value || {};
+    const secretAccessKeyPlain = decryptEmailSecret(value.secretAccessKey || '');
+    const serviceRoleKeyPlain = decryptEmailSecret(value.serviceRoleKey || '');
     res.json({
       ...value,
       // Never expose raw secrets to client
-      secretAccessKey: value.secretAccessKey ? '********' : '',
-      serviceRoleKey: value.serviceRoleKey ? '********' : ''
+      secretAccessKey: (secretAccessKeyPlain || value.secretAccessKey) ? '********' : '',
+      serviceRoleKey: (serviceRoleKeyPlain || value.serviceRoleKey) ? '********' : ''
     });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to load cloud backup config' });
@@ -1080,6 +1082,14 @@ router.put('/backup-cloud-config', protect, superAdmin, async (req, res) => {
     const existing = await Setting.findOne({ key: 'backupCloudConfig' }).lean();
     const previous = existing?.value || {};
     const payload = req.body || {};
+    const previousSecretAccessKey = decryptEmailSecret(previous.secretAccessKey || '') || String(previous.secretAccessKey || '');
+    const previousServiceRoleKey = decryptEmailSecret(previous.serviceRoleKey || '') || String(previous.serviceRoleKey || '');
+    const submittedSecret = payload.secretAccessKey && payload.secretAccessKey !== '********'
+      ? String(payload.secretAccessKey)
+      : previousSecretAccessKey;
+    const submittedRoleSecret = payload.serviceRoleKey && payload.serviceRoleKey !== '********'
+      ? String(payload.serviceRoleKey)
+      : previousServiceRoleKey;
     const merged = {
       enabled: Boolean(payload.enabled),
       provider: payload.provider || '',
@@ -1087,10 +1097,10 @@ router.put('/backup-cloud-config', protect, superAdmin, async (req, res) => {
       region: payload.region || '',
       endpoint: payload.endpoint || '',
       accessKeyId: payload.accessKeyId || previous.accessKeyId || '',
-      secretAccessKey: payload.secretAccessKey && payload.secretAccessKey !== '********' ? payload.secretAccessKey : (previous.secretAccessKey || ''),
+      secretAccessKey: submittedSecret ? encryptEmailSecret(submittedSecret) : '',
       forcePathStyle: Boolean(payload.forcePathStyle),
       url: payload.url || previous.url || '',
-      serviceRoleKey: payload.serviceRoleKey && payload.serviceRoleKey !== '********' ? payload.serviceRoleKey : (previous.serviceRoleKey || '')
+      serviceRoleKey: submittedRoleSecret ? encryptEmailSecret(submittedRoleSecret) : ''
     };
     await Setting.updateOne(
       { key: 'backupCloudConfig' },

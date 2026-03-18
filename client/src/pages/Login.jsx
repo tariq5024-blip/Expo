@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
@@ -9,18 +9,27 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const { login, user, loading: authLoading, branding } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const fromPath = location.state?.from?.pathname;
+  const redirectAfterLogin = (loggedUser) => {
+    if (fromPath && fromPath !== '/login') {
+      navigate(fromPath, { replace: true });
+      return;
+    }
+    if (loggedUser.role === 'Super Admin') {
+      navigate('/portal', { replace: true });
+    } else if (loggedUser.role === 'Technician') {
+      navigate('/scanner', { replace: true });
+    } else {
+      navigate('/', { replace: true });
+    }
+  };
 
   useEffect(() => {
     if (!authLoading && user) {
-      if (user.role === 'Super Admin') {
-        navigate('/portal');
-      } else if (user.role === 'Technician') {
-        navigate('/scanner');
-      } else {
-        navigate('/');
-      }
+      redirectAfterLogin(user);
     }
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, navigate, fromPath]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,13 +40,7 @@ const Login = () => {
       // Backend expects 'email' key but we configured it to check username too
       const loggedInUser = await login(identifier, password);
       
-      if (loggedInUser.role === 'Super Admin') {
-        navigate('/portal');
-      } else if (loggedInUser.role === 'Technician') {
-        navigate('/scanner');
-      } else {
-        navigate('/');
-      }
+      redirectAfterLogin(loggedInUser);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to login');
     } finally {

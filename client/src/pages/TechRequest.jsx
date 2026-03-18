@@ -17,7 +17,7 @@ const TechRequest = () => {
     const loadStores = async () => {
       try {
         const res = await api.get('/stores');
-        setStores(res.data);
+        setStores(Array.isArray(res.data) ? res.data : []);
       } catch (e) {
         console.error(e);
       }
@@ -26,11 +26,12 @@ const TechRequest = () => {
     const loadMine = async () => {
       try {
         const res = await api.get('/requests/mine');
-        setRequests(res.data);
+        const list = Array.isArray(res.data) ? res.data : [];
+        setRequests(list);
         const lastSeen = localStorage.getItem(lastSeenKey);
         if (lastSeen) {
           const lastSeenTime = new Date(lastSeen).getTime();
-          const newest = res.data[0]?.updatedAt ? new Date(res.data[0].updatedAt).getTime() : 0;
+          const newest = list[0]?.updatedAt ? new Date(list[0].updatedAt).getTime() : 0;
           setHasUpdates(newest > lastSeenTime);
         } else {
           setHasUpdates(false);
@@ -55,7 +56,7 @@ const TechRequest = () => {
       setMessage('Request submitted');
       setForm({ item_name: '', quantity: 1, description: '', store: '' });
       const res = await api.get('/requests/mine');
-      setRequests(res.data);
+      setRequests(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       setMessage(err.response?.data?.message || 'Failed to submit request');
     } finally {

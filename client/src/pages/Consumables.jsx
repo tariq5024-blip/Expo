@@ -27,12 +27,27 @@ const asText = (value, fallback = '-') => {
   return s || fallback;
 };
 
-const asNumber = (value, fallback = 0) => {
-  if (typeof value === 'object' && value !== null && Object.prototype.hasOwnProperty.call(value, 'value')) {
-    const n = Number(value.value);
-    return Number.isFinite(n) ? n : fallback;
+const unwrapValueLayers = (v, maxDepth = 12) => {
+  let x = v;
+  let d = 0;
+  while (
+    x != null &&
+    typeof x === 'object' &&
+    !Array.isArray(x) &&
+    Object.prototype.hasOwnProperty.call(x, 'value') &&
+    d < maxDepth
+  ) {
+    x = x.value;
+    d += 1;
   }
-  const n = Number(value);
+  return x;
+};
+
+const asNumber = (value, fallback = 0) => {
+  const x = unwrapValueLayers(value);
+  if (typeof x === 'number') return Number.isFinite(x) ? x : fallback;
+  if (x === null || x === undefined || x === '') return fallback;
+  const n = Number(x);
   return Number.isFinite(n) ? n : fallback;
 };
 
@@ -80,10 +95,15 @@ const Consumables = () => {
     if (!canWrite) return;
     try {
       setSaving(true);
+      const payload = {
+        ...form,
+        quantity: asNumber(form.quantity, 0),
+        min_quantity: asNumber(form.min_quantity, 0)
+      };
       if (editing?._id) {
-        await api.put(`/consumables/${editing._id}`, form);
+        await api.put(`/consumables/${editing._id}`, payload);
       } else {
-        await api.post('/consumables', form);
+        await api.post('/consumables', payload);
       }
       setForm(formDefaults);
       setEditing(null);

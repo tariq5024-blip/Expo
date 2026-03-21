@@ -6,42 +6,71 @@ const { protect, adminOrViewer, restrictViewer } = require('../middleware/authMi
 
 const normalize = (v) => String(v || '').trim();
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const toNumber = (v, fallback = 0) => {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
-  if (v && typeof v === 'object') {
-    if (v.value !== undefined) {
-      const n = Number(v.value);
-      return Number.isFinite(n) ? n : fallback;
-    }
-    return fallback;
+
+/** Unwrap oplog/import shapes like { value: { value: 0 } } */
+function unwrapValueLayers(v, maxDepth = 12) {
+  let x = v;
+  let d = 0;
+  while (
+    x != null &&
+    typeof x === 'object' &&
+    !Array.isArray(x) &&
+    !(x instanceof Date) &&
+    Object.prototype.hasOwnProperty.call(x, 'value') &&
+    d < maxDepth
+  ) {
+    x = x.value;
+    d += 1;
   }
-  const n = Number(v);
+  return x;
+}
+
+const toNumber = (v, fallback = 0) => {
+  const x = unwrapValueLayers(v);
+  if (typeof x === 'number') return Number.isFinite(x) ? x : fallback;
+  if (x === null || x === undefined || x === '') return fallback;
+  const n = Number(x);
   return Number.isFinite(n) ? n : fallback;
 };
+
 const toDate = (v, fallback = new Date()) => {
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
-  if (v && typeof v === 'object' && v.value !== undefined) {
-    const d = new Date(v.value);
+  const x = unwrapValueLayers(v);
+  if (x instanceof Date && !Number.isNaN(x.getTime())) return x;
+  if (x && typeof x === 'object' && !Array.isArray(x) && !(x instanceof Date)) {
+    if (Object.keys(x).length === 0) return fallback;
+  }
+  if (typeof x === 'string' || typeof x === 'number') {
+    const d = new Date(x);
     if (!Number.isNaN(d.getTime())) return d;
     return fallback;
   }
-  const d = new Date(v);
+  const d = new Date(x);
   if (!Number.isNaN(d.getTime())) return d;
   return fallback;
 };
+
+const HISTORY_ACTIONS = new Set(['Created', 'Updated', 'Consumed', 'Restocked', 'Deleted']);
 
 const sanitizeConsumableNumbers = (item) => {
   if (!item) return;
   item.quantity = Math.max(toNumber(item.quantity, 0), 0);
   item.min_quantity = Math.max(toNumber(item.min_quantity, 0), 0);
-  if (item.createdAt !== undefined) item.createdAt = toDate(item.createdAt, new Date());
-  if (item.updatedAt !== undefined) item.updatedAt = toDate(item.updatedAt, new Date());
+  item.createdAt = toDate(item.createdAt, new Date());
+  item.updatedAt = toDate(item.updatedAt, new Date());
   if (Array.isArray(item.history)) {
-    item.history = item.history.map((entry) => ({
-      ...entry,
-      quantity: Math.max(toNumber(entry?.quantity, 0), 0),
-      createdAt: toDate(entry?.createdAt, new Date())
-    }));
+    item.history = item.history.map((entry) => {
+      const action = HISTORY_ACTIONS.has(entry?.action) ? entry.action : 'Updated';
+      return {
+        action,
+        actorId: entry?.actorId ?? null,
+        actorName: normalize(entry?.actorName),
+        quantity: Math.max(toNumber(entry?.quantity, 0), 0),
+        note: normalize(entry?.note),
+        createdAt: toDate(entry?.createdAt, new Date())
+      };
+    });
+    item.markModified('history');
   }
 };
 
@@ -236,7 +265,12 @@ router.delete('/:id', protect, adminOrViewer, restrictViewer, async (req, res) =
     if (!item) return res.status(404).json({ message: 'Consumable not found' });
     if (!canAccess(req, item)) return res.status(403).json({ message: 'Not authorized for this store item' });
     sanitizeConsumableNumbers(item);
-    pushHistory(item, { action: 'Deleted', actor: req.user, quantity: item.quantity, note: 'Consumable removed' });
+    pushHistory(item, {
+      action: 'Deleted',
+      actor: req.user,
+      quantity: toNumber(item.quantity, 0),
+      note: 'Consumable removed'
+    });
     sanitizeConsumableNumbers(item);
     await item.save();
     await item.deleteOne();

@@ -2,40 +2,36 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 async function backupDatabase() {
-  if (!process.env.MONGO_URI) {
-    throw new Error('MONGO_URI is missing in .env');
-  }
+  const mongoUri = String(process.env.MONGO_URI || process.env.LOCAL_FALLBACK_MONGO_URI || 'mongodb://127.0.0.1:27017/expo').trim();
 
   const shouldConnect = mongoose.connection.readyState !== 1;
+  const execFileAsync = (command, args = []) => new Promise((resolve, reject) => {
+    execFile(command, args, { env: process.env }, (error, stdout, stderr) => {
+      if (error) {
+        const detail = String(stderr || stdout || error.message || '').trim();
+        reject(new Error(detail || `${command} failed`));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
 
-  if (shouldConnect) {
-    await mongoose.connect(process.env.MONGO_URI);
-  }
+  if (shouldConnect) await mongoose.connect(mongoUri);
   try {
-    const db = mongoose.connection.db;
-    const collections = await db.listCollections().toArray();
-
     const baseDir = path.join(__dirname, 'backups');
     if (!fs.existsSync(baseDir)) {
       fs.mkdirSync(baseDir, { recursive: true });
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupDir = path.join(baseDir, `backup-${timestamp}`);
-    fs.mkdirSync(backupDir);
-
-    for (const coll of collections) {
-      const name = coll.name;
-      const docs = await db.collection(name).find({}).toArray();
-      const filePath = path.join(backupDir, `${name}.json`);
-      fs.writeFileSync(filePath, JSON.stringify(docs, null, 2), 'utf8');
-    }
-
-    return backupDir;
+    const archivePath = path.join(baseDir, `backup-${timestamp}.archive.gz`);
+    await execFileAsync('mongodump', ['--uri', mongoUri, `--archive=${archivePath}`, '--gzip']);
+    return archivePath;
   } finally {
     if (shouldConnect) {
       await mongoose.disconnect();

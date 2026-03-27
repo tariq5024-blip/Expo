@@ -253,6 +253,14 @@ async function createAssignmentGatePass({
   return pass;
 }
 
+const resolveAuditWhere = (asset, explicitLocation = '') => {
+  const direct = String(explicitLocation || '').trim();
+  if (direct) return direct;
+  const fromAsset = String(asset?.location || '').trim();
+  if (fromAsset) return fromAsset;
+  return 'N/A';
+};
+
 const getPublicBaseUrl = (req) => {
   const envBase = String(process.env.PUBLIC_BASE_URL || '').trim();
   if (envBase) {
@@ -766,7 +774,7 @@ router.get('/', protect, async (req, res) => {
         .sort({ updatedAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at quantity price customFields history createdAt updatedAt')
+        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
         .populate({
           path: 'store',
           select: 'name parentStore',
@@ -814,7 +822,7 @@ router.get('/', protect, async (req, res) => {
 router.get('/:id([0-9a-fA-F]{24})', protect, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id)
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate({
         path: 'store',
         select: 'name parentStore',
@@ -969,11 +977,15 @@ router.get('/stats', protect, async (req, res) => {
     };
 
     // Parallel execution for 5x faster stats loading
+    const disposedScopeFilter = { ...filter };
+    delete disposedScopeFilter.disposed;
+
     const [
       totalAssets,
       assignedCount,
       faultyCount,
       missingCount,
+      disposedCount,
       inStoreCount,
       pendingReturnsCount,
       pendingRequestsCount,
@@ -1004,6 +1016,7 @@ router.get('/stats', protect, async (req, res) => {
         ]
       }),
       sumQuantity({ ...filter, status: 'Missing' }),
+      sumQuantity({ ...disposedScopeFilter, disposed: true }),
       sumQuantity({ ...filter, status: 'In Store' }),
       Asset.countDocuments({ ...filter, return_pending: true }),
       Request.countDocuments(requestFilter),
@@ -1150,6 +1163,7 @@ router.get('/stats', protect, async (req, res) => {
         inUse: assignedCount,
         inStore: inStoreExclusive,
         missing: missingCount,
+        disposed: disposedCount,
         faulty: faultyCount,
         pendingReturns: pendingReturnsCount,
         pendingRequests: pendingRequestsCount,
@@ -1417,7 +1431,15 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       condition: condition || 'New',
       location: normLocation || '',
       quantity: qty,
-      price: unitPrice
+      price: unitPrice,
+      history: [
+        {
+          action: 'Created Asset',
+          ticket_number: ticket_number || '',
+          user: req.user?.name || 'Unknown User',
+          details: `Asset added by ${req.user?.name || 'Unknown User'}${req.user?.email ? ` (${req.user.email})` : ''}`
+        }
+      ]
     });
 
     // Log Activity
@@ -2745,7 +2767,7 @@ router.post('/reserve', protect, admin, async (req, res) => {
     }
 
     const refreshed = await Asset.find({ _id: { $in: normalizedIds } })
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate('store', 'name parentStore')
       .populate('assigned_to', 'name email');
 
@@ -2810,7 +2832,7 @@ router.post('/unreserve', protect, admin, async (req, res) => {
     }
 
     const refreshed = await Asset.find({ _id: { $in: normalizedIds } })
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate('store', 'name parentStore')
       .populate('assigned_to', 'name email');
 
@@ -2833,8 +2855,17 @@ router.post('/dispose', protect, admin, async (req, res) => {
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
     }
-    if (!hasAssetStoreAccess(req, asset.store)) {
-      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    if (req.user?.role !== 'Super Admin') {
+      const scopedStoreId = getScopedStoreId(req);
+      // If no store context is selected for an Admin session, allow action
+      // (same behavior as list visibility in this maintenance flow).
+      if (scopedStoreId) {
+        const scopedStoreIds = await getStoreIds(scopedStoreId);
+        const inScope = scopedStoreIds.some((id) => String(id) === String(asset.store || ''));
+        if (!inScope) {
+          return res.status(403).json({ message: 'Asset is outside your store scope' });
+        }
+      }
     }
     if (asset.disposed === true) {
       return res.status(400).json({ message: 'Asset is already disposed' });
@@ -2859,6 +2890,112 @@ router.post('/dispose', protect, admin, async (req, res) => {
     });
 
     await asset.save();
+    await ActivityLog.create({
+      user: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      action: 'Dispose Asset',
+      details: `Disposed asset ${asset.name} (SN: ${asset.serial_number})${asset.disposal_reason ? ` - Reason: ${asset.disposal_reason}` : ''}`,
+      store: asset.store
+    });
+
+    return res.json({ message: 'Asset disposed successfully', asset });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Mark faulty asset as repaired from maintenance screen
+// @route   POST /api/assets/maintenance/mark-repaired
+// @access  Private (non-viewer)
+router.post('/maintenance/mark-repaired', protect, restrictViewer, async (req, res) => {
+  const { assetId } = req.body;
+  try {
+    const asset = await Asset.findById(assetId);
+    if (!asset) {
+      return res.status(404).json({ message: 'Asset not found' });
+    }
+    if (req.user?.role !== 'Super Admin') {
+      const scopedStoreId = getScopedStoreId(req);
+      if (scopedStoreId) {
+        const scopedStoreIds = await getStoreIds(scopedStoreId);
+        const inScope = scopedStoreIds.some((id) => String(id) === String(asset.store || ''));
+        if (!inScope) {
+          return res.status(403).json({ message: 'Asset is outside your store scope' });
+        }
+      }
+    }
+
+    asset.status = 'In Store';
+    asset.condition = 'Repaired';
+    asset.return_pending = false;
+    asset.return_request = null;
+    asset.history.push({
+      action: 'Marked Repaired',
+      details: 'Asset moved to repaired history',
+      user: req.user?.name || 'Unknown User',
+      date: new Date()
+    });
+    await asset.save();
+
+    await ActivityLog.create({
+      user: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      action: 'Mark Repaired',
+      details: `Marked repaired ${asset.name} (SN: ${asset.serial_number})`,
+      store: asset.store
+    });
+
+    return res.json({ message: 'Asset marked as repaired', asset });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Dispose asset from maintenance screen
+// @route   POST /api/assets/maintenance/dispose
+// @access  Private (non-viewer)
+router.post('/maintenance/dispose', protect, restrictViewer, async (req, res) => {
+  const { assetId, reason } = req.body;
+  try {
+    const asset = await Asset.findById(assetId);
+    if (!asset) {
+      return res.status(404).json({ message: 'Asset not found' });
+    }
+    if (req.user?.role !== 'Super Admin') {
+      const scopedStoreId = getScopedStoreId(req);
+      if (scopedStoreId) {
+        const scopedStoreIds = await getStoreIds(scopedStoreId);
+        const inScope = scopedStoreIds.some((id) => String(id) === String(asset.store || ''));
+        if (!inScope) {
+          return res.status(403).json({ message: 'Asset is outside your store scope' });
+        }
+      }
+    }
+    if (asset.disposed === true) {
+      return res.status(400).json({ message: 'Asset is already disposed' });
+    }
+
+    asset.disposed = true;
+    asset.disposed_at = new Date();
+    asset.disposed_by = req.user?.name || '';
+    asset.disposal_reason = String(reason || '').trim();
+    asset.previous_status = asset.status;
+    asset.status = 'Missing';
+    asset.condition = 'Faulty';
+    asset.assigned_to = null;
+    asset.assigned_to_external = null;
+    asset.return_pending = false;
+    asset.return_request = null;
+    asset.history.push({
+      action: 'Disposed (Not Repairable)',
+      details: asset.disposal_reason || 'No reason provided',
+      user: req.user?.name || 'Unknown User',
+      date: new Date()
+    });
+    await asset.save();
+
     await ActivityLog.create({
       user: req.user.name,
       email: req.user.email,
@@ -3191,7 +3328,13 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
       email: req.user.email,
       role: req.user.role,
       action: 'Collect Asset',
-      details: `Collected asset ${asset.name} (SN: ${asset.serial_number})`,
+      details: [
+        `Collected asset ${asset.name} (SN: ${asset.serial_number || 'N/A'})`,
+        `Collected By: ${req.user.name} <${req.user.email}>`,
+        `Where: ${resolveAuditWhere(asset, installationLocation)}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `At: ${new Date().toISOString()}`
+      ].join(' | '),
       store: asset.store
     });
 
@@ -3361,7 +3504,13 @@ router.post('/return', protect, restrictViewer, async (req, res) => {
       email: req.user.email,
       role: req.user.role,
       action: 'Return Asset',
-      details: `Returned asset ${asset.name} (SN: ${asset.serial_number}) as ${cond}`,
+      details: [
+        `Returned asset ${asset.name} (SN: ${asset.serial_number || 'N/A'}) as ${cond}`,
+        `Returned By: ${req.user.name} <${req.user.email}>`,
+        `From Location: ${resolveAuditWhere(asset)}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `At: ${new Date().toISOString()}`
+      ].join(' | '),
       store: asset.store
     });
     await notifyAssetEvent({
@@ -3422,7 +3571,13 @@ router.post('/return-request', protect, restrictViewer, async (req, res) => {
       email: req.user.email,
       role: req.user.role,
       action: 'Return Asset',
-      details: `Returned asset ${asset.name} (SN: ${asset.serial_number}) as ${cond}`,
+      details: [
+        `Returned asset ${asset.name} (SN: ${asset.serial_number || 'N/A'}) as ${cond}`,
+        `Returned By: ${req.user.name} <${req.user.email}>`,
+        `From Location: ${resolveAuditWhere(asset)}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `At: ${new Date().toISOString()}`
+      ].join(' | '),
       store: asset.store
     });
     await notifyAssetEvent({
@@ -3489,7 +3644,13 @@ router.post('/return-approve', protect, admin, async (req, res) => {
       email: req.user.email,
       role: req.user.role,
       action: 'Approve Return',
-      details: `Approved return of ${asset.name} (SN: ${asset.serial_number}) as ${cond}`,
+      details: [
+        `Approved return of ${asset.name} (SN: ${asset.serial_number || 'N/A'}) as ${cond}`,
+        `Approved By: ${req.user.name} <${req.user.email}>`,
+        `Original Requested By: ${requestedBy ? String(requestedBy) : 'N/A'}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        `At: ${new Date().toISOString()}`
+      ].join(' | '),
       store: asset.store
     });
     if (requestedBy) {
@@ -3540,7 +3701,14 @@ router.post('/return-reject', protect, admin, async (req, res) => {
       email: req.user.email,
       role: req.user.role,
       action: 'Reject Return',
-      details: `Rejected return of ${asset.name} (SN: ${asset.serial_number})${reason ? ` — ${reason}` : ''}`,
+      details: [
+        `Rejected return of ${asset.name} (SN: ${asset.serial_number || 'N/A'})`,
+        `Rejected By: ${req.user.name} <${req.user.email}>`,
+        `Original Requested By: ${requestedBy ? String(requestedBy) : 'N/A'}`,
+        `Ticket: ${ticketNumber || 'N/A'}`,
+        reason ? `Reason: ${reason}` : null,
+        `At: ${new Date().toISOString()}`
+      ].filter(Boolean).join(' | '),
       store: asset.store
     });
     if (requestedBy) {
@@ -3619,13 +3787,14 @@ router.put('/:id', protect, admin, async (req, res) => {
     if (asset) {
       if (req.user?.role !== 'Super Admin') {
         const scopedStoreId = getScopedStoreId(req);
-        if (!scopedStoreId) {
-          return res.status(403).json({ message: 'Asset is outside your store scope' });
-        }
-        const scopedStoreIds = await getStoreIds(scopedStoreId);
-        const inScope = scopedStoreIds.some((id) => String(id) === String(asset.store || ''));
-        if (!inScope) {
-          return res.status(403).json({ message: 'Asset is outside your store scope' });
+        // If no store context is selected for an Admin session, allow edit
+        // (same behavior as list visibility in this maintenance flow).
+        if (scopedStoreId) {
+          const scopedStoreIds = await getStoreIds(scopedStoreId);
+          const inScope = scopedStoreIds.some((id) => String(id) === String(asset.store || ''));
+          if (!inScope) {
+            return res.status(403).json({ message: 'Asset is outside your store scope' });
+          }
         }
       }
       const oldSerial = asset.serial_number;

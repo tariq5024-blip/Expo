@@ -1,6 +1,6 @@
-# Expo Master Deployment Instructions (Linux Desktop + app-vm/web-vm/db-vm)
+# Expo Master Deployment Instructions (3-Tier: app-vm/web-vm/db-vm)
 
-Use this file as your single source of truth.  
+Use this file for 3-tier deployment as your single source of truth.  
 You can paste the **Gemini prompt section** directly into Gemini to get clean, step-by-step commands.
 
 ---
@@ -21,7 +21,7 @@ Environment:
 - Repo URL: https://github.com/tariq5024-blip/Expo.git
 - Branch: main
 - Node version required: 20.x
-- MongoDB mode required: replica set (single-node allowed for now)
+- MongoDB tools required on DB VM: mongodump and mongorestore
 
 Rules you MUST follow:
 1) Give commands only for Linux bash.
@@ -38,11 +38,9 @@ Rules you MUST follow:
    - scripts/deploy-web-safe.sh
 7) If a command needs sudo, include sudo explicitly.
 8) At the end, provide a verification checklist with curl commands.
-9) Enforce enterprise backup guardrails:
-   - backup_v3_enabled=true
-   - pitr_enabled=true
-   - reject unsafe restore when checksum or compatibility fails
-10) Keep existing endpoints for compatibility unless migration is complete.
+9) Authentication is cookie-based only (httpOnly session cookie), not JWT.
+10) Backup/restore workflow must use mongodump/mongorestore archive files.
+11) Keep existing endpoints for compatibility unless migration is complete.
 
 Now generate a clean deployment runbook with exact commands for:
 - Fresh install
@@ -158,18 +156,13 @@ cp .env.vm.example .env
 Edit `/opt/Expo/server/.env` and set:
 
 ```env
-MONGO_URI=mongodb://expo_user:CHANGE_ME_STRONG_PASSWORD@10.96.133.213:27017/expo-stores?replicaSet=expo-rs0
+MONGO_URI=mongodb://expo_user:CHANGE_ME_STRONG_PASSWORD@10.96.133.213:27017/expo-stores
 PORT=5000
-JWT_SECRET=REPLACE_WITH_LONG_RANDOM_SECRET
 COOKIE_SECRET=REPLACE_WITH_LONG_RANDOM_SECRET
 COOKIE_SECURE=auto
 ENABLE_CSRF=true
 CORS_ORIGIN=http://10.96.133.181
 SEED_DEFAULTS=false
-BACKUP_V3_ENABLED=true
-PITR_ENABLED=true
-PITR_RETENTION_DAYS=14
-ENFORCE_REPLICA_SET_FOR_BACKUPS=true
 ```
 
 Install + start backend:
@@ -301,7 +294,6 @@ From **App VM**:
 nc -zv 10.96.133.213 27017
 curl -sS http://127.0.0.1:5000/healthz
 curl -sS http://127.0.0.1:5000/api/readyz
-mongosh --eval 'rs.status().ok'
 ```
 
 From browser:
@@ -315,29 +307,19 @@ Login check:
 - `it@expo.com / admin123`
 - `noc@expo.com / admin123`
 
-Enterprise backup check (Super Admin session required):
+Backup check (Super Admin session required):
 
 ```bash
-# 1) create enterprise full backup
+# 1) create full backup artifact
 curl -sS -X POST http://127.0.0.1:5000/api/system/backups/create \
   -H "Content-Type: application/json" \
   -b "<cookie_file_or_sid>" \
   --data '{"backupType":"Full","trigger":"manual"}'
 
-# 2) run PITR archive
-curl -sS -X POST http://127.0.0.1:5000/api/system/resilience/pitr/archive \
-  -H "Content-Type: application/json" \
-  -b "<cookie_file_or_sid>" \
-  --data '{}'
-
-# 3) readiness must report ready=true and pitr.enabled=true
+# 2) check readiness endpoint
 curl -sS http://127.0.0.1:5000/api/system/resilience/readiness \
   -b "<cookie_file_or_sid>"
 ```
-
-Cutover rule (enterprise):
-- move to production only after `3` successful automated restore verifications
-- and `1` full disaster recovery drill pass
 
 ---
 

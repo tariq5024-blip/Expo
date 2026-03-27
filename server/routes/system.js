@@ -5,7 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const unzipper = require('unzipper');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const Asset = require('../models/Asset');
@@ -27,11 +26,9 @@ const { sendStoreEmail, buildTransport } = require('../utils/storeEmail');
 const { encryptEmailSecret, decryptEmailSecret } = require('../utils/emailSecretCrypto');
 const {
   BACKUP_ROOT,
-  CURRENT_BACKUP_FORMAT_VERSION,
   createBackupArtifact,
   restoreBackupArtifact,
   restoreFromUploadedZip,
-  restoreFromJsonPayload,
   createBackupLog,
   validateBackupZipForRestore,
   acquireMaintenanceLock,
@@ -55,7 +52,6 @@ const {
   computeChecksum,
   writeUploadChecksum
 } = require('../utils/resilienceManager');
-const appPackage = require('../../package.json');
 
 const BASE_ASSET_COLUMNS = [
   { id: 'uniqueId', label: 'Unique ID', key: 'uniqueId' },
@@ -186,9 +182,15 @@ const backupZipUpload = multer({
   },
   fileFilter: (req, file, cb) => {
     const lower = String(file.originalname || '').toLowerCase();
-    const okType = lower.endsWith('.zip') || lower.endsWith('.json') || file.mimetype === 'application/zip' || file.mimetype === 'application/json' || file.mimetype === 'text/plain';
+    const okType = lower.endsWith('.archive')
+      || lower.endsWith('.archive.gz')
+      || lower.endsWith('.gz')
+      || file.mimetype === 'application/gzip'
+      || file.mimetype === 'application/x-gzip'
+      || file.mimetype === 'application/octet-stream'
+      || file.mimetype === 'application/x-gtar';
     if (!okType) {
-      return cb(new Error(`Invalid file type for ${file.originalname}. Allowed: .zip, .json`));
+      return cb(new Error(`Invalid file type for ${file.originalname}. Allowed: .archive.gz, .archive`));
     }
     cb(null, true);
   }
@@ -824,60 +826,11 @@ router.post('/backup', protect, admin, heavyOpsLimiter, async (req, res) => {
 // @access  Private/SuperAdmin
 router.get('/backup-file', protect, superAdmin, async (req, res) => {
   try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-
-    const [
-      users,
-      stores,
-      assets,
-      requests,
-      activityLogs,
-      purchaseOrders,
-      vendors,
-      passes,
-      permits,
-      assetCategories
-    ] = await Promise.all([
-      User.find({}).lean(),
-      Store.find({}).lean(),
-      Asset.find({}).lean(),
-      Request.find({}).lean(),
-      ActivityLog.find({}).lean(),
-      PurchaseOrder.find({}).lean(),
-      Vendor.find({}).lean(),
-      Pass.find({}).lean(),
-      Permit.find({}).lean(),
-      AssetCategory.find({}).lean()
-    ]);
-
-    const payload = {
-      meta: {
-        createdAt: new Date().toISOString(),
-        version: 1,
-        app_version: appPackage.version || 'unknown',
-        backup_format_version: CURRENT_BACKUP_FORMAT_VERSION,
-        backup_type: 'Full'
-      },
-      collections: {
-        users,
-        stores,
-        assets,
-        requests,
-        activityLogs,
-        purchaseOrders,
-        vendors,
-        passes,
-        permits,
-        assetCategories
-      }
-    };
-
-    const json = JSON.stringify(payload, null, 2);
-    const fileName = `expo-backup-${timestamp}.json`;
-
-    res.setHeader('Content-Type', 'application/json');
+    const archivePath = await backupDatabase();
+    const fileName = path.basename(archivePath);
+    res.setHeader('Content-Type', 'application/gzip');
     res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
-    res.send(json);
+    res.download(archivePath, fileName);
   } catch (error) {
     console.error('Error generating backup file:', error);
     res.status(500).json({ message: error.message || 'Failed to generate backup file' });
@@ -1019,15 +972,8 @@ router.post('/backups/upload-restore', protect, superAdmin, heavyOpsLimiter, han
       fileName: req.file.originalname || req.file.filename,
       sizeBytes: req.file.size || 0
     });
-    const lower = String(req.file.originalname || '').toLowerCase();
-    if (lower.endsWith('.zip') || req.file.mimetype === 'application/zip') {
-      const result = await restoreFromUploadedZip({ zipPath: req.file.path, user: req.user });
-      return res.json({ message: 'System restore completed successfully', checksum, result });
-    }
-    // Fallback: keep legacy JSON restore compatibility via schema-tolerant restore flow
-    const payload = await parseUploadedBackupPayload(req.file);
-    const result = await restoreFromJsonPayload({ payload, user: req.user });
-    return res.json({ message: 'Legacy JSON restore completed successfully', checksum, result });
+    const result = await restoreFromUploadedZip({ zipPath: req.file.path, user: req.user });
+    return res.json({ message: 'System restore completed successfully', checksum, result });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Restore failed' });
   } finally {
@@ -1044,13 +990,7 @@ router.post('/backups/upload-dry-run', protect, superAdmin, heavyOpsLimiter, han
   }
   try {
     const checksum = await computeChecksum(req.file.path);
-    const lower = String(req.file.originalname || '').toLowerCase();
-    if (lower.endsWith('.zip') || req.file.mimetype === 'application/zip') {
-      const report = await validateBackupZipForRestore(req.file.path, checksum);
-      return res.json({ message: 'Dry-run validation completed', checksum, report });
-    }
-    const payload = await parseUploadedBackupPayload(req.file);
-    const report = validateJsonBackupPayload(payload);
+    const report = await validateBackupZipForRestore(req.file.path, checksum);
     return res.json({ message: 'Dry-run validation completed', checksum, report });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'Dry-run validation failed' });
@@ -1067,14 +1007,7 @@ router.post('/backups/validate-upload', protect, superAdmin, heavyOpsLimiter, ha
     return res.status(400).json({ message: 'Backup file is required' });
   }
   try {
-    const lower = String(req.file.originalname || '').toLowerCase();
-    let report;
-    if (lower.endsWith('.zip') || req.file.mimetype === 'application/zip') {
-      report = await validateZipBackupFile(req.file.path);
-    } else {
-      const payload = await parseUploadedBackupPayload(req.file);
-      report = validateJsonBackupPayload(payload);
-    }
+    const report = await validateBackupZipForRestore(req.file.path, '');
     return res.json({
       message: report.ok ? 'Backup validation completed' : 'Backup validation failed',
       report
@@ -1175,14 +1108,13 @@ router.put('/backup-cloud-config', protect, superAdmin, async (req, res) => {
 // @desc    Restore database from uploaded backup file
 // @route   POST /api/system/restore-from-file
 // @access  Private/SuperAdmin
-router.post('/restore-from-file', protect, superAdmin, heavyOpsLimiter, handleUpload(backupUpload), async (req, res) => {
+router.post('/restore-from-file', protect, superAdmin, heavyOpsLimiter, handleUpload(backupZipUpload), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'Backup file is required' });
   }
 
   try {
-    const payload = await parseUploadedBackupPayload(req.file);
-    const result = await restoreFromJsonPayload({ payload, user: req.user });
+    const result = await restoreFromUploadedZip({ zipPath: req.file.path, user: req.user });
     res.json({ message: 'Restore completed successfully', result });
   } catch (error) {
     console.error('Error restoring from backup file:', error);

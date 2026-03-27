@@ -8,6 +8,10 @@ This guide is focused on **server-side installation** for your 3-tier deployment
 
 Management network (`10.96.133.160/28`, VLAN 1746) remains isolated for admin access only.
 
+Auth/backup baseline for this guide:
+- Auth is HTTP-only cookie based (no JWT token flow).
+- Backup/restore uses MongoDB tools (`mongodump` and `mongorestore`).
+
 ## IP-Only Access Rule
 
 - Public entry point is Web VM IP only: `http://10.96.133.181`
@@ -103,7 +107,6 @@ Set `server/.env`:
 ```env
 MONGO_URI=mongodb://expo_user:CHANGE_ME_STRONG_PASSWORD@10.96.133.213:27017/expo-stores
 PORT=5000
-JWT_SECRET=REPLACE_WITH_LONG_RANDOM_SECRET
 COOKIE_SECRET=REPLACE_WITH_LONG_RANDOM_SECRET
 COOKIE_SECURE=auto
 ENABLE_CSRF=true
@@ -206,48 +209,25 @@ cd /opt/Expo
 APP_DIR=/opt/Expo WEB_ROOT=/var/www/expo/client NGINX_SITE=/etc/nginx/sites-available/expo HEALTH_URL=http://127.0.0.1/ ./scripts/deploy-web-safe.sh
 ```
 
-## 9) Enterprise Backup + Crash Recovery Runbook
+## 9) Backup and Restore (mongodump/mongorestore)
 
-Enterprise restore safety requires MongoDB replica set mode and PITR archive jobs.
+Use the system backup endpoints from an authenticated Super Admin session.  
+Upload/download artifact format is MongoDB archive (`.archive.gz`).
 
-### Replica set bootstrap (DB VM)
-
-```bash
-sudo sed -i '/^#replication:/a replication:\n  replSetName: "expo-rs0"' /etc/mongod.conf
-sudo systemctl restart mongod
-mongosh --eval 'rs.initiate({_id:"expo-rs0",members:[{_id:0,host:"10.96.133.213:27017"}]})'
-mongosh --eval 'rs.status().ok'
-```
-
-### App env flags (App VM `server/.env`)
-
-```env
-ENFORCE_REPLICA_SET_FOR_BACKUPS=true
-PITR_ENABLED=true
-PITR_RETENTION_DAYS=14
-```
-
-### Operational checks
+Create a backup artifact:
 
 ```bash
-curl -sS http://127.0.0.1:5000/api/readyz
-curl -sS http://127.0.0.1:5000/api/healthz
+curl -sS -X POST http://127.0.0.1:5000/api/system/backups/create \
+  -H "Content-Type: application/json" \
+  -b "<cookie_file_or_sid>" \
+  --data '{"backupType":"Full","trigger":"manual"}'
 ```
 
-### Crash recovery procedure
+Restore from uploaded archive:
 
-1. Stop writes (maintenance lock in Portal or API).
-2. Trigger emergency restore from latest full backup.
-3. Run PITR restore-to-time to the target timestamp.
-4. Verify backup readiness and checksum-chain audit.
-5. Release maintenance lock.
-
-API endpoints used by this runbook:
-
-- `POST /api/system/resilience/maintenance-lock`
-- `POST /api/system/backups/emergency-restore`
-- `POST /api/system/resilience/restore-to-time/apply`
-- `POST /api/system/resilience/audit-backups`
-- `GET /api/system/resilience/readiness`
-- `POST /api/system/resilience/maintenance-unlock`
+```bash
+curl -sS -X POST http://127.0.0.1:5000/api/system/backups/upload-restore \
+  -b "<cookie_file_or_sid>" \
+  -F "backup=@/path/to/backup.archive.gz"
+```
 

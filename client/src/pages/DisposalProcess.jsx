@@ -49,15 +49,15 @@ const DisposalProcess = () => {
 
   const handleMarkRepaired = async (assetId) => {
     if (actionInFlight) return;
-    if (!window.confirm('Mark this asset as repaired and available in store?')) return;
-    
     try {
       setActionInFlight(true);
-      await api.put(`/assets/${assetId}`, { status: 'In Store', condition: 'Repaired' });
-      fetchAssets(); // Refresh list
+      await api.post('/assets/maintenance/mark-repaired', { assetId });
+      // Instant feedback in faulty tab.
+      setAssets((prev) => prev.filter((a) => a._id !== assetId));
+      fetchAssets();
     } catch (err) {
       console.error(err);
-      alert('Failed to update asset');
+      alert(err?.response?.data?.message || 'Failed to update asset');
     } finally {
       setActionInFlight(false);
     }
@@ -65,12 +65,13 @@ const DisposalProcess = () => {
 
   const handleDispose = async (asset) => {
     if (actionInFlight) return;
-    const reason = window.prompt('Disposal reason (optional):', 'Not repairable');
-    if (reason === null) return;
     try {
       setActionInFlight(true);
-      await api.post('/assets/dispose', { assetId: asset._id, reason });
-      fetchAssets();
+      await api.post('/assets/maintenance/dispose', { assetId: asset._id, reason: 'Not repairable' });
+      // Instant feedback in faulty tab.
+      setAssets((prev) => prev.filter((a) => a._id !== asset._id));
+      // Move user directly to disposed history after successful disposal.
+      setActiveTab('disposed');
     } catch (err) {
       console.error(err);
       alert(err?.response?.data?.message || 'Failed to dispose asset');
@@ -88,16 +89,24 @@ const DisposalProcess = () => {
       SerialNumber: a.serial_number || '',
       ModelNumber: a.model_number || '',
       Manufacturer: a.manufacturer || '',
+      MACAddress: a.mac_address || '',
+      TicketNumber: a.ticket_number || '',
+      PONumber: a.po_number || '',
+      VendorName: a.vendor_name || '',
       Condition: a.condition || '',
-      Status: a.status || '',
+      Status: activeTab === 'disposed' ? 'Disposed' : (a.status || ''),
       Store: (a.store?.parentStore?.name) || (a.store?.name) || '',
       Location: a.location || '',
+      DisposedAt: a.disposed_at ? new Date(a.disposed_at).toLocaleString() : '',
+      DisposedBy: a.disposed_by || '',
+      DisposalReason: a.disposal_reason || '',
+      CreatedAt: a.createdAt ? new Date(a.createdAt).toLocaleString() : '',
       UpdatedAt: a.updatedAt ? new Date(a.updatedAt).toLocaleString() : ''
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Repaired');
-    XLSX.writeFile(wb, 'repaired_assets.xlsx');
+    XLSX.utils.book_append_sheet(wb, ws, activeTab === 'disposed' ? 'Disposed' : 'Repaired');
+    XLSX.writeFile(wb, activeTab === 'disposed' ? 'disposed_assets.xlsx' : 'repaired_assets.xlsx');
   };
 
   return (
@@ -177,6 +186,12 @@ const DisposalProcess = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Unique ID</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
+                  {activeTab === 'disposed' && (
+                    <>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Disposed At</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Disposed By</th>
+                    </>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
                 </tr>
               </thead>
@@ -191,12 +206,18 @@ const DisposalProcess = () => {
                     <td className="px-6 py-4">{a.manufacturer || '-'}</td>
                     <td className="px-6 py-4">{a.condition || '-'}</td>
                     <td className="px-6 py-4">
-                      <span className={`px-2 py-1 text-xs rounded-full ${String(a.condition || '').toLowerCase() === 'faulty' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>
-                        {a.status || '-'}
+                      <span className={`px-2 py-1 text-xs rounded-full ${activeTab === 'disposed' ? 'bg-red-100 text-red-800' : (String(a.condition || '').toLowerCase() === 'faulty' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800')}`}>
+                        {activeTab === 'disposed' ? 'Disposed' : (a.status || '-')}
                       </span>
                     </td>
                     <td className="px-6 py-4">{a.uniqueId || '-'}</td>
                     <td className="px-6 py-4">{a.location || '-'}</td>
+                    {activeTab === 'disposed' && (
+                      <>
+                        <td className="px-6 py-4">{a.disposed_at ? new Date(a.disposed_at).toLocaleString() : '-'}</td>
+                        <td className="px-6 py-4">{a.disposed_by || '-'}</td>
+                      </>
+                    )}
                     <td className="px-6 py-4">
                       {activeTab === 'faulty' && (
                         <div className="flex items-center gap-3">

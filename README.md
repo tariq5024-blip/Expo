@@ -4,6 +4,10 @@ This guide is for production deployment using IP addresses only (no domain).
 For single-machine setup, use `README_LOCAL.md`.
 For step-by-step server installation, use `README_SERVER_INSTALL.md`.
 
+App baseline:
+- Auth is HTTP-only cookie based (no JWT token auth).
+- Backups/restores use `mongodump` and `mongorestore` archive flow.
+
 ## IP-Only Access (Final)
 
 - End users must access the app via Web VM IP: `http://10.96.133.181`
@@ -89,7 +93,6 @@ Required values:
 ```env
 MONGO_URI=mongodb://user:pass@10.96.133.213:27017/expo-stores
 PORT=5000
-JWT_SECRET=replace_with_secure_random_value
 COOKIE_SECRET=replace_with_secure_random_value
 COOKIE_SECURE=auto
 ENABLE_CSRF=true

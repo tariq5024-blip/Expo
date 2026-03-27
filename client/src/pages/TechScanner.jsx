@@ -21,7 +21,8 @@ const TechScanner = () => {
     serial_number: '',
     mac_address: '',
     store: '',
-    status: 'New'
+    status: 'In Store',
+    condition: 'New'
   });
 
   useEffect(() => {
@@ -107,7 +108,8 @@ const TechScanner = () => {
         serial_number: '',
         mac_address: '',
         store: '',
-        status: 'New'
+        status: 'In Store',
+        condition: 'New'
       });
     } catch (error) {
       setMessage(error.response?.data?.message || 'Error creating asset');
@@ -291,10 +293,22 @@ const TechScanner = () => {
                 onChange={(e) => setAddForm({ ...addForm, status: e.target.value })}
                 className="w-full border p-2 rounded"
               >
-                <option value="New">In Store (New)</option>
-                <option value="Used">In Store (Used)</option>
-                <option value="Testing">Testing</option>
+                <option value="In Store">In Store</option>
+                <option value="In Use">In Use</option>
+                <option value="Missing">Missing</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium">Condition *</label>
+              <select
+                value={addForm.condition}
+                onChange={(e) => setAddForm({ ...addForm, condition: e.target.value })}
+                className="w-full border p-2 rounded"
+              >
+                <option value="New">New</option>
+                <option value="Used">Used</option>
                 <option value="Faulty">Faulty</option>
+                <option value="Repaired">Repaired</option>
               </select>
             </div>
             <div className="flex gap-2 pt-2">

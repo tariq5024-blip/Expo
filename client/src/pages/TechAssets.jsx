@@ -103,8 +103,10 @@ const TechAssets = () => {
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Serial</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">MAC</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Ticket</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Store</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
                     </tr>
                   </thead>
@@ -114,8 +116,10 @@ const TechAssets = () => {
                         <td className="px-4 py-2">{a.name}</td>
                         <td className="px-4 py-2">{a.model_number}</td>
                         <td className="px-4 py-2">{a.serial_number}</td>
+                        <td className="px-4 py-2">{a.mac_address || '-'}</td>
                         <td className="px-4 py-2">{a.ticket_number || '-'}</td>
                         <td className="px-4 py-2">{a.store?.name}</td>
+                        <td className="px-4 py-2">{`${a.status || '-'} / ${a.condition || '-'}`}</td>
                         <td className="px-4 py-2 text-sm text-gray-500">{new Date(a.updatedAt).toLocaleString()}</td>
                       </tr>
                     ))}
@@ -144,6 +148,14 @@ const TechAssets = () => {
                       <div>
                         <span className="block text-xs text-gray-400 uppercase">Ticket</span>
                         {a.ticket_number || '-'}
+                      </div>
+                      <div>
+                        <span className="block text-xs text-gray-400 uppercase">MAC</span>
+                        <span className="font-mono text-xs">{a.mac_address || '-'}</span>
+                      </div>
+                      <div>
+                        <span className="block text-xs text-gray-400 uppercase">Status</span>
+                        {`${a.status || '-'} / ${a.condition || '-'}`}
                       </div>
                       <div>
                         <span className="block text-xs text-gray-400 uppercase">Updated</span>

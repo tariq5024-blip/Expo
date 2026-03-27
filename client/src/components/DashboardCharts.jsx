@@ -245,6 +245,7 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
     inUse: 0,
     inStore: 0,
     missing: 0,
+    disposed: 0,
     faulty: 0,
     pendingReturns: 0,
     pendingRequests: 0,
@@ -356,7 +357,7 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
         formatter: (val) => val || 0
       },
       colors: useVectorPieStyle ? OCEAN_BAR_COLORS : [palette.primary],
-      xaxis: { categories: ['In Store', 'Faulty', 'Missing'] },
+      xaxis: { categories: ['In Store', 'Faulty', 'Missing', 'Disposed'] },
       yaxis: {
         labels: {
           style: { colors: useVectorPieStyle ? '#6b7280' : '#64748b' }
@@ -383,7 +384,7 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
     };
     const barSeries = [{
       name: 'Inventory Status',
-      data: [safeOverview.inStore || 0, safeOverview.faulty || 0, safeOverview.missing || 0]
+      data: [safeOverview.inStore || 0, safeOverview.faulty || 0, safeOverview.missing || 0, safeOverview.disposed || 0]
     }];
     const growthOptions = {
       chart: { type: 'area', toolbar: { show: false }, fontFamily: 'inherit', animations: { enabled: true } },
@@ -401,7 +402,7 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
     };
     const growthSeries = [{ name: 'New Assets', data: (growth || []).map((g) => g.value) }];
     return { utilizationPie, conditionPie, usagePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, growthOptions, growthSeries };
-  }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, conditions, usageBreakdown, locations, products, maintenanceVendors, safeOverview.total, safeOverview.inStore, safeOverview.faulty, safeOverview.missing, growth]);
+  }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, conditions, usageBreakdown, locations, products, maintenanceVendors, safeOverview.total, safeOverview.inStore, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, growth]);
   const { utilizationPie, conditionPie, usagePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, growthOptions, growthSeries } = chartConfigs;
   const chartCardClass =
     'relative overflow-hidden bg-app-card p-6 rounded-2xl border border-app-card shadow-sm hover:shadow-md transition-all duration-300';
@@ -474,7 +475,7 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
         </div>
         <div className={`${chartCardClass} xl:col-span-4`}>
           <span className={chartCardAccent} aria-hidden />
-          <h3 className={`${chartTitleClass} mt-0.5`}>In Store vs Faulty vs Missing</h3>
+          <h3 className={`${chartTitleClass} mt-0.5`}>In Store vs Faulty vs Missing vs Disposed</h3>
           <p className={chartSubtitleClass}>Inventory exceptions at a glance.</p>
           <Chart options={barOptions} series={barSeries} type="bar" height={300} />
         </div>

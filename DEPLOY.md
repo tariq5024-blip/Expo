@@ -2,6 +2,10 @@
 
 This runbook covers first-time setup, regular deploys, and quick troubleshooting for the Expo stack.
 
+Current app behavior this runbook assumes:
+- Authentication is HTTP-only cookie based (no JWT tokens).
+- Database backup/restore uses `mongodump`/`mongorestore` archive flow.
+
 ## Prerequisites
 
 - Docker with Compose plugin installed (`docker compose version`)
@@ -21,11 +25,14 @@ cp .env.docker.example .env.docker
 
 Edit `.env.docker` and set secure values:
 
-- `JWT_SECRET`
 - `COOKIE_SECRET`
 - `EMAIL_CONFIG_ENCRYPTION_KEY`
 - `EMERGENCY_RESET_SECRET`
 - `MONGO_URI` (if using external Mongo instead of compose Mongo)
+
+Guide selection:
+- 3-tier deployment (Web/App/DB VMs): use `README_SERVER_INSTALL.md` and `README.md`.
+- Single-server deployment: use `README_LOCAL.md`.
 
 Recommended secret generation example:
 

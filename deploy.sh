@@ -36,7 +36,7 @@ else
 fi
 if "${MATCH_CMD[@]}" >/dev/null 2>&1; then
   echo "$ENV_FILE still contains placeholder/insecure secret values." >&2
-  echo "Update JWT_SECRET, COOKIE_SECRET, EMERGENCY_RESET_SECRET, and EMAIL_CONFIG_ENCRYPTION_KEY." >&2
+  echo "Update COOKIE_SECRET, EMERGENCY_RESET_SECRET, and EMAIL_CONFIG_ENCRYPTION_KEY." >&2
   exit 1
 fi
 

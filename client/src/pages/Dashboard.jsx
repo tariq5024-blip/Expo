@@ -44,6 +44,7 @@ const normalizeStats = (raw) => {
       inUse: Number(overview.inUse || 0),
       inStore: Number(overview.inStore || 0),
       missing: Number(overview.missing || 0),
+      disposed: Number(overview.disposed || 0),
       faulty: Number(overview.faulty || 0),
       pendingReturns: Number(overview.pendingReturns || 0),
       pendingRequests: Number(overview.pendingRequests || 0),
@@ -243,15 +244,12 @@ const Dashboard = () => {
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
               <div
                 className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold border ${
-                  systemOk ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20' : 'bg-rose-500/10 text-rose-700 border-rose-500/20'
+                  _HEALTH.db ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20' : 'bg-rose-500/10 text-rose-700 border-rose-500/20'
                 }`}
+                title="Live database connection status"
               >
-                <ShieldCheck className={`h-3.5 w-3.5 ${systemOk ? 'text-emerald-600' : 'text-rose-600'}`} />
-                {systemOk ? 'System operational' : 'Connectivity issue'}
-                <span className={`h-1.5 w-1.5 rounded-full ${systemOk ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-              </div>
-              <div className="inline-flex items-center rounded-full border border-app-card bg-app-elevated px-3 py-1.5 text-xs text-app-muted">
-                Theme <span className="ml-1.5 font-bold text-app-main capitalize">{theme}</span>
+                <span className={`h-1.5 w-1.5 rounded-full ${_HEALTH.db ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                {_HEALTH.db ? 'Database Connected' : 'Database Not Connected'}
               </div>
             </div>
           </div>

@@ -2,6 +2,10 @@
 
 Use this guide when running the full stack on one Linux machine (no k3s).
 
+App baseline for local/single-server:
+- Auth is HTTP-only cookie based (no JWT token auth).
+- Backups/restores use `mongodump` and `mongorestore` archive flow.
+
 ## Prerequisites
 
 - Ubuntu/Linux machine
@@ -31,7 +35,6 @@ Edit `server/.env` and set at minimum:
 ```env
 MONGO_URI=mongodb://127.0.0.1:27017/expo-stores
 PORT=5000
-JWT_SECRET=change_to_random_secret
 COOKIE_SECRET=change_to_random_secret
 COOKIE_SECURE=false
 SEED_DEFAULTS=true

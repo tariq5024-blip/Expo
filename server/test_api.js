@@ -8,6 +8,7 @@ async function test() {
     const loginRes = await fetch(`${baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email: 'scy@expo.com', password: 'admin123' })
     });
     
@@ -17,8 +18,13 @@ async function test() {
     }
     
     const loginData = await loginRes.json();
-    const token = loginData.token;
-    console.log('Login successful. Token obtained.');
+    const setCookie = loginRes.headers.get('set-cookie') || '';
+    const sid = setCookie.split(';')[0] || '';
+    if (!sid) {
+      console.error('Login did not return a session cookie.');
+      return;
+    }
+    console.log('Login successful. Session cookie obtained.');
     console.log('User Store:', loginData.assignedStore);
 
     // 2. Fetch Stats
@@ -26,7 +32,7 @@ async function test() {
     const statsRes = await fetch(`${baseUrl}/asset-categories/stats`, {
       method: 'GET',
       headers: { 
-        'Authorization': `Bearer ${token}`,
+        'Cookie': sid,
         'Content-Type': 'application/json'
       }
     });

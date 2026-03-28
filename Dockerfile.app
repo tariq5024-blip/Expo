@@ -21,10 +21,12 @@ RUN groupadd --gid 10001 appuser \
   && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser
 COPY --from=deps /app/server/node_modules ./node_modules
 COPY server/ ./
-# Ensure runtime directories exist and are writable
+COPY docker-entrypoint-app.sh /usr/local/bin/docker-entrypoint-app.sh
+# Ensure runtime directories exist and are writable in the image layer (bind mounts use entrypoint)
 RUN mkdir -p /app/server/uploads /app/server/backups /app/server/storage/backups /app/server/storage/tmp /app/server/storage/immutable-backups \
-  && chown -R appuser:appuser /app
-USER appuser
+  && chown -R appuser:appuser /app \
+  && chmod +x /usr/local/bin/docker-entrypoint-app.sh
 EXPOSE 5000
 HEALTHCHECK --interval=20s --timeout=5s --start-period=30s --retries=10 CMD node -e "require('http').get('http://127.0.0.1:5000/api/healthz', (r)=>process.exit(r.statusCode===200?0:1)).on('error', ()=>process.exit(1));"
+ENTRYPOINT ["docker-entrypoint-app.sh"]
 CMD ["node", "server.js"]

@@ -229,17 +229,13 @@ SectionLabel.propTypes = {
 };
 
 const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selectedMaintenanceVendor = 'All' }) => {
-  if (!stats) {
-    return (
-      <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-app-card bg-app-elevated p-10 text-center">
-        <div className="h-10 w-10 animate-pulse rounded-full bg-app-card" />
-        <p className="text-sm font-semibold text-app-main">Preparing charts…</p>
-        <p className="text-xs text-app-muted max-w-xs">Analytics will appear when dashboard data is ready.</p>
-      </div>
-    );
-  }
-
-  const { overview, growth, conditions, usageBreakdown, locations, products, maintenanceVendors } = stats;
+  const overview = stats?.overview;
+  const growth = stats?.growth;
+  const conditions = stats?.conditions;
+  const usageBreakdown = stats?.usageBreakdown;
+  const locations = stats?.locations;
+  const products = stats?.products;
+  const maintenanceVendors = stats?.maintenanceVendors;
   const safeOverview = overview || {
     total: 0,
     inUse: 0,
@@ -404,6 +400,17 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
     return { utilizationPie, conditionPie, usagePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, growthOptions, growthSeries };
   }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, conditions, usageBreakdown, locations, products, maintenanceVendors, safeOverview.total, safeOverview.inStore, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, growth]);
   const { utilizationPie, conditionPie, usagePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, growthOptions, growthSeries } = chartConfigs;
+
+  if (!stats) {
+    return (
+      <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-app-card bg-app-elevated p-10 text-center">
+        <div className="h-10 w-10 animate-pulse rounded-full bg-app-card" />
+        <p className="text-sm font-semibold text-app-main">Preparing charts…</p>
+        <p className="text-xs text-app-muted max-w-xs">Analytics will appear when dashboard data is ready.</p>
+      </div>
+    );
+  }
+
   const chartCardClass =
     'relative overflow-hidden bg-app-card p-6 rounded-2xl border border-app-card shadow-sm hover:shadow-md transition-all duration-300';
   const chartCardAccent = 'absolute left-0 top-0 h-full w-1 bg-[rgb(var(--accent-color))] opacity-80 rounded-l-2xl';

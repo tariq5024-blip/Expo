@@ -398,7 +398,7 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
     };
     const growthSeries = [{ name: 'New Assets', data: (growth || []).map((g) => g.value) }];
     return { utilizationPie, conditionPie, usagePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, growthOptions, growthSeries };
-  }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, conditions, usageBreakdown, locations, products, maintenanceVendors, safeOverview.total, safeOverview.inStore, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, growth]);
+  }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, palette.secondary, conditions, usageBreakdown, locations, products, maintenanceVendors, safeOverview.total, safeOverview.inStore, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, growth]);
   const { utilizationPie, conditionPie, usagePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, growthOptions, growthSeries } = chartConfigs;
 
   if (!stats) {

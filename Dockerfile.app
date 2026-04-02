@@ -1,7 +1,10 @@
+# syntax=docker/dockerfile:1
+# Node 20.x matches package.json engines (>=20 <21). Rebuild after server/package-lock.json changes.
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app/server
 COPY server/package*.json ./
-RUN npm ci --omit=dev --no-audit --prefer-offline
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --no-audit --prefer-offline
 
 FROM node:20-bookworm-slim
 ENV NODE_ENV=production

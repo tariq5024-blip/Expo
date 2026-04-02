@@ -4,6 +4,7 @@ yarn-error.log
 .git
 .gitignore
 .vscode
+.cursor
 .DS_Store
 client/node_modules
 client/dist
@@ -17,9 +18,12 @@ logs
 *.zip
 *.tar
 .env
+.env.*
+!.env.docker.example
 server/.env
 client/.env
 coverage
 tmp
 *.swp
 *.swo
+dist

@@ -8,7 +8,7 @@ Current app behavior this runbook assumes:
 
 ## Prerequisites
 
-- Docker with Compose plugin installed (`docker compose version`)
+- Docker with Compose plugin installed (`docker compose version`; BuildKit enabled by default for faster image builds)
 - Access to this repository on the deployment host
 - Open ports:
   - `3000` for web
@@ -88,6 +88,8 @@ Health endpoints:
 ```bash
 curl -f http://localhost:3000/ || echo "web unhealthy"
 curl -f http://localhost:5000/api/healthz || echo "api unhealthy"
+curl -f http://localhost:3000/api/healthz || echo "web→api proxy unhealthy"
+curl -f http://localhost:3000/healthz || echo "web→app /healthz unhealthy"
 ```
 
 Or run automated verification:

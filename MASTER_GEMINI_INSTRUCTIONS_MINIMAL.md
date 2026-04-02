@@ -139,3 +139,4 @@ npm run start:prod:3000
 ## See also
 
 - **3-tier production (separate app/web/db VMs):** `MASTER_GEMINI_INSTRUCTIONS.md`
+- **Docker Compose (single host):** `DEPLOY.md`, `docker-compose.yml`, `Dockerfile.app`, `Dockerfile.web`, `./deploy.sh safe-release`

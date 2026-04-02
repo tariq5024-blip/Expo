@@ -368,7 +368,15 @@ Then re-run safe deploy scripts.
 
 ## 8) Optional: Docker Safe-Release Mode
 
-Use only if deploying container stack on a single host:
+Use only if deploying container stack on a single host (see also `DEPLOY.md`).
+
+Stack files:
+- `docker-compose.yml` + `docker-compose.prod.yml` (merged by `deploy.sh`)
+- `Dockerfile.app` — Node **20-bookworm-slim**, production server deps, MongoDB **database tools** for backups
+- `Dockerfile.web` — multi-stage Vite build + **nginx stable-alpine**
+- `nginx.docker.conf` — SPA + `/api/` proxy to app; **`/healthz`** and **`/readyz`** forwarded to the API
+
+Build expects **Docker BuildKit** (default in modern Docker) for `RUN --mount=type=cache` npm layers.
 
 ```bash
 cd /opt/Expo
@@ -382,6 +390,9 @@ Health:
 
 ```bash
 ./deploy.sh verify
+curl -fsS http://localhost:5000/api/healthz    # API (direct)
+curl -fsS http://localhost:3000/api/healthz  # via nginx
+curl -fsS http://localhost:3000/healthz        # via nginx → app /healthz
 ```
 
 ---

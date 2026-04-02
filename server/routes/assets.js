@@ -1313,15 +1313,16 @@ router.get('/stats', protect, async (req, res) => {
         { $match: { _id: { $ne: '' } } },
         { $count: 'count' }
       ]),
+      // Use $addFields (not $project) so root fields like quantity remain for quantityExpr in $group.
       Asset.aggregate([
         { $match: filter },
         {
-          $project: {
+          $addFields: {
             effectiveMv: buildEffectiveMaintenanceVendorStringExpr()
           }
         },
         {
-          $project: {
+          $addFields: {
             vendorKey: buildMongoNormalizeMaintenanceVendorKeyExpr('$effectiveMv'),
             effLo: {
               $toLower: {
@@ -1333,7 +1334,7 @@ router.get('/stats', protect, async (req, res) => {
           }
         },
         {
-          $project: {
+          $addFields: {
             vendorBucket: {
               $switch: {
                 branches: [
@@ -1352,12 +1353,12 @@ router.get('/stats', protect, async (req, res) => {
       Asset.aggregate([
         { $match: filter },
         {
-          $project: {
+          $addFields: {
             effectiveMv: buildEffectiveMaintenanceVendorStringExpr()
           }
         },
         {
-          $project: {
+          $addFields: {
             vendorKey: buildMongoNormalizeMaintenanceVendorKeyExpr('$effectiveMv'),
             effLo: {
               $toLower: {
@@ -1369,7 +1370,7 @@ router.get('/stats', protect, async (req, res) => {
           }
         },
         {
-          $project: {
+          $addFields: {
             vendorBucket: {
               $switch: {
                 branches: [

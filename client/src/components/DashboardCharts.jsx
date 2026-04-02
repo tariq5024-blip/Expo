@@ -393,37 +393,38 @@ const DashboardCharts = ({
       gradientTargets: useVectorPieStyle ? oceanPieGradients.slice(0, 5) : [],
       tooltipItemLabel: 'qty'
     });
+    const siemensAssetRows = Number(maintenanceVendorAssets?.Siemens || 0);
+    const g42AssetRows = Number(maintenanceVendorAssets?.G42 || 0);
+    const otherVendorAssetRows = Number(maintenanceVendorAssets?.Other || 0);
+    const totalFleetAssets = Number(safeOverview.total || 0);
     const maintenanceVendorPie = buildPieConfig({
       labels: ['Siemens', 'G42', 'Other'],
-      values: [maintenanceVendors?.Siemens || 0, maintenanceVendors?.G42 || 0, maintenanceVendors?.Other || 0],
+      values: [siemensAssetRows, g42AssetRows, otherVendorAssetRows],
       colors: useVectorPieStyle ? ['#3b82f6', '#f59e0b', '#64748b'] : ['#2563eb', '#f59e0b', '#94a3b8'],
       title: 'Maintenance Vendor Mix',
       vectorStyle: useVectorPieStyle,
       gradientTargets: useVectorPieStyle ? ['#1d4ed8', '#b45309', '#334155'] : [],
-      tooltipItemLabel: 'qty'
+      tooltipItemLabel: 'assets'
     });
-    const totalFleetQty = safeOverview.totalQuantity || 0;
-    const siemensCount = maintenanceVendors?.Siemens || 0;
-    const g42Count = maintenanceVendors?.G42 || 0;
     const siemensVendorPie = buildPieConfig({
-      labels: ['Siemens (qty)', 'Rest of fleet (qty)'],
-      values: [siemensCount, Math.max(0, totalFleetQty - siemensCount)],
+      labels: ['Siemens', 'Rest of fleet'],
+      values: [siemensAssetRows, Math.max(0, totalFleetAssets - siemensAssetRows)],
       colors: useVectorPieStyle ? ['#3b82f6', '#94a3b8'] : ['#2563eb', '#cbd5e1'],
       title: 'Siemens',
       height: 280,
       vectorStyle: useVectorPieStyle,
       gradientTargets: useVectorPieStyle ? ['#1d4ed8', '#475569'] : [],
-      tooltipItemLabel: 'qty'
+      tooltipItemLabel: 'assets'
     });
     const g42VendorPie = buildPieConfig({
-      labels: ['G42 (qty)', 'Rest of fleet (qty)'],
-      values: [g42Count, Math.max(0, totalFleetQty - g42Count)],
+      labels: ['G42', 'Rest of fleet'],
+      values: [g42AssetRows, Math.max(0, totalFleetAssets - g42AssetRows)],
       colors: useVectorPieStyle ? ['#f59e0b', '#94a3b8'] : ['#ea580c', '#cbd5e1'],
       title: 'G42',
       height: 280,
       vectorStyle: useVectorPieStyle,
       gradientTargets: useVectorPieStyle ? ['#b45309', '#475569'] : [],
-      tooltipItemLabel: 'qty'
+      tooltipItemLabel: 'assets'
     });
     const barOptions = {
       chart: {
@@ -503,7 +504,7 @@ const DashboardCharts = ({
     };
     const growthSeries = [{ name: 'New Assets', data: (growth || []).map((g) => g.value) }];
     return { utilizationPie, fleetStatusRowsPie, fleetStatusQtyPie, lifecycleAssetsPie, lifecycleQtyPie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, lifecycleBarOptions, lifecycleBarSeries, growthOptions, growthSeries };
-  }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, palette.secondary, locations, products, maintenanceVendors, safeOverview.total, safeOverview.totalQuantity, safeOverview.inStore, safeOverview.inUse, safeOverview.reserved, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, safeOverview.repaired, safeOverview.underRepairWorkshop, safeOverview.inStoreQuantity, safeOverview.inUseQuantity, safeOverview.reservedQuantity, safeOverview.faultyQuantity, safeOverview.missingQuantity, safeOverview.disposedQuantity, safeOverview.repairedQuantity, safeOverview.underRepairWorkshopQuantity, growth]);
+  }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, palette.secondary, locations, products, maintenanceVendorAssets, safeOverview.total, safeOverview.inStore, safeOverview.inUse, safeOverview.reserved, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, safeOverview.repaired, safeOverview.underRepairWorkshop, safeOverview.inStoreQuantity, safeOverview.inUseQuantity, safeOverview.reservedQuantity, safeOverview.faultyQuantity, safeOverview.missingQuantity, safeOverview.disposedQuantity, safeOverview.repairedQuantity, safeOverview.underRepairWorkshopQuantity, growth]);
   const { utilizationPie, fleetStatusRowsPie, fleetStatusQtyPie, lifecycleAssetsPie, lifecycleQtyPie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, lifecycleBarOptions, lifecycleBarSeries, growthOptions, growthSeries } = chartConfigs;
 
   if (!stats) {
@@ -676,8 +677,13 @@ const DashboardCharts = ({
             <PieChart size={18} className="text-app-accent shrink-0" />
             {siemensVendorPie.title}
           </h3>
-          <p className="text-[10px] text-app-muted font-medium tabular-nums mb-1">Total assets: {siemensAssets} | Quantity: {siemensQty}</p>
-          <p className="text-xs text-app-muted mb-4">Siemens-maintained assets vs the rest of the fleet.</p>
+          <div className="mb-3">
+            <p className="text-2xl font-bold text-app-main tabular-nums leading-tight">{siemensAssets}</p>
+            {formatQtyLine(siemensQty) && (
+              <p className="text-[10px] text-app-muted font-medium tabular-nums mt-1 tracking-wide">{formatQtyLine(siemensQty)}</p>
+            )}
+          </div>
+          <p className="text-xs text-app-muted mb-4">Siemens-maintained asset rows vs the rest of the active fleet (same scope as Key metrics Total Assets).</p>
           <Chart options={siemensVendorPie.options} series={siemensVendorPie.series} type={siemensVendorPie.type} height={siemensVendorPie.height} />
         </div>}
         {showWidget('g42Pie') && <div className={chartCardClass}>
@@ -686,8 +692,13 @@ const DashboardCharts = ({
             <PieChart size={18} className="text-app-accent shrink-0" />
             {g42VendorPie.title}
           </h3>
-          <p className="text-[10px] text-app-muted font-medium tabular-nums mb-1">Total assets: {g42Assets} | Quantity: {g42Qty}</p>
-          <p className="text-xs text-app-muted mb-4">G42-maintained assets vs the rest of the fleet.</p>
+          <div className="mb-3">
+            <p className="text-2xl font-bold text-app-main tabular-nums leading-tight">{g42Assets}</p>
+            {formatQtyLine(g42Qty) && (
+              <p className="text-[10px] text-app-muted font-medium tabular-nums mt-1 tracking-wide">{formatQtyLine(g42Qty)}</p>
+            )}
+          </div>
+          <p className="text-xs text-app-muted mb-4">G42-maintained asset rows vs the rest of the active fleet (same scope as Key metrics Total Assets).</p>
           <Chart options={g42VendorPie.options} series={g42VendorPie.series} type={g42VendorPie.type} height={g42VendorPie.height} />
         </div>}
         {showWidget('maintenanceMixPie') && <div className={chartCardClass}>
@@ -696,10 +707,17 @@ const DashboardCharts = ({
             <PieChart size={18} className="text-app-accent shrink-0" />
             {maintenanceVendorPie.title}
           </h3>
-          <p className="text-[10px] text-app-muted font-medium tabular-nums mb-1">
-            Total assets: {siemensAssets + g42Assets + otherVendorAssets} | Quantity: {siemensQty + g42Qty + otherVendorQty}
-          </p>
-          <p className="text-xs text-app-muted mb-3">Compare vendors and jump to filtered assets.</p>
+          <div className="mb-2">
+            <p className="text-2xl font-bold text-app-main tabular-nums leading-tight">
+              {siemensAssets + g42Assets + otherVendorAssets}
+            </p>
+            {formatQtyLine(siemensQty + g42Qty + otherVendorQty) && (
+              <p className="text-[10px] text-app-muted font-medium tabular-nums mt-1 tracking-wide">
+                {formatQtyLine(siemensQty + g42Qty + otherVendorQty)}
+              </p>
+            )}
+          </div>
+          <p className="text-xs text-app-muted mb-3">Compare vendors (active asset rows) and jump to filtered assets.</p>
           <div className="mb-4 flex flex-wrap gap-2">
             {['Siemens', 'G42'].map((vendor) => (
               <button

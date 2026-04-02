@@ -20,7 +20,10 @@ Environment:
 - Repo path on servers: /opt/Expo
 - Repo URL: https://github.com/tariq5024-blip/Expo.git
 - Branch: main
-- Node version required: 20.x
+- Node version required: 20.x (engines: >=20 <21)
+- Stack: monorepo — server/ (Express + Mongoose), client/ (Vite + React 18)
+- Local development (developer laptop): from repo root run `npm run dev` (API + Vite; client often http://localhost:5173, API often :5000 per .env)
+- Production dependency install: prefer root `npm ci`, then `npm ci --omit=dev --prefix server`, then `cd client && npm ci && npm run build` (or `npm run build:prod` from root per package.json)
 - MongoDB tools required on DB VM: mongodump and mongorestore
 
 Rules you MUST follow:
@@ -41,6 +44,16 @@ Rules you MUST follow:
 9) Authentication is cookie-based only (httpOnly session cookie), not JWT.
 10) Backup/restore workflow must use mongodump/mongorestore archive files.
 11) Keep existing endpoints for compatibility unless migration is complete.
+12) Health checks: `/healthz`, `/readyz`, and aliases `/api/healthz`, `/api/readyz` on the app.
+
+Dashboard / stats (if troubleshooting SCY asset analytics):
+- GET /api/assets/stats returns overview (total = active asset rows excluding disposed; totalQuantity = sum of quantity in that scope) plus maintenanceVendors (per-vendor quantity sums) and maintenanceVendorAssets (per-vendor document counts).
+- Server aggregates for maintenance vendors must use $addFields (not $project) before $group when summing quantityExpr, or $quantity is dropped and qty incorrectly equals row count.
+- Client: client/src/pages/Dashboard.jsx (fetch + normalizeStats), client/src/components/DashboardCharts.jsx (vendor pies use asset rows vs overview.total; quantity subtitle from maintenanceVendors).
+
+Dependency policy:
+- Prefer semver-safe bumps (same major). Full jumps to Express 5, React 19, Vite 8, Tailwind 4, Mongoose 9 require explicit migration work.
+- Client `xlsx` may still show npm audit advisories with no patched community release; replacing the library is a separate task.
 
 Now generate a clean deployment runbook with exact commands for:
 - Fresh install
@@ -380,4 +393,24 @@ Health:
 - Never expose DB VM or App VM publicly.
 - Keep Node at 20.x on app/web VMs.
 - Keep this file updated if IPs/repo path/branch changes.
+
+---
+
+## 10) Codebase map (for AI / troubleshooting)
+
+| Area | Path |
+|------|------|
+| API entry | `server/server.js` |
+| Asset routes + `/stats` | `server/routes/assets.js` |
+| React app | `client/src/` |
+| Dashboard page | `client/src/pages/Dashboard.jsx` |
+| Charts + key metrics | `client/src/components/DashboardCharts.jsx` |
+| API client | `client/src/api/axios.js` |
+| Deploy helpers | `scripts/*.sh`, root `package.json` scripts |
+
+**Local dev:** repo root `npm run install:all` (first time), then `npm run dev`.
+
+**Production build (reference):** root `npm run build:prod` or manual `npm ci` in server + client with `npm run build` in client.
+
+**SCY dashboard vendor filter:** URL query `?maintenance_vendor=Siemens|G42` passes through to `/api/assets/stats` when SCY-scoped user; stats and charts stay consistent with that filter.
 

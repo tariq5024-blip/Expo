@@ -16,11 +16,25 @@ Keep these accounts unchanged:
 - superadmin@expo.com / superadmin123
 - it@expo.com / admin123
 - noc@expo.com / admin123
+
 Environment:
 - single host: localhost
 - repo: /opt/Expo
+- repo URL: https://github.com/tariq5024-blip/Expo.git
 - branch: main
-- node: 20.x
+- node: 20.x (engines: >=20 <21)
+- monorepo: server/ = Express + Mongoose API, client/ = Vite + React 18
+- local dev (optional): from repo root `npm run dev` (Vite + API; ports per .env)
+- health: app exposes /healthz, /readyz and /api/healthz, /api/readyz
+
+Code reference (troubleshooting):
+- Asset stats API: GET /api/assets/stats — overview.total = active rows (excl. disposed), overview.totalQuantity = qty sum; maintenanceVendors = per-vendor qty sums; maintenanceVendorAssets = per-vendor row counts. Vendor Mongo pipelines must use $addFields before $group when summing quantity (not $project-only stages that drop quantity).
+- Dashboard UI: client/src/pages/Dashboard.jsx, client/src/components/DashboardCharts.jsx
+
+Dependencies:
+- Prefer same-major npm upgrades; Express 5 / React 19 / Vite 8 / Tailwind 4 / Mongoose 9 need planned migrations.
+- Client package xlsx may still flag npm audit with no upstream fix in the free package.
+
 Now produce exact command blocks for:
 1) fresh install
 2) safe update
@@ -96,6 +110,7 @@ npm run start:prod:3000
 ```bash
 curl -f http://127.0.0.1:3000/ || echo "web unhealthy"
 curl -f http://127.0.0.1:3000/api/healthz || echo "api unhealthy"
+curl -f http://127.0.0.1:3000/healthz || echo "healthz direct"
 mongodump --version
 mongorestore --version
 ```
@@ -121,3 +136,6 @@ pkill -f "node.*server" || true
 npm run start:prod:3000
 ```
 
+## See also
+
+- **3-tier production (separate app/web/db VMs):** `MASTER_GEMINI_INSTRUCTIONS.md`

@@ -624,6 +624,7 @@ router.get('/', protect, async (req, res) => {
     const comments = String(req.query.comments || '').trim();
     const reservedParam = String(req.query.reserved || '').trim().toLowerCase();
     const disposedParam = String(req.query.disposed || '').trim().toLowerCase();
+    const duplicateParam = String(req.query.duplicate || '').trim().toLowerCase();
 
     const filter = {};
     // Exclude disposed assets by default from inventory views.
@@ -889,7 +890,49 @@ router.get('/', protect, async (req, res) => {
       }
     }
 
-    const [total, items] = await Promise.all([
+    let duplicateSerials = null;
+    let duplicateAssetIds = null;
+    if (duplicateParam === 'true') {
+      const duplicateIdRows = await Asset.aggregate([
+        {
+          $match: {
+            $and: [
+              filter,
+              { serial_number: { $type: 'string', $nin: [''] } }
+            ]
+          }
+        },
+        {
+          $project: {
+            serialKey: {
+              $toString: '$serial_number'
+            }
+          }
+        },
+        { $match: { serialKey: { $ne: '' } } },
+        {
+          $group: {
+            _id: '$serialKey',
+            count: { $sum: 1 },
+            ids: { $push: '$_id' }
+          }
+        },
+        { $match: { count: { $gt: 1 } } }
+      ]);
+      duplicateSerials = duplicateIdRows.map((row) => String(row._id || '')).filter(Boolean);
+      duplicateAssetIds = duplicateIdRows.flatMap((row) => Array.isArray(row?.ids) ? row.ids : []);
+      if (duplicateSerials.length === 0 || duplicateAssetIds.length === 0) {
+        return res.json({
+          items: [],
+          total: 0,
+          page,
+          pages: 0
+        });
+      }
+      filter._id = { $in: duplicateAssetIds };
+    }
+
+    const [total, fetchedItems] = await Promise.all([
       Asset.countDocuments(filter),
       Asset.find(filter)
         .sort({ updatedAt: -1 })
@@ -907,22 +950,42 @@ router.get('/', protect, async (req, res) => {
         .populate('assigned_to', 'name email')
         .lean()
     ]);
+    let items = Array.isArray(fetchedItems) ? fetchedItems : [];
+    const normalizeSerialKey = (value) => String(value || '');
 
     // Check for duplicates in the current page items
     const serials = items.map(i => i.serial_number);
     if (serials.length > 0) {
-      const counts = await Asset.aggregate([
-        { $match: { serial_number: { $in: serials }, store: filter.store } }, // Scope duplicate check to store(s)
-        { $group: { _id: '$serial_number', count: { $sum: 1 } } }
-      ]);
-      const countMap = {};
-      counts.forEach(c => countMap[c._id] = c.count);
+      const duplicateSet = new Set((duplicateSerials || []).map((s) => String(s)));
+      if (duplicateSet.size === 0) {
+        const counts = await Asset.aggregate([
+          {
+            $match: {
+              $and: [
+                filter,
+                { serial_number: { $in: serials } }
+              ]
+            }
+          },
+          { $group: { _id: '$serial_number', count: { $sum: 1 } } }
+        ]);
+        counts.forEach((c) => {
+          if (Number(c?.count || 0) > 1) duplicateSet.add(normalizeSerialKey(c._id));
+        });
+      }
       
       items.forEach(item => {
-        if ((countMap[item.serial_number] || 0) > 1) {
+        if (duplicateSet.has(normalizeSerialKey(item.serial_number))) {
           item.isDuplicate = true;
         }
       });
+
+      // Extra safety: when duplicate filter is active, return only verified duplicates.
+      if (duplicateParam === 'true') {
+        items = items
+          .filter((item) => duplicateSet.has(normalizeSerialKey(item.serial_number)))
+          .map((item) => ({ ...item, isDuplicate: true }));
+      }
     }
 
     res.json({

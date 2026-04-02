@@ -267,7 +267,8 @@ const DashboardCharts = ({
   showMaintenanceVendorFeatures = false,
   selectedMaintenanceVendor = 'All',
   analyticsSectionOrder = DEFAULT_ANALYTICS_SECTION_ORDER,
-  showInsightsStrip = true
+  showInsightsStrip = true,
+  chartWidgets = {}
 }) => {
   const overview = stats?.overview;
   const growth = stats?.growth;
@@ -525,6 +526,7 @@ const DashboardCharts = ({
     Number(safeOverview.repairedQuantity || 0) +
     Number(safeOverview.underRepairWorkshopQuantity || 0) +
     Number(safeOverview.disposedQuantity || 0);
+  const showWidget = (key) => chartWidgets?.[key] !== false;
 
   const navigateToAssets = (status) => {
     const params = new URLSearchParams();
@@ -573,37 +575,37 @@ const DashboardCharts = ({
     utilization_fleet: (
       <section className="space-y-4" aria-label="Utilization and fleet status">
         <SectionLabel icon={PieChart}>Utilization &amp; fleet status</SectionLabel>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-10 gap-5">
-        <div className={`${chartCardClass} xl:col-span-2`}>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-5">
+        {showWidget('utilizationPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{utilizationPie.title}</h3>
           <p className={chartSubtitleClass}>Same row counts as Key metrics (ACTIVE): In Use vs all other active assets (excluding Disposed).</p>
           <Chart options={utilizationPie.options} series={utilizationPie.series} type={utilizationPie.type} height={utilizationPie.height} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-2`}>
+        </div>}
+        {showWidget('fleetStatusAssetsPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{fleetStatusRowsPie.title}</h3>
           <p className={chartSubtitleClass}>Matches Key metrics by status buckets (includes Disposed as its own slice).</p>
           <Chart options={fleetStatusRowsPie.options} series={fleetStatusRowsPie.series} type={fleetStatusRowsPie.type} height={fleetStatusRowsPie.height} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-2`}>
+        </div>}
+        {showWidget('fleetStatusQuantityPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{fleetStatusQtyPie.title}</h3>
           <p className={chartSubtitleClass}>Matches Key metrics Quantity lines by status buckets (includes Disposed).</p>
           <Chart options={fleetStatusQtyPie.options} series={fleetStatusQtyPie.series} type={fleetStatusQtyPie.type} height={fleetStatusQtyPie.height} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-2`}>
+        </div>}
+        {showWidget('lifecycleAssetsPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{lifecycleAssetsPie.title}</h3>
           <p className={chartSubtitleClass}>Disposed, repaired and workshop split (asset rows).</p>
           <Chart options={lifecycleAssetsPie.options} series={lifecycleAssetsPie.series} type={lifecycleAssetsPie.type} height={lifecycleAssetsPie.height} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-2`}>
+        </div>}
+        {showWidget('lifecycleQuantityPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{lifecycleQtyPie.title}</h3>
           <p className={chartSubtitleClass}>Disposed, repaired and workshop split (quantity).</p>
           <Chart options={lifecycleQtyPie.options} series={lifecycleQtyPie.series} type={lifecycleQtyPie.type} height={lifecycleQtyPie.height} />
-        </div>
+        </div>}
         </div>
         {showInsightsStrip && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -629,39 +631,39 @@ const DashboardCharts = ({
     locations_products_status: (
       <section className="space-y-4" aria-label="Locations products and status">
         <SectionLabel icon={MapPinned}>Locations, products &amp; status</SectionLabel>
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-5">
+        {showWidget('topLocationsPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{locationPie.title}</h3>
           <p className={chartSubtitleClass}>Where the largest quantities live.</p>
           <Chart options={locationPie.options} series={locationPie.series} type={locationPie.type} height={locationPie.height} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        </div>}
+        {showWidget('topProductsPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{productPie.title}</h3>
           <p className={chartSubtitleClass}>Top product lines by quantity.</p>
           <Chart options={productPie.options} series={productPie.series} type={productPie.type} height={productPie.height} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        </div>}
+        {showWidget('inventoryExceptionsBar') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}>In Store vs Faulty vs Missing vs Disposed</h3>
           <p className={chartSubtitleClass}>Inventory exceptions at a glance.</p>
           <Chart options={barOptions} series={barSeries} type="bar" height={300} />
-        </div>
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        </div>}
+        {showWidget('lifecycleBar') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}>Repaired vs Under Repair/Workshop vs Disposed</h3>
           <p className={chartSubtitleClass}>Lifecycle movement and retirement snapshot.</p>
           <Chart options={lifecycleBarOptions} series={lifecycleBarSeries} type="bar" height={300} />
-        </div>
+        </div>}
         </div>
       </section>
     ),
     maintenance_vendors: showMaintenanceVendorFeatures ? (
       <section className="space-y-4" aria-label="Maintenance vendors">
         <SectionLabel icon={Wrench}>Maintenance vendors</SectionLabel>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        <div className={chartCardClass}>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-5">
+        {showWidget('siemensPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}>
             <PieChart size={18} className="text-app-accent shrink-0" />
@@ -669,8 +671,8 @@ const DashboardCharts = ({
           </h3>
           <p className="text-xs text-app-muted mb-4">Siemens-maintained assets vs the rest of the fleet.</p>
           <Chart options={siemensVendorPie.options} series={siemensVendorPie.series} type={siemensVendorPie.type} height={siemensVendorPie.height} />
-        </div>
-        <div className={chartCardClass}>
+        </div>}
+        {showWidget('g42Pie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}>
             <PieChart size={18} className="text-app-accent shrink-0" />
@@ -678,8 +680,8 @@ const DashboardCharts = ({
           </h3>
           <p className="text-xs text-app-muted mb-4">G42-maintained assets vs the rest of the fleet.</p>
           <Chart options={g42VendorPie.options} series={g42VendorPie.series} type={g42VendorPie.type} height={g42VendorPie.height} />
-        </div>
-        <div className={`${chartCardClass} md:col-span-2 xl:col-span-1`}>
+        </div>}
+        {showWidget('maintenanceMixPie') && <div className={chartCardClass}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}>
             <PieChart size={18} className="text-app-accent shrink-0" />
@@ -703,11 +705,11 @@ const DashboardCharts = ({
             ))}
           </div>
           <Chart options={maintenanceVendorPie.options} series={maintenanceVendorPie.series} type={maintenanceVendorPie.type} height={maintenanceVendorPie.height} />
-        </div>
+        </div>}
         </div>
       </section>
     ) : null,
-    growth: (growth || []).length > 0 ? (
+    growth: (growth || []).length > 0 && showWidget('growthArea') ? (
       <section className="space-y-4" aria-label="Acquisition trend">
         <SectionLabel icon={TrendingUp}>Growth</SectionLabel>
         <div className={chartCardClass}>
@@ -745,7 +747,8 @@ DashboardCharts.propTypes = {
   showMaintenanceVendorFeatures: PropTypes.bool,
   selectedMaintenanceVendor: PropTypes.string,
   analyticsSectionOrder: PropTypes.arrayOf(PropTypes.string),
-  showInsightsStrip: PropTypes.bool
+  showInsightsStrip: PropTypes.bool,
+  chartWidgets: PropTypes.object
 };
 
 export default DashboardCharts;

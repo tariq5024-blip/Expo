@@ -36,6 +36,21 @@ const DEFAULT_DASHBOARD_LAYOUT = {
     toolsStatus: true
   },
   showInsightsStrip: true,
+  chartWidgets: {
+    utilizationPie: true,
+    fleetStatusAssetsPie: true,
+    fleetStatusQuantityPie: true,
+    lifecycleAssetsPie: true,
+    lifecycleQuantityPie: true,
+    topLocationsPie: true,
+    topProductsPie: true,
+    inventoryExceptionsBar: true,
+    lifecycleBar: true,
+    siemensPie: true,
+    g42Pie: true,
+    maintenanceMixPie: true,
+    growthArea: true
+  },
   showPendingAlerts: true,
   showRecentActivity: true,
   analyticsOrder: DEFAULT_ANALYTICS_SECTION_ORDER
@@ -208,6 +223,10 @@ const Dashboard = () => {
       setDashboardLayout({
         bannerCards: bannerCardsFromParsed,
         showInsightsStrip: parsed.showInsightsStrip !== false,
+        chartWidgets: {
+          ...DEFAULT_DASHBOARD_LAYOUT.chartWidgets,
+          ...(parsed.chartWidgets && typeof parsed.chartWidgets === 'object' ? parsed.chartWidgets : {})
+        },
         showPendingAlerts: parsed.showPendingAlerts !== false,
         showRecentActivity: parsed.showRecentActivity !== false,
         analyticsOrder
@@ -252,6 +271,10 @@ const Dashboard = () => {
         toolsStatus: draftLayout.bannerCards?.toolsStatus !== false
       },
       showInsightsStrip: draftLayout.showInsightsStrip !== false,
+      chartWidgets: {
+        ...DEFAULT_DASHBOARD_LAYOUT.chartWidgets,
+        ...(draftLayout.chartWidgets && typeof draftLayout.chartWidgets === 'object' ? draftLayout.chartWidgets : {})
+      },
       showPendingAlerts: draftLayout.showPendingAlerts !== false,
       showRecentActivity: draftLayout.showRecentActivity !== false,
       analyticsOrder: cleanedOrder.length > 0 ? cleanedOrder : DEFAULT_DASHBOARD_LAYOUT.analyticsOrder
@@ -590,6 +613,7 @@ const Dashboard = () => {
           selectedMaintenanceVendor={isScyDashboard ? dashboardVendor : 'All'}
           analyticsSectionOrder={dashboardLayout.analyticsOrder}
           showInsightsStrip={dashboardLayout.showInsightsStrip !== false}
+          chartWidgets={dashboardLayout.chartWidgets || DEFAULT_DASHBOARD_LAYOUT.chartWidgets}
         />
       </section>
 
@@ -873,6 +897,49 @@ const Dashboard = () => {
                 {!isScyDashboard && (
                   <p className="text-xs text-app-muted">Maintenance vendors section is available only for the SCY dashboard.</p>
                 )}
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-bold text-app-main">Charts (Pie/Bar)</h4>
+                {[
+                  { key: 'utilizationPie', label: 'Asset Utilization' },
+                  { key: 'fleetStatusAssetsPie', label: 'Fleet by status (assets)' },
+                  { key: 'fleetStatusQuantityPie', label: 'Fleet by status (quantity)' },
+                  { key: 'lifecycleAssetsPie', label: 'Lifecycle States (assets)' },
+                  { key: 'lifecycleQuantityPie', label: 'Lifecycle States (quantity)' },
+                  { key: 'topLocationsPie', label: 'Top Locations by Quantity' },
+                  { key: 'topProductsPie', label: 'Top Products by Quantity' },
+                  { key: 'inventoryExceptionsBar', label: 'In Store vs Faulty vs Missing vs Disposed' },
+                  { key: 'lifecycleBar', label: 'Repaired vs Under Repair/Workshop vs Disposed' },
+                  { key: 'siemensPie', label: 'Siemens' },
+                  { key: 'g42Pie', label: 'G42' },
+                  { key: 'maintenanceMixPie', label: 'Maintenance Vendor Mix' },
+                  { key: 'growthArea', label: 'Asset Acquisition Trend' }
+                ].map((item) => {
+                  const disabled = !isScyDashboard && ['siemensPie', 'g42Pie', 'maintenanceMixPie'].includes(item.key);
+                  return (
+                    <label
+                      key={item.key}
+                      className={`flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated ${disabled ? 'opacity-60' : ''}`}
+                    >
+                      <span className="text-sm font-semibold text-app-main">{item.label}</span>
+                      <input
+                        type="checkbox"
+                        disabled={disabled}
+                        checked={draftLayout.chartWidgets?.[item.key] !== false}
+                        onChange={(e) =>
+                          setDraftLayout((prev) => ({
+                            ...prev,
+                            chartWidgets: {
+                              ...(prev.chartWidgets || {}),
+                              [item.key]: e.target.checked
+                            }
+                          }))
+                        }
+                      />
+                    </label>
+                  );
+                })}
               </div>
             </div>
 

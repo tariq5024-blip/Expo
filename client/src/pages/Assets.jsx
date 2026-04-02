@@ -125,6 +125,7 @@ const Assets = () => {
   const maintenanceVendorParam = searchParams.get('maintenance_vendor');
   const reservedParam = searchParams.get('reserved');
   const disposedParam = searchParams.get('disposed');
+  const duplicateParam = searchParams.get('duplicate');
   const { user, activeStore } = useAuth();
   const scopeHints = [
     activeStore?.name,
@@ -586,6 +587,7 @@ const Assets = () => {
   const [filterMaintenanceVendor, setFilterMaintenanceVendor] = useState('');
   const [filterReserved, setFilterReserved] = useState('');
   const [filterDisposed, setFilterDisposed] = useState('');
+  const [filterDuplicate, setFilterDuplicate] = useState('');
   const [filterModelNumber, setFilterModelNumber] = useState('');
   const [filterSerialNumber, setFilterSerialNumber] = useState('');
   const [filterMacAddress, setFilterMacAddress] = useState('');
@@ -844,8 +846,9 @@ const Assets = () => {
     setFilterMaintenanceVendor(maintenanceVendorParam || '');
     setFilterReserved((reservedParam === 'true' || reservedParam === 'false') ? reservedParam : '');
     setFilterDisposed((disposedParam === 'true' || disposedParam === 'false' || disposedParam === 'all') ? disposedParam : '');
+    setFilterDuplicate(duplicateParam === 'true' ? 'true' : '');
     if (actionParam === 'add') setShowAddModal(true);
-  }, [searchParam, productParam, statusParam, derivedStatusParam, conditionParam, actionParam, locationParam, storeParam, maintenanceVendorParam, reservedParam, disposedParam, isScyStoreContext, normalizeUrlStatusFilter]);
+  }, [searchParam, productParam, statusParam, derivedStatusParam, conditionParam, actionParam, locationParam, storeParam, maintenanceVendorParam, reservedParam, disposedParam, duplicateParam, isScyStoreContext, normalizeUrlStatusFilter]);
 
 
   // Hierarchical State for Add/Import
@@ -902,6 +905,7 @@ const Assets = () => {
           maintenance_vendor: filterMaintenanceVendor || undefined,
           reserved: filterReserved || undefined,
           disposed: filterDisposed || undefined,
+          duplicate: filterDuplicate || undefined,
           model_number: filterModelNumber || undefined,
           serial_number: filterSerialNumber || undefined,
           mac_address: filterMacAddress || undefined,
@@ -917,8 +921,15 @@ const Assets = () => {
       });
 
       if (requestId !== requestIdRef.current) return;
-      setAssets(response.data.items || []);
-      setTotal(response.data.total || 0);
+      const rawItems = response.data.items || [];
+      if (filterDuplicate === 'true') {
+        const onlyDuplicates = rawItems.filter((item) => item?.isDuplicate === true);
+        setAssets(onlyDuplicates);
+        setTotal(onlyDuplicates.length);
+      } else {
+        setAssets(rawItems);
+        setTotal(response.data.total || 0);
+      }
     } catch (error) {
       if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
       console.error(error);
@@ -938,6 +949,7 @@ const Assets = () => {
     filterMaintenanceVendor,
     filterReserved,
     filterDisposed,
+    filterDuplicate,
     isScyStoreContext,
     filterModelNumber,
     filterSerialNumber,
@@ -1752,7 +1764,7 @@ const Assets = () => {
     }, 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showRecentUploads, searchTerm, filterLocation, filterStatus, filterCondition, filterManufacturer, filterMaintenanceVendor, filterReserved, isScyStoreContext, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
+  }, [showRecentUploads, searchTerm, filterLocation, filterStatus, filterCondition, filterManufacturer, filterMaintenanceVendor, filterReserved, filterDisposed, filterDuplicate, isScyStoreContext, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
 
   // Page/Limit change effect
   useEffect(() => {
@@ -2370,6 +2382,14 @@ const Assets = () => {
             <option value="Disposed">Disposed</option>
             <option value="Under Repair/Workshop">Under Repair/Workshop</option>
           </select>
+          <select
+            value={filterDuplicate}
+            onChange={(e) => setFilterDuplicate(e.target.value)}
+            className="h-10 px-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          >
+            <option value="">All Assets</option>
+            <option value="true">Duplicates Only</option>
+          </select>
           {isScyStoreContext && (
             <select
               value={filterMaintenanceVendor}
@@ -2447,6 +2467,7 @@ const Assets = () => {
                 setFilterManufacturer(''); setFilterMaintenanceVendor(''); setFilterProductName('');
                 setFilterReserved('');
                 setFilterDisposed('');
+                setFilterDuplicate('');
                 setFilterModelNumber(''); setFilterSerialNumber(''); setFilterMacAddress('');
                 setFilterTicket(''); setFilterRfid(''); setFilterQr('');
                 setFilterDateFrom(''); setFilterDateTo('');

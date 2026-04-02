@@ -70,6 +70,13 @@ const FLEET_STATUS_LABELS = [
   'Disposed'
 ];
 const FLEET_STATUS_ROW_COLORS = ['#0ea5e9', '#22c55e', '#6366f1', '#ef4444', '#64748b', '#c2410c', '#10b981', '#94a3b8'];
+const DEFAULT_ANALYTICS_SECTION_ORDER = [
+  'key_metrics',
+  'utilization_fleet',
+  'locations_products_status',
+  'maintenance_vendors',
+  'growth'
+];
 
 const formatQtyLine = (n) => {
   const q = Number(n);
@@ -255,7 +262,13 @@ SectionLabel.propTypes = {
   children: PropTypes.node
 };
 
-const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selectedMaintenanceVendor = 'All' }) => {
+const DashboardCharts = ({
+  stats,
+  showMaintenanceVendorFeatures = false,
+  selectedMaintenanceVendor = 'All',
+  analyticsSectionOrder = DEFAULT_ANALYTICS_SECTION_ORDER,
+  showInsightsStrip = true
+}) => {
   const overview = stats?.overview;
   const growth = stats?.growth;
   const locations = stats?.locations;
@@ -337,13 +350,26 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
       gradientTargets: useVectorPieStyle ? [...oceanPieGradients, ...oceanPieGradients.slice(0, 3)] : [],
       tooltipItemLabel: 'qty'
     });
-    const lifecyclePie = buildPieConfig({
+    const lifecycleAssetsPie = buildPieConfig({
       labels: ['Repaired', 'Under Repair/Workshop', 'Disposed'],
       values: [safeOverview.repaired || 0, safeOverview.underRepairWorkshop || 0, safeOverview.disposed || 0],
       colors: useVectorPieStyle ? [oceanPieColors[3], oceanPieColors[1], oceanPieColors[0]] : ['#10b981', '#c2410c', '#64748b'],
-      title: 'Lifecycle States',
+      title: 'Lifecycle States (assets)',
       vectorStyle: useVectorPieStyle,
       gradientTargets: useVectorPieStyle ? [oceanPieGradients[3], oceanPieGradients[1], oceanPieGradients[0]] : []
+    });
+    const lifecycleQtyPie = buildPieConfig({
+      labels: ['Repaired', 'Under Repair/Workshop', 'Disposed'],
+      values: [
+        safeOverview.repairedQuantity || 0,
+        safeOverview.underRepairWorkshopQuantity || 0,
+        safeOverview.disposedQuantity || 0
+      ],
+      colors: useVectorPieStyle ? [oceanPieColors[3], oceanPieColors[1], oceanPieColors[0]] : ['#10b981', '#c2410c', '#64748b'],
+      title: 'Lifecycle States (quantity)',
+      vectorStyle: useVectorPieStyle,
+      gradientTargets: useVectorPieStyle ? [oceanPieGradients[3], oceanPieGradients[1], oceanPieGradients[0]] : [],
+      tooltipItemLabel: 'qty'
     });
     const topLocations = (locations || []).slice(0, 5);
     const locationPie = buildPieConfig({
@@ -474,9 +500,9 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
       tooltip: { y: { formatter: (val) => `${val} qty` } }
     };
     const growthSeries = [{ name: 'New Assets', data: (growth || []).map((g) => g.value) }];
-    return { utilizationPie, fleetStatusRowsPie, fleetStatusQtyPie, lifecyclePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, lifecycleBarOptions, lifecycleBarSeries, growthOptions, growthSeries };
+    return { utilizationPie, fleetStatusRowsPie, fleetStatusQtyPie, lifecycleAssetsPie, lifecycleQtyPie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, lifecycleBarOptions, lifecycleBarSeries, growthOptions, growthSeries };
   }, [inUseCount, notInUseCount, useVectorPieStyle, oceanPieColors, oceanPieGradients, palette.primary, palette.secondary, locations, products, maintenanceVendors, safeOverview.total, safeOverview.totalQuantity, safeOverview.inStore, safeOverview.inUse, safeOverview.reserved, safeOverview.faulty, safeOverview.missing, safeOverview.disposed, safeOverview.repaired, safeOverview.underRepairWorkshop, safeOverview.inStoreQuantity, safeOverview.inUseQuantity, safeOverview.reservedQuantity, safeOverview.faultyQuantity, safeOverview.missingQuantity, safeOverview.disposedQuantity, safeOverview.repairedQuantity, safeOverview.underRepairWorkshopQuantity, growth]);
-  const { utilizationPie, fleetStatusRowsPie, fleetStatusQtyPie, lifecyclePie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, lifecycleBarOptions, lifecycleBarSeries, growthOptions, growthSeries } = chartConfigs;
+  const { utilizationPie, fleetStatusRowsPie, fleetStatusQtyPie, lifecycleAssetsPie, lifecycleQtyPie, locationPie, productPie, maintenanceVendorPie, siemensVendorPie, g42VendorPie, barOptions, barSeries, lifecycleBarOptions, lifecycleBarSeries, growthOptions, growthSeries } = chartConfigs;
 
   if (!stats) {
     return (
@@ -493,6 +519,12 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
   const chartCardAccent = 'absolute left-0 top-0 h-full w-1 bg-[rgb(var(--accent-color))] opacity-80 rounded-l-2xl';
   const chartTitleClass = 'text-app-main font-bold mb-1 flex items-center gap-2 pr-2';
   const chartSubtitleClass = 'text-xs text-app-muted mb-4 max-w-prose';
+  const utilizationPct = safeOverview.total ? Math.round((safeOverview.inUse / safeOverview.total) * 100) : 0;
+  const reservePct = safeOverview.total ? Math.round((safeOverview.reserved / safeOverview.total) * 100) : 0;
+  const lifecycleQtyTotal =
+    Number(safeOverview.repairedQuantity || 0) +
+    Number(safeOverview.underRepairWorkshopQuantity || 0) +
+    Number(safeOverview.disposedQuantity || 0);
 
   const navigateToAssets = (status) => {
     const params = new URLSearchParams();
@@ -520,8 +552,8 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
     window.open(`/assets${query ? `?${query}` : ''}`, '_blank', 'noopener,noreferrer');
   };
 
-  return (
-    <div className="space-y-8">
+  const analyticsSectionsById = {
+    key_metrics: (
       <section className="space-y-4" aria-label="Key metrics">
         <SectionLabel icon={LayoutGrid}>Key metrics</SectionLabel>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-5">
@@ -537,37 +569,64 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
         <StatCard title="Asset Types" value={safeOverview.assetTypes || 0} icon={Layers} color="violet" subText="Unique products" onClick={() => window.open('/products', '_blank', 'noopener,noreferrer')} />
         </div>
       </section>
-
+    ),
+    utilization_fleet: (
       <section className="space-y-4" aria-label="Utilization and fleet status">
         <SectionLabel icon={PieChart}>Utilization &amp; fleet status</SectionLabel>
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-10 gap-5">
+        <div className={`${chartCardClass} xl:col-span-2`}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{utilizationPie.title}</h3>
           <p className={chartSubtitleClass}>Same row counts as Key metrics (ACTIVE): In Use vs all other active assets (excluding Disposed).</p>
           <Chart options={utilizationPie.options} series={utilizationPie.series} type={utilizationPie.type} height={utilizationPie.height} />
         </div>
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        <div className={`${chartCardClass} xl:col-span-2`}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{fleetStatusRowsPie.title}</h3>
           <p className={chartSubtitleClass}>Matches Key metrics by status buckets (includes Disposed as its own slice).</p>
           <Chart options={fleetStatusRowsPie.options} series={fleetStatusRowsPie.series} type={fleetStatusRowsPie.type} height={fleetStatusRowsPie.height} />
         </div>
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        <div className={`${chartCardClass} xl:col-span-2`}>
           <span className={chartCardAccent} aria-hidden />
           <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{fleetStatusQtyPie.title}</h3>
           <p className={chartSubtitleClass}>Matches Key metrics Quantity lines by status buckets (includes Disposed).</p>
           <Chart options={fleetStatusQtyPie.options} series={fleetStatusQtyPie.series} type={fleetStatusQtyPie.type} height={fleetStatusQtyPie.height} />
         </div>
-        <div className={`${chartCardClass} xl:col-span-3`}>
+        <div className={`${chartCardClass} xl:col-span-2`}>
           <span className={chartCardAccent} aria-hidden />
-          <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{lifecyclePie.title}</h3>
-          <p className={chartSubtitleClass}>Disposed, repaired and workshop split.</p>
-          <Chart options={lifecyclePie.options} series={lifecyclePie.series} type={lifecyclePie.type} height={lifecyclePie.height} />
+          <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{lifecycleAssetsPie.title}</h3>
+          <p className={chartSubtitleClass}>Disposed, repaired and workshop split (asset rows).</p>
+          <Chart options={lifecycleAssetsPie.options} series={lifecycleAssetsPie.series} type={lifecycleAssetsPie.type} height={lifecycleAssetsPie.height} />
+        </div>
+        <div className={`${chartCardClass} xl:col-span-2`}>
+          <span className={chartCardAccent} aria-hidden />
+          <h3 className={`${chartTitleClass} mt-0.5`}><PieChart size={18} className="text-app-accent shrink-0" />{lifecycleQtyPie.title}</h3>
+          <p className={chartSubtitleClass}>Disposed, repaired and workshop split (quantity).</p>
+          <Chart options={lifecycleQtyPie.options} series={lifecycleQtyPie.series} type={lifecycleQtyPie.type} height={lifecycleQtyPie.height} />
         </div>
         </div>
+        {showInsightsStrip && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-app-card bg-app-card p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-app-muted">Utilization</p>
+              <p className="mt-1 text-2xl font-bold text-app-main tabular-nums">{utilizationPct}%</p>
+              <p className="text-xs text-app-muted mt-1">{safeOverview.inUse} in use out of {safeOverview.total} active assets</p>
+            </div>
+            <div className="rounded-xl border border-app-card bg-app-card p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-app-muted">Reserved Pressure</p>
+              <p className="mt-1 text-2xl font-bold text-app-main tabular-nums">{reservePct}%</p>
+              <p className="text-xs text-app-muted mt-1">{safeOverview.reserved} reserved assets ({safeOverview.reservedQuantity} qty)</p>
+            </div>
+            <div className="rounded-xl border border-app-card bg-app-card p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-app-muted">Lifecycle Volume</p>
+              <p className="mt-1 text-2xl font-bold text-app-main tabular-nums">{lifecycleQtyTotal}</p>
+              <p className="text-xs text-app-muted mt-1">Repaired + workshop + disposed quantity</p>
+            </div>
+          </div>
+        )}
       </section>
-
+    ),
+    locations_products_status: (
       <section className="space-y-4" aria-label="Locations products and status">
         <SectionLabel icon={MapPinned}>Locations, products &amp; status</SectionLabel>
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
@@ -597,74 +656,86 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
         </div>
         </div>
       </section>
+    ),
+    maintenance_vendors: showMaintenanceVendorFeatures ? (
+      <section className="space-y-4" aria-label="Maintenance vendors">
+        <SectionLabel icon={Wrench}>Maintenance vendors</SectionLabel>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className={chartCardClass}>
+          <span className={chartCardAccent} aria-hidden />
+          <h3 className={`${chartTitleClass} mt-0.5`}>
+            <PieChart size={18} className="text-app-accent shrink-0" />
+            {siemensVendorPie.title}
+          </h3>
+          <p className="text-xs text-app-muted mb-4">Siemens-maintained assets vs the rest of the fleet.</p>
+          <Chart options={siemensVendorPie.options} series={siemensVendorPie.series} type={siemensVendorPie.type} height={siemensVendorPie.height} />
+        </div>
+        <div className={chartCardClass}>
+          <span className={chartCardAccent} aria-hidden />
+          <h3 className={`${chartTitleClass} mt-0.5`}>
+            <PieChart size={18} className="text-app-accent shrink-0" />
+            {g42VendorPie.title}
+          </h3>
+          <p className="text-xs text-app-muted mb-4">G42-maintained assets vs the rest of the fleet.</p>
+          <Chart options={g42VendorPie.options} series={g42VendorPie.series} type={g42VendorPie.type} height={g42VendorPie.height} />
+        </div>
+        <div className={`${chartCardClass} md:col-span-2 xl:col-span-1`}>
+          <span className={chartCardAccent} aria-hidden />
+          <h3 className={`${chartTitleClass} mt-0.5`}>
+            <PieChart size={18} className="text-app-accent shrink-0" />
+            {maintenanceVendorPie.title}
+          </h3>
+          <p className="text-xs text-app-muted mb-3">Compare vendors and jump to filtered assets.</p>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {['Siemens', 'G42'].map((vendor) => (
+              <button
+                key={vendor}
+                type="button"
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  params.set('maintenance_vendor', vendor);
+                  window.open(`/assets?${params.toString()}`, '_blank', 'noopener,noreferrer');
+                }}
+                className="inline-flex items-center rounded-full border border-app-card bg-app-elevated px-3 py-1.5 text-xs font-semibold text-app-main hover:bg-app-card transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-color))]"
+              >
+                {vendor}
+              </button>
+            ))}
+          </div>
+          <Chart options={maintenanceVendorPie.options} series={maintenanceVendorPie.series} type={maintenanceVendorPie.type} height={maintenanceVendorPie.height} />
+        </div>
+        </div>
+      </section>
+    ) : null,
+    growth: (growth || []).length > 0 ? (
+      <section className="space-y-4" aria-label="Acquisition trend">
+        <SectionLabel icon={TrendingUp}>Growth</SectionLabel>
+        <div className={chartCardClass}>
+          <span className={chartCardAccent} aria-hidden />
+          <h3 className={`${chartTitleClass} mt-0.5`}>
+            <TrendingUp className="w-5 h-5 text-app-accent shrink-0" />
+            Asset Acquisition Trend (Last 6 Months)
+          </h3>
+          <p className={chartSubtitleClass}>New assets registered over recent months.</p>
+          <div className="h-[300px] w-full">
+            <Chart options={growthOptions} series={growthSeries} type="area" height="100%" />
+          </div>
+        </div>
+      </section>
+    ) : null
+  };
 
-      {showMaintenanceVendorFeatures && (
-        <section className="space-y-4" aria-label="Maintenance vendors">
-          <SectionLabel icon={Wrench}>Maintenance vendors</SectionLabel>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          <div className={chartCardClass}>
-            <span className={chartCardAccent} aria-hidden />
-            <h3 className={`${chartTitleClass} mt-0.5`}>
-              <PieChart size={18} className="text-app-accent shrink-0" />
-              {siemensVendorPie.title}
-            </h3>
-            <p className="text-xs text-app-muted mb-4">Siemens-maintained assets vs the rest of the fleet.</p>
-            <Chart options={siemensVendorPie.options} series={siemensVendorPie.series} type={siemensVendorPie.type} height={siemensVendorPie.height} />
-          </div>
-          <div className={chartCardClass}>
-            <span className={chartCardAccent} aria-hidden />
-            <h3 className={`${chartTitleClass} mt-0.5`}>
-              <PieChart size={18} className="text-app-accent shrink-0" />
-              {g42VendorPie.title}
-            </h3>
-            <p className="text-xs text-app-muted mb-4">G42-maintained assets vs the rest of the fleet.</p>
-            <Chart options={g42VendorPie.options} series={g42VendorPie.series} type={g42VendorPie.type} height={g42VendorPie.height} />
-          </div>
-          <div className={`${chartCardClass} md:col-span-2 xl:col-span-1`}>
-            <span className={chartCardAccent} aria-hidden />
-            <h3 className={`${chartTitleClass} mt-0.5`}>
-              <PieChart size={18} className="text-app-accent shrink-0" />
-              {maintenanceVendorPie.title}
-            </h3>
-            <p className="text-xs text-app-muted mb-3">Compare vendors and jump to filtered assets.</p>
-            <div className="mb-4 flex flex-wrap gap-2">
-              {['Siemens', 'G42'].map((vendor) => (
-                <button
-                  key={vendor}
-                  type="button"
-                  onClick={() => {
-                    const params = new URLSearchParams();
-                    params.set('maintenance_vendor', vendor);
-                    window.open(`/assets?${params.toString()}`, '_blank', 'noopener,noreferrer');
-                  }}
-                  className="inline-flex items-center rounded-full border border-app-card bg-app-elevated px-3 py-1.5 text-xs font-semibold text-app-main hover:bg-app-card transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--accent-color))]"
-                >
-                  {vendor}
-                </button>
-              ))}
-            </div>
-            <Chart options={maintenanceVendorPie.options} series={maintenanceVendorPie.series} type={maintenanceVendorPie.type} height={maintenanceVendorPie.height} />
-          </div>
-          </div>
-        </section>
-      )}
+  const orderedSectionIds = Array.isArray(analyticsSectionOrder) && analyticsSectionOrder.length > 0
+    ? analyticsSectionOrder
+    : DEFAULT_ANALYTICS_SECTION_ORDER;
 
-      {(growth || []).length > 0 && (
-        <section className="space-y-4" aria-label="Acquisition trend">
-          <SectionLabel icon={TrendingUp}>Growth</SectionLabel>
-          <div className={chartCardClass}>
-            <span className={chartCardAccent} aria-hidden />
-            <h3 className={`${chartTitleClass} mt-0.5`}>
-              <TrendingUp className="w-5 h-5 text-app-accent shrink-0" />
-              Asset Acquisition Trend (Last 6 Months)
-            </h3>
-            <p className={chartSubtitleClass}>New assets registered over recent months.</p>
-            <div className="h-[300px] w-full">
-              <Chart options={growthOptions} series={growthSeries} type="area" height="100%" />
-            </div>
-          </div>
-        </section>
-      )}
+  const orderedSections = orderedSectionIds
+    .map((id) => analyticsSectionsById[id])
+    .filter(Boolean);
+
+  return (
+    <div className="space-y-8">
+      {orderedSections}
     </div>
   );
 };
@@ -672,7 +743,9 @@ const DashboardCharts = ({ stats, showMaintenanceVendorFeatures = false, selecte
 DashboardCharts.propTypes = {
   stats: PropTypes.object,
   showMaintenanceVendorFeatures: PropTypes.bool,
-  selectedMaintenanceVendor: PropTypes.string
+  selectedMaintenanceVendor: PropTypes.string,
+  analyticsSectionOrder: PropTypes.arrayOf(PropTypes.string),
+  showInsightsStrip: PropTypes.bool
 };
 
 export default DashboardCharts;

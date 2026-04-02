@@ -14,7 +14,32 @@ import {
   LayoutDashboard,
   Sparkles,
   Clock,
+  SlidersHorizontal,
+  X,
+  RotateCcw,
 } from 'lucide-react';
+
+const DASHBOARD_LAYOUT_VERSION = 1;
+const DEFAULT_ANALYTICS_SECTION_ORDER = [
+  'key_metrics',
+  'utilization_fleet',
+  'locations_products_status',
+  'maintenance_vendors',
+  'growth'
+];
+
+const DEFAULT_DASHBOARD_LAYOUT = {
+  bannerCards: {
+    consumables: true,
+    tools: true,
+    lowStock: true,
+    toolsStatus: true
+  },
+  showInsightsStrip: true,
+  showPendingAlerts: true,
+  showRecentActivity: true,
+  analyticsOrder: DEFAULT_ANALYTICS_SECTION_ORDER
+};
 
 const formatRelativeTime = (iso) => {
   if (!iso) return '—';
@@ -91,6 +116,28 @@ const Dashboard = () => {
   const lowStockOverlayRef = useRef(null);
   const fetchSeqRef = useRef(0);
 
+  const analyticsSectionOptions = useMemo(
+    () => [
+      { id: 'key_metrics', label: 'Key metrics' },
+      { id: 'utilization_fleet', label: 'Utilization & fleet status' },
+      { id: 'locations_products_status', label: 'Locations, products & status' },
+      { id: 'maintenance_vendors', label: 'Maintenance vendors' },
+      { id: 'growth', label: 'Growth' }
+    ],
+    []
+  );
+
+  const layoutKey = useMemo(() => {
+    const keyPart = user?._id || user?.email || 'anon';
+    return `dashboard_layout_v${DASHBOARD_LAYOUT_VERSION}:${keyPart}`;
+  }, [user?._id, user?.email]);
+
+  const [dashboardLayout, setDashboardLayout] = useState(DEFAULT_DASHBOARD_LAYOUT);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [draftLayout, setDraftLayout] = useState(null);
+
+  const canCustomize = !!user && user?.role !== 'Viewer';
+
   const dashboardVendor = useMemo(() => {
     const v = searchParams.get('maintenance_vendor');
     if (v === 'Siemens' || v === 'G42') return v;
@@ -116,6 +163,103 @@ const Dashboard = () => {
     ? `?maintenance_vendor=${encodeURIComponent(dashboardVendor)}`
     : '';
   const assetsLink = `/assets${assetsQuery}`;
+
+  useEffect(() => {
+    // Per-user dashboard layout persistence (local-only for now).
+    if (!layoutKey) return;
+    try {
+      const raw = localStorage.getItem(layoutKey);
+      if (!raw) {
+        setDashboardLayout(DEFAULT_DASHBOARD_LAYOUT);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        setDashboardLayout(DEFAULT_DASHBOARD_LAYOUT);
+        return;
+      }
+
+      const loadedAnalyticsOrder = Array.isArray(parsed.analyticsOrder) ? parsed.analyticsOrder : [];
+      const validSet = new Set(DEFAULT_ANALYTICS_SECTION_ORDER);
+      const cleanedOrder = loadedAnalyticsOrder.filter((id) => validSet.has(id));
+      const analyticsOrder =
+        cleanedOrder.length > 0 ? cleanedOrder : DEFAULT_DASHBOARD_LAYOUT.analyticsOrder;
+
+      const bannerCardsFromParsed = (() => {
+        const defaultCards = DEFAULT_DASHBOARD_LAYOUT.bannerCards;
+        if (parsed.bannerCards && typeof parsed.bannerCards === 'object') {
+          return {
+            consumables: parsed.bannerCards.consumables !== false,
+            tools: parsed.bannerCards.tools !== false,
+            lowStock: parsed.bannerCards.lowStock !== false,
+            toolsStatus: parsed.bannerCards.toolsStatus !== false
+          };
+        }
+        // Backward compatibility: previously saved key was `showBannerKpis`.
+        const showAll = parsed.showBannerKpis !== false;
+        return {
+          consumables: showAll,
+          tools: showAll,
+          lowStock: showAll,
+          toolsStatus: showAll
+        };
+      })();
+
+      setDashboardLayout({
+        bannerCards: bannerCardsFromParsed,
+        showInsightsStrip: parsed.showInsightsStrip !== false,
+        showPendingAlerts: parsed.showPendingAlerts !== false,
+        showRecentActivity: parsed.showRecentActivity !== false,
+        analyticsOrder
+      });
+    } catch {
+      setDashboardLayout(DEFAULT_DASHBOARD_LAYOUT);
+    }
+  }, [layoutKey]);
+
+  const persistLayout = (nextLayout) => {
+    try {
+      localStorage.setItem(layoutKey, JSON.stringify(nextLayout));
+    } catch {
+      // Non-blocking: keep dashboard usable without persistence.
+    }
+  };
+
+  const startCustomize = () => {
+    if (!canCustomize) return;
+    setDraftLayout(dashboardLayout);
+    setCustomizeOpen(true);
+  };
+
+  const cancelCustomize = () => {
+    setCustomizeOpen(false);
+    setDraftLayout(null);
+  };
+
+  const resetCustomize = () => {
+    setDraftLayout(DEFAULT_DASHBOARD_LAYOUT);
+  };
+
+  const saveCustomize = () => {
+    if (!draftLayout) return;
+    const validSet = new Set(DEFAULT_ANALYTICS_SECTION_ORDER);
+    const cleanedOrder = (draftLayout.analyticsOrder || []).filter((id) => validSet.has(id));
+    const next = {
+      bannerCards: {
+        consumables: draftLayout.bannerCards?.consumables !== false,
+        tools: draftLayout.bannerCards?.tools !== false,
+        lowStock: draftLayout.bannerCards?.lowStock !== false,
+        toolsStatus: draftLayout.bannerCards?.toolsStatus !== false
+      },
+      showInsightsStrip: draftLayout.showInsightsStrip !== false,
+      showPendingAlerts: draftLayout.showPendingAlerts !== false,
+      showRecentActivity: draftLayout.showRecentActivity !== false,
+      analyticsOrder: cleanedOrder.length > 0 ? cleanedOrder : DEFAULT_DASHBOARD_LAYOUT.analyticsOrder
+    };
+    setDashboardLayout(next);
+    persistLayout(next);
+    cancelCustomize();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -265,6 +409,13 @@ const Dashboard = () => {
   const toolsIssued = toolsStats?.issued ?? 0;
   const toolsMaintenance = toolsStats?.maintenance ?? 0;
 
+  const bannerCards = dashboardLayout?.bannerCards || {};
+  const showConsumablesBanner = bannerCards.consumables !== false;
+  const showToolsBanner = bannerCards.tools !== false;
+  const showLowStockBanner = bannerCards.lowStock !== false;
+  const showToolsStatusBanner = bannerCards.toolsStatus !== false;
+  const showAnyBanner = showConsumablesBanner || showToolsBanner || showLowStockBanner || showToolsStatusBanner;
+
   return (
     <div className="min-h-screen bg-app-page space-y-6 text-app-main pb-10">
       <div className="relative overflow-visible rounded-2xl border border-app-card bg-app-card shadow-sm">
@@ -291,6 +442,19 @@ const Dashboard = () => {
                     <> · Here&apos;s your fleet snapshot</>
                   )}
                 </p>
+                {canCustomize && (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={startCustomize}
+                      className="inline-flex items-center gap-2 rounded-lg border border-app-card bg-app-elevated px-3 py-2 text-xs font-bold text-app-accent hover:bg-app-card transition-colors"
+                      title="Customize which analytics sections appear and in what order"
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                      Customize dashboard
+                    </button>
+                  </div>
+                )}
                 {lastUpdated && (
                   <p className="mt-2 flex items-center gap-1.5 text-xs text-app-muted">
                     <Clock className="h-3.5 w-3.5 shrink-0 opacity-70" />
@@ -329,34 +493,44 @@ const Dashboard = () => {
         </div>
       </div>
 
+      {showAnyBanner && (
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Consumables</p>
-          <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{consumablesTotalQty}</p>
-          <p className="text-[11px] text-app-muted mt-0.5">
-            {consumablesError ? `Error: ${consumablesError}` : `${consumablesItems} items in stock`}
-          </p>
-        </div>
-        <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Tools</p>
-          <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{toolsAvailable}</p>
-          <p className="text-[11px] text-app-muted mt-0.5">
-            {toolsError ? `Error: ${toolsError}` : `${toolsTotal} total tools`}
-          </p>
-        </div>
-        <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Low stock</p>
-          <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{consumablesLowStockQty}</p>
-          <p className="text-[11px] text-app-muted mt-0.5">Consumables at/below min qty</p>
-        </div>
-        <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Tools status</p>
-          <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{toolsIssued + toolsMaintenance}</p>
-          <p className="text-[11px] text-app-muted mt-0.5">{toolsIssued} issued + {toolsMaintenance} maintenance</p>
-        </div>
+        {showConsumablesBanner && (
+          <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Consumables</p>
+            <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{consumablesTotalQty}</p>
+            <p className="text-[11px] text-app-muted mt-0.5">
+              {consumablesError ? `Error: ${consumablesError}` : `${consumablesItems} items in stock`}
+            </p>
+          </div>
+        )}
+        {showToolsBanner && (
+          <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Tools</p>
+            <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{toolsAvailable}</p>
+            <p className="text-[11px] text-app-muted mt-0.5">
+              {toolsError ? `Error: ${toolsError}` : `${toolsTotal} total tools`}
+            </p>
+          </div>
+        )}
+        {showLowStockBanner && (
+          <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Low stock</p>
+            <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{consumablesLowStockQty}</p>
+            <p className="text-[11px] text-app-muted mt-0.5">Consumables at/below min qty</p>
+          </div>
+        )}
+        {showToolsStatusBanner && (
+          <div className="rounded-xl border border-app-card bg-app-elevated px-4 py-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-app-muted">Tools status</p>
+            <p className="text-xl font-bold text-app-main tabular-nums mt-0.5">{toolsIssued + toolsMaintenance}</p>
+            <p className="text-[11px] text-app-muted mt-0.5">{toolsIssued} issued + {toolsMaintenance} maintenance</p>
+          </div>
+        )}
       </div>
+      )}
 
-      {(stats?.overview?.pendingRequests > 0 || (user?.role !== 'Viewer' && stats?.overview?.pendingReturns > 0)) && (
+      {dashboardLayout.showPendingAlerts !== false && (stats?.overview?.pendingRequests > 0 || (user?.role !== 'Viewer' && stats?.overview?.pendingReturns > 0)) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {stats.overview.pendingRequests > 0 && (
             <div className="relative overflow-hidden rounded-2xl border border-app-card bg-app-card p-5 flex items-start justify-between gap-4 hover:shadow-md transition-all duration-200">
@@ -414,9 +588,12 @@ const Dashboard = () => {
           stats={stats}
           showMaintenanceVendorFeatures={isScyDashboard}
           selectedMaintenanceVendor={isScyDashboard ? dashboardVendor : 'All'}
+          analyticsSectionOrder={dashboardLayout.analyticsOrder}
+          showInsightsStrip={dashboardLayout.showInsightsStrip !== false}
         />
       </section>
 
+      {dashboardLayout.showRecentActivity !== false && (
       <div className="rounded-2xl border border-app-card bg-app-card shadow-sm overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-app-card px-5 py-4 bg-app-elevated/30">
           <div>
@@ -489,6 +666,245 @@ const Dashboard = () => {
           </table>
         </div>
       </div>
+      )}
+
+      {customizeOpen && draftLayout && (
+        <div className="fixed inset-0 z-[10000]">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/30"
+            onMouseDown={cancelCustomize}
+            aria-label="Close customize panel"
+          />
+          <div className="relative mx-auto mt-10 w-full max-w-2xl bg-app-page border border-app-card rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-start justify-between gap-3 border-b border-app-card px-5 py-4 bg-app-elevated/30">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-app-main">Customize dashboard</h3>
+                <p className="text-xs text-app-muted mt-1">Choose which sections show up on your dashboard.</p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelCustomize}
+                className="p-2 rounded-lg border border-app-card bg-app-card text-app-muted hover:bg-app-elevated transition-colors"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
+              <div className="space-y-3">
+                <h4 className="text-sm font-bold text-app-main">Layout</h4>
+
+                <div className="space-y-3">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-app-muted">Banner cards</h5>
+
+                  <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                    <span className="text-sm font-semibold text-app-main">Consumables</span>
+                    <input
+                      type="checkbox"
+                      checked={draftLayout.bannerCards?.consumables !== false}
+                      onChange={(e) =>
+                        setDraftLayout((prev) => ({
+                          ...prev,
+                          bannerCards: { ...(prev.bannerCards || {}), consumables: e.target.checked }
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                    <span className="text-sm font-semibold text-app-main">Tools</span>
+                    <input
+                      type="checkbox"
+                      checked={draftLayout.bannerCards?.tools !== false}
+                      onChange={(e) =>
+                        setDraftLayout((prev) => ({
+                          ...prev,
+                          bannerCards: { ...(prev.bannerCards || {}), tools: e.target.checked }
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                    <span className="text-sm font-semibold text-app-main">Low stock</span>
+                    <input
+                      type="checkbox"
+                      checked={draftLayout.bannerCards?.lowStock !== false}
+                      onChange={(e) =>
+                        setDraftLayout((prev) => ({
+                          ...prev,
+                          bannerCards: { ...(prev.bannerCards || {}), lowStock: e.target.checked }
+                        }))
+                      }
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                    <span className="text-sm font-semibold text-app-main">Tools status</span>
+                    <input
+                      type="checkbox"
+                      checked={draftLayout.bannerCards?.toolsStatus !== false}
+                      onChange={(e) =>
+                        setDraftLayout((prev) => ({
+                          ...prev,
+                          bannerCards: { ...(prev.bannerCards || {}), toolsStatus: e.target.checked }
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                  <span className="text-sm font-semibold text-app-main">Insights strip</span>
+                  <input
+                    type="checkbox"
+                    checked={draftLayout.showInsightsStrip !== false}
+                    onChange={(e) => setDraftLayout((prev) => ({ ...prev, showInsightsStrip: e.target.checked }))}
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                  <span className="text-sm font-semibold text-app-main">Pending alerts</span>
+                  <input
+                    type="checkbox"
+                    checked={draftLayout.showPendingAlerts !== false}
+                    onChange={(e) => setDraftLayout((prev) => ({ ...prev, showPendingAlerts: e.target.checked }))}
+                    disabled={user?.role === 'Viewer'}
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated">
+                  <span className="text-sm font-semibold text-app-main">Recent activity</span>
+                  <input
+                    type="checkbox"
+                    checked={draftLayout.showRecentActivity !== false}
+                    onChange={(e) => setDraftLayout((prev) => ({ ...prev, showRecentActivity: e.target.checked }))}
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-bold text-app-main">Analytics sections</h4>
+
+                <div className="space-y-3">
+                  {analyticsSectionOptions.map((opt) => {
+                    const order = draftLayout.analyticsOrder || [];
+                    const isIncluded = order.includes(opt.id);
+                    const isMaintenanceDisabled = opt.id === 'maintenance_vendors' && !isScyDashboard;
+                    const idx = order.indexOf(opt.id);
+
+                    return (
+                      <div
+                        key={opt.id}
+                        className="flex items-center justify-between gap-3 p-3 rounded-xl border border-app-card bg-app-elevated"
+                      >
+                        <label className={`flex items-center gap-3 min-w-0 ${isMaintenanceDisabled ? 'opacity-60' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={isIncluded}
+                            disabled={isMaintenanceDisabled}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setDraftLayout((prev) => {
+                                const prevOrder = (prev.analyticsOrder || []).slice();
+                                if (checked) {
+                                  if (!prevOrder.includes(opt.id)) prevOrder.push(opt.id);
+                                  return { ...prev, analyticsOrder: prevOrder };
+                                }
+                                return { ...prev, analyticsOrder: prevOrder.filter((id) => id !== opt.id) };
+                              });
+                            }}
+                          />
+                          <span className="text-sm font-semibold text-app-main truncate">{opt.label}</span>
+                        </label>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="px-2 py-1 text-xs font-bold rounded-lg border border-app-card bg-app-card text-app-muted hover:bg-app-elevated transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={isMaintenanceDisabled || !isIncluded || idx <= 0}
+                            onClick={() => {
+                              setDraftLayout((prev) => {
+                                const nextOrder = (prev.analyticsOrder || []).slice();
+                                const curIdx = nextOrder.indexOf(opt.id);
+                                if (curIdx <= 0) return prev;
+                                const swapIdx = curIdx - 1;
+                                const tmp = nextOrder[swapIdx];
+                                nextOrder[swapIdx] = nextOrder[curIdx];
+                                nextOrder[curIdx] = tmp;
+                                return { ...prev, analyticsOrder: nextOrder };
+                              });
+                            }}
+                          >
+                            Up
+                          </button>
+                          <button
+                            type="button"
+                            className="px-2 py-1 text-xs font-bold rounded-lg border border-app-card bg-app-card text-app-muted hover:bg-app-elevated transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={
+                              isMaintenanceDisabled ||
+                              !isIncluded ||
+                              idx === -1 ||
+                              idx >= (draftLayout.analyticsOrder || []).length - 1
+                            }
+                            onClick={() => {
+                              setDraftLayout((prev) => {
+                                const nextOrder = (prev.analyticsOrder || []).slice();
+                                const curIdx = nextOrder.indexOf(opt.id);
+                                if (curIdx === -1 || curIdx >= nextOrder.length - 1) return prev;
+                                const swapIdx = curIdx + 1;
+                                const tmp = nextOrder[swapIdx];
+                                nextOrder[swapIdx] = nextOrder[curIdx];
+                                nextOrder[curIdx] = tmp;
+                                return { ...prev, analyticsOrder: nextOrder };
+                              });
+                            }}
+                          >
+                            Down
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {!isScyDashboard && (
+                  <p className="text-xs text-app-muted">Maintenance vendors section is available only for the SCY dashboard.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-app-card px-5 py-4 bg-app-elevated/30">
+              <button
+                type="button"
+                onClick={resetCustomize}
+                className="inline-flex items-center gap-2 text-xs font-bold text-app-main hover:opacity-90 transition-opacity"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Reset
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={cancelCustomize}
+                  className="px-4 py-2 rounded-xl border border-app-card bg-app-card text-xs font-bold text-app-main hover:bg-app-elevated transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveCustomize}
+                  className="px-4 py-2 rounded-xl bg-app-accent text-white text-xs font-bold hover:opacity-90 transition-opacity shadow-sm"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showLowStockPanel && (
         <div className="fixed inset-0 z-[9999]" ref={lowStockOverlayRef}>

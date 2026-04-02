@@ -184,10 +184,36 @@ const ProductDetails = () => {
                             <span>By: {event.user}</span>
                           </div>
                         )}
+                        {event.actor_role && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">Role: {event.actor_role}</span>
+                          </div>
+                        )}
                         {event.ticket_number && (
                           <div className="flex items-center gap-2">
                             <AlertCircle size={12} className="text-gray-400" />
                             <span>Ticket: {event.ticket_number}</span>
+                          </div>
+                        )}
+                        {(event.previous_status || event.status) && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">
+                              Status: {event.previous_status || '-'} {'->'} {event.status || '-'}
+                            </span>
+                          </div>
+                        )}
+                        {(event.previous_condition || event.condition) && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">
+                              Condition: {event.previous_condition || '-'} {'->'} {event.condition || '-'}
+                            </span>
+                          </div>
+                        )}
+                        {(event.location || event.store_name) && (
+                          <div className="col-span-2">
+                            <span className="text-xs text-gray-500">
+                              Where: {[event.location, event.store_name].filter(Boolean).join(' | ')}
+                            </span>
                           </div>
                         )}
                       </div>

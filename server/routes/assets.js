@@ -296,6 +296,53 @@ const resolveAuditWhere = (asset, explicitLocation = '') => {
   return 'N/A';
 };
 
+const appendAssetHistory = (asset, {
+  action,
+  req,
+  ticketNumber = '',
+  details = '',
+  previousStatus = '',
+  previousCondition = '',
+  location = '',
+  storeName = '',
+  status = '',
+  condition = ''
+} = {}) => {
+  if (!asset || !action) return;
+  const lastEvent = Array.isArray(asset.history) && asset.history.length > 0
+    ? asset.history[asset.history.length - 1]
+    : null;
+  const derivedPreviousStatus = String(
+    previousStatus
+    || lastEvent?.status
+    || asset.previous_status
+    || ''
+  ).trim();
+  const derivedPreviousCondition = String(
+    previousCondition
+    || lastEvent?.condition
+    || ''
+  ).trim();
+  const safeLocation = String(location || asset.location || '').trim();
+  const derivedStoreName =
+    String(storeName || asset?.store?.name || asset?.store?.store_name || '').trim();
+  asset.history.push({
+    action: String(action),
+    ticket_number: String(ticketNumber || '').trim(),
+    details: String(details || '').trim(),
+    user: String(req?.user?.name || '').trim(),
+    actor_email: String(req?.user?.email || '').trim(),
+    actor_role: String(req?.user?.role || '').trim(),
+    previous_status: derivedPreviousStatus,
+    previous_condition: derivedPreviousCondition,
+    status: String(status || asset.status || '').trim(),
+    condition: String(condition || asset.condition || '').trim(),
+    location: safeLocation,
+    store_name: derivedStoreName,
+    date: new Date()
+  });
+};
+
 const getPublicBaseUrl = (req) => {
   const envBase = String(process.env.PUBLIC_BASE_URL || '').trim();
   if (envBase) {
@@ -1079,7 +1126,12 @@ router.get('/stats', protect, async (req, res) => {
       countAssets(disposedScopeFilter),
       Asset.aggregate([
         { $match: disposedScopeFilter },
-        { $project: { bucket: buildExclusiveStatusBucketExpr() } },
+        {
+          $project: {
+            bucket: buildExclusiveStatusBucketExpr(),
+            quantity: '$quantity'
+          }
+        },
         { $group: { _id: '$bucket', count: { $sum: 1 }, qty: { $sum: quantityExpr } } }
       ]),
       sumQuantity(disposedScopeFilter),
@@ -2891,6 +2943,7 @@ router.post('/assign', protect, admin, async (req, res) => {
     assetIds,
     assignQuantity,
     technicianId,
+    installationLocation,
     ticketNumber,
     otherRecipient,
     needGatePass,
@@ -2974,11 +3027,13 @@ router.post('/assign', protect, admin, async (req, res) => {
       if (qtyToAssign < srcQty) {
         // Keep the remainder on the original asset and create a new split row for assigned quantity.
         srcAsset.quantity = srcQty - qtyToAssign;
-        srcAsset.history.push({
+        appendAssetHistory(srcAsset, {
           action: 'Split for Assignment',
-          ticket_number: ticketNumber || 'N/A',
-          user: req.user.name,
-          details: `Split ${qtyToAssign} from quantity batch for assignment; remaining ${srcAsset.quantity}`
+          req,
+          ticketNumber: ticketNumber || 'N/A',
+          details: `Split ${qtyToAssign} from quantity batch for assignment; remaining ${srcAsset.quantity}`,
+          previousStatus: srcAsset.status,
+          previousCondition: srcAsset.condition
         });
         await srcAsset.save();
 
@@ -3003,8 +3058,16 @@ router.post('/assign', protect, admin, async (req, res) => {
           {
             action: 'Created via Quantity Split',
             ticket_number: ticketNumber || 'N/A',
+            details: `Created split row with quantity ${qtyToAssign} for assignment`,
             user: req.user.name,
-            details: `Created split row with quantity ${qtyToAssign} for assignment`
+            actor_email: req.user.email || '',
+            actor_role: req.user.role || '',
+            previous_status: srcAsset.status || '',
+            previous_condition: srcAsset.condition || '',
+            status: srcAsset.status || '',
+            condition: srcAsset.condition || '',
+            location: srcAsset.location || '',
+            date: new Date()
           }
         ];
         const splitAsset = new Asset(splitData);
@@ -3017,21 +3080,32 @@ router.post('/assign', protect, admin, async (req, res) => {
 
     // Admin can assign either to a technician or to an external person.
     if (technicianId) {
+      const finalInstallationLocation = String(installationLocation || '').trim();
+      if (!finalInstallationLocation) {
+        return res.status(400).json({ message: 'Installation location is required when assigning to a technician' });
+      }
       const technician = await User.findById(technicianId).lean();
       if (!technician) {
         return res.status(404).json({ message: 'Technician not found' });
       }
 
       for (const asset of assetsForAssignment) {
+        const prevStatus = asset.status;
+        const prevCondition = asset.condition;
         asset.previous_status = asset.status;
         asset.assigned_to = technicianId;
         asset.assigned_to_external = null;
         asset.status = 'In Use';
+        asset.location = finalInstallationLocation;
         if (ticketNumber) asset.ticket_number = ticketNumber;
-        asset.history.push({
+        appendAssetHistory(asset, {
           action: 'Assigned (Admin)',
-          ticket_number: ticketNumber || 'N/A',
-          user: req.user.name
+          req,
+          ticketNumber: ticketNumber || 'N/A',
+          details: `Installation location: ${finalInstallationLocation}`,
+          previousStatus: prevStatus,
+          previousCondition: prevCondition,
+          location: finalInstallationLocation
         });
         await asset.save();
         updatedAssets.push(asset);
@@ -3406,6 +3480,9 @@ router.post('/maintenance/mark-repaired', protect, restrictViewer, async (req, r
 
     asset.status = 'In Store';
     asset.condition = 'Repaired';
+    // Repaired assets should return to store pool and be collectible again.
+    asset.assigned_to = null;
+    asset.assigned_to_external = null;
     asset.return_pending = false;
     asset.return_request = null;
     asset.history.push({
@@ -3673,6 +3750,7 @@ router.post('/collect-approval/:token/approve', async (req, res) => {
 router.post('/collect', protect, restrictViewer, async (req, res) => {
   const { assetId, ticketNumber, installationLocation } = req.body;
   try {
+    const finalInstallationLocation = String(installationLocation || '').trim();
     const asset = await Asset.findById(assetId);
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
@@ -3681,17 +3759,17 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
       return res.status(403).json({ message: 'Asset is outside your store scope' });
     }
 
-    if (asset.assigned_to) {
-      return res.status(400).json({ message: 'Asset is already assigned' });
-    }
     if (asset.disposed === true) {
       return res.status(400).json({ message: 'Disposed asset cannot be collected' });
     }
     if (asset.reserved === true) {
       return res.status(400).json({ message: 'Asset is reserved and cannot be issued' });
     }
-    if (String(asset.condition || '').trim().toLowerCase() === 'faulty' || asset.status === 'Missing') {
-      return res.status(400).json({ message: 'Asset is not available (Faulty/Missing)' });
+    if (String(asset.condition || '').trim().toLowerCase() === 'faulty') {
+      return res.status(400).json({ message: 'Asset is not available (Faulty)' });
+    }
+    if (!finalInstallationLocation) {
+      return res.status(400).json({ message: 'Installation location is required' });
     }
 
     let approvedRequestToConsume = null;
@@ -3783,13 +3861,19 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
     }
 
     const prev = asset.status;
+    const prevCondition = asset.condition;
+    asset.previous_status = prev;
     asset.status = 'In Use';
     asset.assigned_to = req.user._id;
-    asset.history.push({
+    asset.location = finalInstallationLocation;
+    appendAssetHistory(asset, {
       action: prev === 'In Store' ? 'Collected/In Store' : 'Collected',
-      ticket_number: ticketNumber,
-      details: installationLocation ? `Location: ${installationLocation}` : undefined,
-      user: req.user.name
+      req,
+      ticketNumber,
+      details: `Location: ${finalInstallationLocation}`,
+      previousStatus: prev,
+      previousCondition: prevCondition,
+      location: finalInstallationLocation
     });
 
     await asset.save();
@@ -3809,7 +3893,7 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
       details: [
         `Collected asset ${asset.name} (SN: ${asset.serial_number || 'N/A'})`,
         `Collected By: ${req.user.name} <${req.user.email}>`,
-        `Where: ${resolveAuditWhere(asset, installationLocation)}`,
+        `Where: ${resolveAuditWhere(asset, finalInstallationLocation)}`,
         `Ticket: ${ticketNumber || 'N/A'}`,
         `At: ${new Date().toISOString()}`
       ].join(' | '),
@@ -3825,7 +3909,7 @@ router.post('/collect', protect, restrictViewer, async (req, res) => {
         `Asset: ${asset.name}`,
         `Serial: ${asset.serial_number || 'N/A'}`,
         `Ticket: ${ticketNumber || 'N/A'}`,
-        `Location: ${installationLocation || 'N/A'}`,
+        `Location: ${finalInstallationLocation || 'N/A'}`,
         `Date: ${new Date().toLocaleString()}`
       ]
     });
@@ -3914,24 +3998,38 @@ router.post('/collect-gatepass', protect, restrictViewer, async (req, res) => {
 // @route   POST /api/assets/faulty
 // @access  Private/Technician
 router.post('/faulty', protect, restrictViewer, async (req, res) => {
-  const { assetId, ticketNumber } = req.body;
+  const { assetId, ticketNumber, installationLocation } = req.body;
   try {
+    const finalInstallationLocation = String(installationLocation || '').trim();
     const asset = await Asset.findById(assetId);
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found' });
     }
-    if (!hasAssetStoreAccess(req, asset.store)) {
+    // Technician users are typically scoped to a parent store; allow access to the
+    // asset if it belongs to the parent store or any descendant child stores.
+    if (!(await hasAssetStoreAccessDeep(req, asset.store))) {
       return res.status(403).json({ message: 'Asset is outside your store scope' });
     }
+    if (!finalInstallationLocation) {
+      return res.status(400).json({ message: 'Installation location is required when reporting faulty' });
+    }
 
+    const prevStatus = asset.status;
+    const prevCondition = asset.condition;
+    asset.previous_status = prevStatus;
     if (asset.status !== 'Missing') {
       asset.status = 'In Store';
     }
     asset.condition = 'Faulty';
-    asset.history.push({
+    asset.location = finalInstallationLocation;
+    appendAssetHistory(asset, {
       action: 'Reported Faulty',
-      ticket_number: ticketNumber,
-      user: req.user.name
+      req,
+      ticketNumber,
+      details: `Location: ${finalInstallationLocation}`,
+      previousStatus: prevStatus,
+      previousCondition: prevCondition,
+      location: finalInstallationLocation
     });
 
     await asset.save();
@@ -3967,16 +4065,20 @@ router.post('/in-use', protect, restrictViewer, async (req, res) => {
       return res.status(403).json({ message: 'You can only mark your assigned assets as In Use' });
     }
 
-    const previousUser = req.user.name;
-
+    const prevStatus = asset.status;
+    const prevCondition = asset.condition;
+    asset.previous_status = prevStatus;
     asset.status = 'In Use';
     
     // Add history
-    asset.history.push({
+    appendAssetHistory(asset, {
       action: 'In Use',
-      ticket_number: ticketNumber,
-      user: req.user.name,
-      details: location ? `Location: ${location}` : `Marked as In Use by ${req.user.name}`
+      req,
+      ticketNumber,
+      details: location ? `Location: ${location}` : `Marked as In Use by ${req.user.name}`,
+      previousStatus: prevStatus,
+      previousCondition: prevCondition,
+      location: location || asset.location
     });
 
     await asset.save();
@@ -4030,7 +4132,9 @@ router.post('/return', protect, restrictViewer, async (req, res) => {
     if (!cond) return res.status(400).json({ message: 'Invalid return condition' });
     
     // Auto-approve return logic
-    const previousUser = asset.assigned_to ? req.user.name : 'Unknown';
+    const prevStatus = asset.status;
+    const prevCondition = asset.condition;
+    asset.previous_status = prevStatus;
     
     asset.status = 'In Store';
     asset.condition = cond;
@@ -4041,11 +4145,13 @@ router.post('/return', protect, restrictViewer, async (req, res) => {
     asset.return_pending = false;
     asset.return_request = null;
 
-    asset.history.push({
+    appendAssetHistory(asset, {
       action: `Returned/${cond}`,
-      ticket_number: ticketNumber,
-      user: req.user.name,
-      details: `Auto-approved return from ${req.user.name}`
+      req,
+      ticketNumber,
+      details: `Auto-approved return from ${req.user.name}`,
+      previousStatus: prevStatus,
+      previousCondition: prevCondition
     });
 
     await asset.save();
@@ -4102,6 +4208,9 @@ router.post('/return-request', protect, restrictViewer, async (req, res) => {
     if (!cond) return res.status(400).json({ message: 'Invalid return condition' });
     
     // Auto-approve return logic
+    const prevStatus = asset.status;
+    const prevCondition = asset.condition;
+    asset.previous_status = prevStatus;
     asset.status = 'In Store';
     asset.condition = cond;
     asset.assigned_to = null;
@@ -4109,11 +4218,13 @@ router.post('/return-request', protect, restrictViewer, async (req, res) => {
     asset.return_pending = false;
     asset.return_request = null;
 
-    asset.history.push({
+    appendAssetHistory(asset, {
       action: `Returned/${cond}`,
-      ticket_number: ticketNumber,
-      user: req.user.name,
-      details: `Auto-approved return from ${req.user.name}`
+      req,
+      ticketNumber,
+      details: `Auto-approved return from ${req.user.name}`,
+      previousStatus: prevStatus,
+      previousCondition: prevCondition
     });
     
     await asset.save();
@@ -4181,14 +4292,21 @@ router.post('/return-approve', protect, admin, async (req, res) => {
     const cond = asset.return_request.condition;
     const ticketNumber = asset.return_request.ticket_number;
     const requestedBy = asset.return_request.requested_by;
+    const prevStatus = asset.status;
+    const prevCondition = asset.condition;
     asset.assigned_to = undefined;
+    asset.previous_status = prevStatus;
     asset.status = 'In Store';
+    asset.condition = cond;
     asset.return_pending = false;
     asset.return_request = undefined;
-    asset.history.push({
+    appendAssetHistory(asset, {
       action: `Returned/${cond}`,
-      ticket_number: ticketNumber,
-      user: req.user.name
+      req,
+      ticketNumber,
+      details: 'Return approved by admin',
+      previousStatus: prevStatus,
+      previousCondition: prevCondition
     });
     await asset.save();
     await ActivityLog.create({
@@ -4351,6 +4469,14 @@ router.put('/:id', protect, admin, async (req, res) => {
         }
       }
       const oldSerial = asset.serial_number;
+      const before = {
+        status: String(asset.status || ''),
+        condition: String(asset.condition || ''),
+        reserved: Boolean(asset.reserved),
+        disposed: Boolean(asset.disposed),
+        location: String(asset.location || ''),
+        ticketNumber: String(asset.ticket_number || '')
+      };
       let prodName = product_name ? String(product_name) : '';
       asset.name = name ? capitalizeWords(name) : asset.name;
       asset.model_number = model_number || asset.model_number;
@@ -4425,6 +4551,9 @@ router.put('/:id', protect, admin, async (req, res) => {
       }
       asset.status = normStatus;
       asset.condition = normCondition;
+      if (before.status !== String(asset.status || '')) {
+        asset.previous_status = before.status || asset.previous_status;
+      }
       if (disposed !== undefined) {
         const nextDisposed = disposed === true || String(disposed).toLowerCase() === 'true';
         asset.disposed = nextDisposed;
@@ -4473,6 +4602,77 @@ router.put('/:id', protect, admin, async (req, res) => {
           ...(asset.customFields && typeof asset.customFields === 'object' ? asset.customFields : {}),
           ...sanitizeCustomFields(customFields)
         };
+      }
+
+      const after = {
+        status: String(asset.status || ''),
+        condition: String(asset.condition || ''),
+        reserved: Boolean(asset.reserved),
+        disposed: Boolean(asset.disposed),
+        location: String(asset.location || ''),
+        ticketNumber: String(asset.ticket_number || '')
+      };
+      const historyCountBefore = Array.isArray(asset.history) ? asset.history.length : 0;
+
+      const transitionParts = [];
+      if (before.status !== after.status) transitionParts.push(`Status: ${before.status || '-'} -> ${after.status || '-'}`);
+      if (before.condition !== after.condition) transitionParts.push(`Condition: ${before.condition || '-'} -> ${after.condition || '-'}`);
+      if (before.location !== after.location) transitionParts.push(`Location: ${before.location || '-'} -> ${after.location || '-'}`);
+      if (before.ticketNumber !== after.ticketNumber) transitionParts.push(`Ticket: ${before.ticketNumber || '-'} -> ${after.ticketNumber || '-'}`);
+
+      if (before.reserved !== after.reserved) {
+        appendAssetHistory(asset, {
+          action: after.reserved ? 'Reserved' : 'Unreserved',
+          req,
+          ticketNumber: after.ticketNumber || '',
+          details: after.reserved ? 'Reserved via Edit Asset' : 'Unreserved via Edit Asset',
+          previousStatus: before.status,
+          previousCondition: before.condition,
+          location: after.location
+        });
+      }
+      if (before.disposed !== after.disposed) {
+        appendAssetHistory(asset, {
+          action: after.disposed ? 'Disposed (Not Repairable)' : 'Restored from Disposed',
+          req,
+          ticketNumber: after.ticketNumber || '',
+          details: after.disposed ? 'Disposed via Edit Asset' : 'Disposed flag removed via Edit Asset',
+          previousStatus: before.status,
+          previousCondition: before.condition,
+          location: after.location
+        });
+      }
+      if (before.condition.toLowerCase() !== 'faulty' && after.condition.toLowerCase() === 'faulty') {
+        appendAssetHistory(asset, {
+          action: 'Marked Faulty (Edit)',
+          req,
+          ticketNumber: after.ticketNumber || '',
+          details: transitionParts.join(' | ') || 'Condition changed to Faulty via Edit Asset',
+          previousStatus: before.status,
+          previousCondition: before.condition,
+          location: after.location
+        });
+      } else if (transitionParts.length > 0) {
+        appendAssetHistory(asset, {
+          action: 'Edit Asset',
+          req,
+          ticketNumber: after.ticketNumber || '',
+          details: transitionParts.join(' | '),
+          previousStatus: before.status,
+          previousCondition: before.condition,
+          location: after.location
+        });
+      }
+      if ((Array.isArray(asset.history) ? asset.history.length : 0) === historyCountBefore) {
+        appendAssetHistory(asset, {
+          action: 'Edit Asset',
+          req,
+          ticketNumber: after.ticketNumber || '',
+          details: 'Asset updated via Edit Asset',
+          previousStatus: before.status,
+          previousCondition: before.condition,
+          location: after.location
+        });
       }
 
       const updatedAsset = await asset.save();

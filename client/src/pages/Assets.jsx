@@ -503,6 +503,7 @@ const Assets = () => {
   const [showTechSuggestions, setShowTechSuggestions] = useState(false);
   const [recipientType, setRecipientType] = useState('Technician');
   const [assignSubmitting, setAssignSubmitting] = useState(false);
+  const [assignInstallationLocationError, setAssignInstallationLocationError] = useState('');
   const [otherRecipient, setOtherRecipient] = useState({
     name: '',
     email: '',
@@ -566,6 +567,8 @@ const Assets = () => {
   const [customEditValues, setCustomEditValues] = useState({});
   const [editAssignedToId, setEditAssignedToId] = useState('');
   const [editAssignQuantity, setEditAssignQuantity] = useState(1);
+  const [editInstallationLocation, setEditInstallationLocation] = useState('');
+  const [editInstallationLocationError, setEditInstallationLocationError] = useState('');
   const [editNeedGatePass, setEditNeedGatePass] = useState(false);
   const [editGatePassOrigin, setEditGatePassOrigin] = useState('');
   const [editGatePassDestination, setEditGatePassDestination] = useState('');
@@ -1180,6 +1183,7 @@ const Assets = () => {
     setCustomEditValues(nextCustomValues);
     setEditAssignedToId(String(assetToEdit?.assigned_to?._id || assetToEdit?.assigned_to || ''));
     setEditAssignQuantity(Math.max(1, Number.parseInt(assetToEdit?.quantity, 10) > 0 ? Number.parseInt(assetToEdit?.quantity, 10) : 1));
+    setEditInstallationLocation(String(assetToEdit?.location || ''));
     setEditNeedGatePass(false);
     setEditGatePassOrigin(String(assetToEdit?.location || ''));
     setEditGatePassDestination('');
@@ -1286,6 +1290,11 @@ const Assets = () => {
         if (!Number.isFinite(qtyToAssign) || qtyToAssign <= 0 || qtyToAssign > availableQty) {
           throw new Error(`Assign quantity must be between 1 and ${availableQty}.`);
         }
+        if (!String(editInstallationLocation || '').trim()) {
+          setEditInstallationLocationError('Installation location is required for technician assignment.');
+          throw new Error('Installation location is required for technician assignment.');
+        }
+        setEditInstallationLocationError('');
         if (editNeedGatePass && !String(formData.ticket_number || '').trim()) {
           throw new Error('Ticket number is required when gate pass is enabled.');
         }
@@ -1302,6 +1311,7 @@ const Assets = () => {
           recipientEmail: targetEmail,
           recipientPhone: String(selectedTech?.phone || ''),
           ticketNumber: formData.ticket_number || '',
+          installationLocation: String(editInstallationLocation || '').trim(),
           needGatePass: Boolean(editNeedGatePass),
           gatePassOrigin: finalOrigin,
           gatePassDestination: finalDestination,
@@ -1313,6 +1323,8 @@ const Assets = () => {
       setEditingAsset(null);
       setEditAssignedToId('');
       setEditAssignQuantity(1);
+      setEditInstallationLocation('');
+      setEditInstallationLocationError('');
       setEditNeedGatePass(false);
       setEditGatePassOrigin('');
       setEditGatePassDestination('');
@@ -1334,6 +1346,8 @@ const Assets = () => {
     setCustomEditValues({});
     setEditAssignedToId('');
     setEditAssignQuantity(1);
+    setEditInstallationLocation('');
+    setEditInstallationLocationError('');
     setEditNeedGatePass(false);
     setEditGatePassOrigin('');
     setEditGatePassDestination('');
@@ -1418,12 +1432,14 @@ const Assets = () => {
       recipientEmail: '',
       recipientPhone: '',
       assignQuantity: Math.max(1, Number.parseInt(asset?.quantity, 10) > 0 ? Number.parseInt(asset?.quantity, 10) : 1),
+      installationLocation: asset?.location || '',
       ticketNumber: '',
       needGatePass: false,
       gatePassOrigin: asset?.location || '',
       gatePassDestination: '',
       gatePassJustification: ''
     });
+    setAssignInstallationLocationError('');
     setTechSearch('');
     setShowTechSuggestions(false);
     setRecipientType('Technician');
@@ -1449,6 +1465,12 @@ const Assets = () => {
       alert('Please enter recipient email for notification');
       return;
     }
+    if (recipientType === 'Technician' && !String(assignForm.installationLocation || '').trim()) {
+      setAssignInstallationLocationError('Installation location is required for technician assignment.');
+      alert('Please enter installation location for technician assignment');
+      return;
+    }
+    setAssignInstallationLocationError('');
     if (recipientType === 'Other') {
       if (!otherRecipient.name) {
         alert('Please enter recipient name');
@@ -1488,6 +1510,7 @@ const Assets = () => {
         assetIds: assigningAssetIds.length > 0 ? assigningAssetIds : [assigningAsset._id],
         assignQuantity: assigningAssetIds.length <= 1 ? assignForm.assignQuantity : undefined,
         ticketNumber: assignForm.ticketNumber,
+        installationLocation: assignForm.installationLocation,
         needGatePass: Boolean(assignForm.needGatePass),
         recipientEmail: assignForm.recipientEmail,
         recipientPhone: recipientType === 'Technician' ? assignForm.recipientPhone : otherRecipient.phone,
@@ -1945,7 +1968,7 @@ const Assets = () => {
     if (key === 'deliveredAt') value = asset.delivered_at ? new Date(asset.delivered_at).toLocaleString() : '-';
     if (key === 'assignedTo') value = asset.assigned_to?.name || asset.assigned_to_external?.name || '-';
     if (key === 'dateTime') value = asset.updatedAt ? new Date(asset.updatedAt).toLocaleString() : '-';
-    if (key === 'price') value = typeof asset.price === 'number' ? asset.price : '-';
+    if (key === 'price') value = typeof asset.price === 'number' ? `${asset.price.toFixed(2)} AED` : '-';
     if (value === '-' && !columnMeta[key]) {
       const colDef = columnDefinitionMap.get(key);
       const rawValue = colDef?.key ? getByPath(asset, colDef.key) : undefined;
@@ -2927,6 +2950,22 @@ const Assets = () => {
                       />
                     </div>
                   )}
+                  <div className="mt-2">
+                    <label className="block text-sm font-medium text-gray-700">Installation Location *</label>
+                    <input
+                      type="text"
+                      value={assignForm.installationLocation || ''}
+                      onChange={(e) => {
+                        setAssignForm({ ...assignForm, installationLocation: e.target.value });
+                        if (e.target.value.trim()) setAssignInstallationLocationError('');
+                      }}
+                      placeholder="e.g. Server room, office, site"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                    />
+                    {assignInstallationLocationError && (
+                      <p className="mt-1 text-xs text-rose-600">{assignInstallationLocationError}</p>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -3378,6 +3417,22 @@ const Assets = () => {
                         Available: {Math.max(1, Number.parseInt(formData?.quantity, 10) > 0 ? Number.parseInt(formData?.quantity, 10) : 1)}.
                         Remaining quantity stays in store if you assign less.
                       </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Installation Location *</label>
+                      <input
+                        type="text"
+                        value={editInstallationLocation}
+                        onChange={(e) => {
+                          setEditInstallationLocation(e.target.value);
+                          if (e.target.value.trim()) setEditInstallationLocationError('');
+                        }}
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                        placeholder="e.g. Data Center Rack A / Office 12"
+                      />
+                      {editInstallationLocationError && (
+                        <p className="mt-1 text-xs text-rose-600">{editInstallationLocationError}</p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center justify-between gap-3">

@@ -176,7 +176,15 @@ const assetSchema = new mongoose.Schema({
         ticket_number: String,
         details: String,
         user: String,
-        date: { type: Date, default: Date.now }
+        date: { type: Date, default: Date.now },
+        actor_email: { type: String, default: '' },
+        actor_role: { type: String, default: '' },
+        previous_status: { type: String, default: '' },
+        previous_condition: { type: String, default: '' },
+        status: { type: String, default: '' },
+        condition: { type: String, default: '' },
+        location: { type: String, default: '' },
+        store_name: { type: String, default: '' }
       }
     ],
     default: []
@@ -224,6 +232,38 @@ const assetSchema = new mongoose.Schema({
     default: {}
   }
 }, { timestamps: true });
+
+// Ensure every history event carries structured audit context.
+assetSchema.pre('save', function normalizeHistoryAuditFields(next) {
+  if (!Array.isArray(this.history) || this.history.length === 0) return next();
+
+  const storeNameSnapshot = (() => {
+    const s = this.store;
+    if (!s) return '';
+    if (typeof s === 'object' && s !== null) {
+      return String(s.name || s.store_name || '').trim();
+    }
+    return '';
+  })();
+
+  this.history = this.history.map((event, index, allEvents) => {
+    const out = event && typeof event.toObject === 'function' ? event.toObject() : { ...(event || {}) };
+    const prevEvent = index > 0 ? allEvents[index - 1] : null;
+    const prevEventObj = prevEvent && typeof prevEvent.toObject === 'function' ? prevEvent.toObject() : (prevEvent || {});
+    if (!out.date) out.date = new Date();
+    if (!out.previous_status) out.previous_status = String(prevEventObj?.status || this.previous_status || '').trim();
+    if (!out.status) out.status = String(this.status || '').trim();
+    if (!out.previous_condition) out.previous_condition = String(prevEventObj?.condition || '').trim();
+    if (!out.condition) out.condition = String(this.condition || '').trim();
+    if (!out.location) out.location = String(this.location || '').trim();
+    if (!out.store_name) out.store_name = storeNameSnapshot;
+    if (!out.actor_email) out.actor_email = '';
+    if (!out.actor_role) out.actor_role = '';
+    return out;
+  });
+
+  next();
+});
 
 // Compound Indexes for Common Filters
 assetSchema.index({ store: 1, status: 1 });

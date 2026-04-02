@@ -493,7 +493,25 @@ const Products = ({ readOnly = false }) => {
                             <span className="font-semibold">{ev.action}</span>
                             <span className="text-xs text-gray-400">{new Date(ev.date || ev.createdAt || Date.now()).toLocaleString()}</span>
                           </div>
-                          <div className="text-xs text-gray-500">UID: {ev.uniqueId || 'N/A'} • SN: {ev.serial || 'N/A'}</div>
+                    <div className="text-xs text-gray-500">UID: {ev.uniqueId || 'N/A'} • SN: {ev.serial || 'N/A'}</div>
+                    {(ev.user || ev.actor_role || ev.ticket_number || ev.previous_status || ev.status || ev.previous_condition || ev.condition || ev.location || ev.store_name) && (
+                      <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                        {ev.user && <div>By: {ev.user}</div>}
+                        {ev.actor_role && <div>Role: {ev.actor_role}</div>}
+                        {ev.ticket_number && <div>Ticket: {ev.ticket_number}</div>}
+                        {(ev.previous_status || ev.status) && (
+                          <div>Status: {ev.previous_status || '-'} {'->'} {ev.status || '-'}</div>
+                        )}
+                        {(ev.previous_condition || ev.condition) && (
+                          <div>
+                            Condition: {ev.previous_condition || '-'} {'->'} {ev.condition || '-'}
+                          </div>
+                        )}
+                        {(ev.location || ev.store_name) && (
+                          <div>Where: {[ev.location, ev.store_name].filter(Boolean).join(' | ')}</div>
+                        )}
+                      </div>
+                    )}
                         </div>
                       ))}
                     {selectedAssets.length === 0 && (

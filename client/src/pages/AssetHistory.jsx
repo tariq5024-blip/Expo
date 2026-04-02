@@ -111,7 +111,7 @@ const AssetHistory = () => {
                 </div>
                 <div>
                   <div className="text-xs text-gray-500">Price</div>
-                  <div className="font-semibold">{typeof asset.price === 'number' ? `$${asset.price.toFixed(2)}` : '-'}</div>
+                  <div className="font-semibold">{typeof asset.price === 'number' ? `${asset.price.toFixed(2)} AED` : '-'}</div>
                 </div>
                 <div>
                   <div className="text-xs text-gray-500">Date of Purchase</div>
@@ -204,10 +204,30 @@ const AssetHistory = () => {
                               <span>By: {event.user}</span>
                             </div>
                           )}
+                          {event.actor_role && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-500">Role: {event.actor_role}</span>
+                            </div>
+                          )}
                           {event.ticket_number && (
                             <div className="flex items-center gap-2">
                               <AlertCircle size={12} className="text-gray-400" />
                               <span>Ticket: {event.ticket_number}</span>
+                            </div>
+                          )}
+                          {(event.previous_status || event.status) && (
+                            <div className="flex items-center gap-2">
+                              <span>Status: {event.previous_status || '-'} {'->'} {event.status || '-'}</span>
+                            </div>
+                          )}
+                          {(event.previous_condition || event.condition) && (
+                            <div className="flex items-center gap-2">
+                              <span>Condition: {event.previous_condition || '-'} {'->'} {event.condition || '-'}</span>
+                            </div>
+                          )}
+                          {(event.location || event.store_name) && (
+                            <div className="flex items-center gap-2 col-span-2">
+                              <span>Where: {[event.location, event.store_name].filter(Boolean).join(' | ')}</span>
                             </div>
                           )}
                         </div>

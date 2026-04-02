@@ -6,6 +6,7 @@ const TechScanner = () => {
   const [asset, setAsset] = useState(null);
   const [ticketNumber, setTicketNumber] = useState('');
   const [installationLocation, setInstallationLocation] = useState('');
+  const [installationLocationError, setInstallationLocationError] = useState('');
   const [manualSearch, setManualSearch] = useState('');
   const [manualRfidSearch, setManualRfidSearch] = useState('');
   const [manualQrSearch, setManualQrSearch] = useState('');
@@ -137,9 +138,16 @@ const TechScanner = () => {
     }
 
     if (action === 'collect' && !installationLocation) {
+      setInstallationLocationError('Installation location is required.');
       setMessage('Please enter Installation Location');
       return;
     }
+    if (action === 'faulty' && !installationLocation) {
+      setInstallationLocationError('Installation location is required.');
+      setMessage('Please enter Installation Location');
+      return;
+    }
+    setInstallationLocationError('');
     
     try {
       setLoading(true);
@@ -168,7 +176,7 @@ const TechScanner = () => {
         }
         setMessage(collectMsg);
       } else {
-        await api.post('/assets/faulty', { assetId: asset._id, ticketNumber });
+        await api.post('/assets/faulty', { assetId: asset._id, ticketNumber, installationLocation });
         setMessage('Asset reported faulty');
       }
       // Refresh asset
@@ -204,8 +212,6 @@ const TechScanner = () => {
   const canCollectAsset = (a) => {
     if (!a) return false;
     if (a.reserved) return false;
-    if (a.assigned_to) return false;
-    if (a.status === 'Missing') return false;
     return !String(a.condition || '').toLowerCase().includes('faulty');
   };
 
@@ -236,9 +242,11 @@ const TechScanner = () => {
       return;
     }
     if (!installationLocation) {
+      setInstallationLocationError('Installation location is required.');
       setMessage('Please enter Installation Location');
       return;
     }
+    setInstallationLocationError('');
 
     try {
       setLoading(true);
@@ -570,18 +578,24 @@ const TechScanner = () => {
               <input 
                 type="text" 
                 value={installationLocation} 
-                onChange={(e) => setInstallationLocation(e.target.value)} 
+                onChange={(e) => {
+                  setInstallationLocation(e.target.value);
+                  if (e.target.value.trim()) setInstallationLocationError('');
+                }} 
                 className="w-full border p-2 rounded"
                 placeholder="e.g. Server Room, Office 101"
               />
+              {installationLocationError && (
+                <p className="mt-1 text-xs text-rose-600">{installationLocationError}</p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <button 
                 onClick={() => handleAction('collect')}
-                disabled={loading || asset.reserved || asset.assigned_to || asset.status === 'Missing' || String(asset.condition || '').toLowerCase().includes('faulty')}
+                disabled={loading || asset.reserved || String(asset.condition || '').toLowerCase().includes('faulty')}
                 className={`py-3 rounded text-white font-medium ${
-                  (!loading && !asset.reserved && !asset.assigned_to && asset.status !== 'Missing' && !String(asset.condition || '').toLowerCase().includes('faulty'))
+                  (!loading && !asset.reserved && !String(asset.condition || '').toLowerCase().includes('faulty'))
                     ? 'bg-green-600 hover:bg-green-700'
                     : 'bg-gray-400 cursor-not-allowed'
                 }`}

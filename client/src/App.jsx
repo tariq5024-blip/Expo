@@ -5,10 +5,11 @@ import { ThemeProvider } from './context/ThemeContext';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import PropTypes from 'prop-types';
+// Eager-load home route: repeated refresh can abort lazy chunk fetches (Vite dynamic import errors).
+import Dashboard from './pages/Dashboard';
 
 const Login = lazy(() => import('./pages/Login'));
 const Portal = lazy(() => import('./pages/Portal'));
-const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Assets = lazy(() => import('./pages/Assets'));
 const TechScanner = lazy(() => import('./pages/TechScanner'));
 const Technicians = lazy(() => import('./pages/Technicians'));

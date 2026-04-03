@@ -617,6 +617,72 @@ async function resolveProductHierarchyNames(baseName, activeStoreId) {
   return Array.from(collected);
 }
 
+/**
+ * Map every product tree node name -> top-level root `Product.name` (Excel "Category").
+ */
+function buildNameToCategoryMap(productRoots) {
+  const map = new Map();
+  const visit = (rootName, node) => {
+    if (!node || !node.name) return;
+    const key = String(node.name).trim().toLowerCase();
+    if (key && !map.has(key)) map.set(key, rootName);
+    (node.children || []).forEach((ch) => visit(rootName, ch));
+  };
+  (productRoots || []).forEach((root) => {
+    if (root?.name) visit(String(root.name).trim(), root);
+  });
+  return map;
+}
+
+/** Mutates lean asset objects: sets `category` from customFields or product hierarchy. */
+async function attachProductCategoriesToAssets(items, req) {
+  if (!Array.isArray(items) || items.length === 0) return;
+
+  const storeIds = new Set();
+  for (const item of items) {
+    const sid = item.store?._id || item.store;
+    if (sid) storeIds.add(String(sid));
+  }
+
+  const scopedId = getScopedStoreId(req);
+  if (scopedId && mongoose.isValidObjectId(scopedId)) {
+    storeIds.add(String(scopedId));
+  }
+
+  const orClauses = [{ store: null }, { store: { $exists: false } }];
+  for (const id of storeIds) {
+    if (mongoose.isValidObjectId(id)) {
+      orClauses.push({ store: new mongoose.Types.ObjectId(id) });
+    }
+  }
+
+  let products = [];
+  try {
+    products = await Product.find({ $or: orClauses }).lean();
+  } catch {
+    return;
+  }
+
+  const nameToCategory = buildNameToCategoryMap(products);
+
+  const pickCategory = (asset) => {
+    const cf = asset.customFields && typeof asset.customFields === 'object' ? asset.customFields : {};
+    const explicit = cf.category || cf.Category || '';
+    if (String(explicit || '').trim()) return String(explicit).trim();
+
+    const candidates = [asset.product_name, asset.name, asset.model_number];
+    for (const c of candidates) {
+      const k = String(c || '').trim().toLowerCase();
+      if (k && nameToCategory.has(k)) return nameToCategory.get(k);
+    }
+    return '';
+  };
+
+  for (const item of items) {
+    item.category = pickCategory(item);
+  }
+}
+
 // @desc    Get assets (paginated, optional filters)
 // @route   GET /api/assets
 // @access  Private
@@ -1044,6 +1110,8 @@ router.get('/', protect, async (req, res) => {
       }
     }
 
+    await attachProductCategoriesToAssets(items, req);
+
     res.json({
       items,
       total,
@@ -1089,6 +1157,7 @@ router.get('/:id([0-9a-fA-F]{24})', protect, async (req, res) => {
         return res.status(403).json({ message: 'Asset is outside your store scope' });
       }
     }
+    await attachProductCategoriesToAssets([asset], req);
     res.json(asset);
   } catch (error) {
     res.status(500).json({ message: error.message });

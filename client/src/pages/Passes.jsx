@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import api from '../api/axios';
 import { useReactToPrint } from 'react-to-print';
 import { QrCode, Printer, Plus, X, Eye, Edit, Trash2, Lock, Download, CheckCircle2 } from 'lucide-react';
@@ -6,6 +6,69 @@ import PropTypes from 'prop-types';
 import QRCode from 'qrcode';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+
+const escapeRegExpForHighlight = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const highlightSearchInText = (text, query) => {
+  const q = String(query || '').trim();
+  if (!q) return text === null || text === undefined ? '' : String(text);
+  const str = text === null || text === undefined ? '' : String(text);
+  if (!str) return str;
+  let re;
+  try {
+    re = new RegExp(escapeRegExpForHighlight(q), 'gi');
+  } catch {
+    return str;
+  }
+  const matches = [...str.matchAll(re)];
+  if (matches.length === 0) return str;
+  const nodes = [];
+  let lastIndex = 0;
+  let key = 0;
+  for (const m of matches) {
+    const start = m.index;
+    if (start > lastIndex) {
+      nodes.push(<span key={`gp-t-${key++}`}>{str.slice(lastIndex, start)}</span>);
+    }
+    nodes.push(
+      <mark
+        key={`gp-m-${key++}`}
+        className="rounded px-0.5 bg-yellow-300 text-gray-900 font-semibold ring-1 ring-amber-500/80"
+      >
+        {m[0]}
+      </mark>
+    );
+    lastIndex = start + m[0].length;
+  }
+  if (lastIndex < str.length) {
+    nodes.push(<span key={`gp-t-${key++}`}>{str.slice(lastIndex)}</span>);
+  }
+  return nodes;
+};
+
+function passMatchesSearch(pass, qRaw) {
+  const q = String(qRaw || '').trim().toLowerCase();
+  if (!q) return true;
+  const approvalLabel = pass.approvalStatus === 'pending' ? 'pending' : 'approved';
+  const hay = [
+    pass.file_no,
+    pass.pass_number,
+    pass.type,
+    pass.requested_by,
+    pass.issued_to?.name,
+    pass.status,
+    pass.approvalStatus,
+    approvalLabel,
+    pass.approved_by,
+    pass.origin,
+    pass.destination,
+    pass.ticket_no,
+    pass.createdAt && new Date(pass.createdAt).toLocaleDateString()
+  ]
+    .map((p) => String(p || '').toLowerCase())
+    .join(' ');
+  return hay.includes(q);
+}
 
 const PasswordModal = ({ isOpen, onClose, onConfirm }) => {
   const [password, setPassword] = useState('');
@@ -579,6 +642,7 @@ const Passes = () => {
   });
   const [gatePassLogoUrl, setGatePassLogoUrl] = useState('/gatepass-logo.svg');
   const [approveLoadingId, setApproveLoadingId] = useState(null);
+  const [passSearch, setPassSearch] = useState('');
 
   const printRef = useRef();
   const previewRef = useRef();
@@ -672,6 +736,12 @@ const Passes = () => {
   useEffect(() => {
     loadPasses();
   }, []);
+
+  const passSearchQ = passSearch.trim();
+  const filteredPasses = useMemo(() => {
+    if (!passSearchQ) return passes;
+    return passes.filter((p) => passMatchesSearch(p, passSearchQ));
+  }, [passes, passSearchQ]);
 
   useEffect(() => {
     const loadGatePassLogo = async () => {
@@ -1043,21 +1113,37 @@ const Passes = () => {
         gatePassLogoUrl={gatePassLogoUrl}
       />
 
-      <div className="flex justify-between items-center mb-6">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Security Handover / Gate Passes (New Format)</h1>
           <p className="text-gray-500">Manage Asset Movement and Security Handovers</p>
         </div>
-        <button 
-          onClick={() => setShowModal(true)}
-          className="bg-amber-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-amber-700"
-        >
-          <Plus size={20} /> Create Pass
-        </button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <input
+            type="search"
+            value={passSearch}
+            onChange={(e) => setPassSearch(e.target.value)}
+            placeholder="Search exit pass #, type, requester, status…"
+            title="Filters this list. Matching text is highlighted (e.g. EXIT, OUT, date)."
+            className="h-10 w-full min-w-0 rounded-lg border border-gray-300 px-3 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30 sm:min-w-[280px]"
+          />
+          <button
+            type="button"
+            onClick={() => setShowModal(true)}
+            className="flex shrink-0 items-center justify-center gap-2 rounded bg-amber-600 px-4 py-2 text-white hover:bg-amber-700"
+          >
+            <Plus size={20} /> Create Pass
+          </button>
+        </div>
       </div>
 
       {/* List */}
       <div className="bg-white rounded shadow overflow-x-auto">
+        {passes.length > 0 && filteredPasses.length === 0 && (
+          <p className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+            No passes match &quot;{passSearchQ}&quot;. Clear the search box to see all passes.
+          </p>
+        )}
         <table className="min-w-full">
           <thead className="bg-gray-50 border-b">
             <tr>
@@ -1072,40 +1158,49 @@ const Passes = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {passes.map(pass => (
+            {filteredPasses.map((pass) => (
               <tr key={pass._id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 font-mono font-medium">{pass.file_no || pass.pass_number}</td>
+                <td className="px-6 py-4 font-mono font-medium">
+                  {highlightSearchInText(pass.file_no || pass.pass_number || '-', passSearchQ)}
+                </td>
                 <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    pass.type === 'Inbound' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {pass.type}
+                  <span
+                    className={`rounded px-2 py-1 text-xs font-bold ${
+                      pass.type === 'Inbound' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                    }`}
+                  >
+                    {highlightSearchInText(pass.type || '-', passSearchQ)}
                   </span>
                 </td>
                 <td className="px-6 py-4">
-                  <div className="font-medium">{pass.requested_by || pass.issued_to?.name || '-'}</div>
+                  <div className="font-medium">
+                    {highlightSearchInText(pass.requested_by || pass.issued_to?.name || '-', passSearchQ)}
+                  </div>
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-500">
-                  {new Date(pass.createdAt).toLocaleDateString()}
+                  {highlightSearchInText(
+                    pass.createdAt ? new Date(pass.createdAt).toLocaleDateString() : '-',
+                    passSearchQ
+                  )}
                 </td>
                 <td className="px-6 py-4">
-                  <span className="px-2 py-1 rounded text-xs bg-gray-100 text-gray-800">
-                    {pass.status}
+                  <span className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-800">
+                    {highlightSearchInText(String(pass.status || '-'), passSearchQ)}
                   </span>
                 </td>
                 <td className="px-6 py-4">
                   {pass.approvalStatus === 'pending' ? (
-                    <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-900">
-                      Pending
+                    <span className="rounded bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">
+                      {highlightSearchInText('Pending', passSearchQ)}
                     </span>
                   ) : (
-                    <span className="px-2 py-1 rounded text-xs font-semibold bg-emerald-100 text-emerald-900">
-                      Approved
+                    <span className="rounded bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900">
+                      {highlightSearchInText('Approved', passSearchQ)}
                     </span>
                   )}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-700 max-w-[140px]">
-                  {pass.approved_by || '—'}
+                <td className="max-w-[140px] px-6 py-4 text-sm text-gray-700">
+                  {highlightSearchInText(pass.approved_by || '—', passSearchQ)}
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex justify-end gap-2">

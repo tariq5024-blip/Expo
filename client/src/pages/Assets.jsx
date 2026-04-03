@@ -18,10 +18,60 @@ const flattenProducts = (list, level = 0, ancestors = []) => {
   return out;
 };
 
+const escapeRegExpForHighlight = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Wrap every non-overlapping occurrence of `query` in <mark> (case-insensitive).
+ * Typing "e" highlights all e's; "ex" highlights every "ex" substring, etc.
+ * Returns a plain string if there is no query or no match in this cell.
+ */
+const highlightSearchInText = (text, query) => {
+  const q = String(query || '').trim();
+  if (!q) return text === null || text === undefined ? '' : String(text);
+  const str = text === null || text === undefined ? '' : String(text);
+  if (!str) return str;
+
+  let re;
+  try {
+    re = new RegExp(escapeRegExpForHighlight(q), 'gi');
+  } catch {
+    return str;
+  }
+
+  const nodes = [];
+  let lastIndex = 0;
+  let key = 0;
+  const matches = [...str.matchAll(re)];
+  if (matches.length === 0) return str;
+
+  for (const m of matches) {
+    const start = m.index;
+    if (start > lastIndex) {
+      nodes.push(<span key={`t-${key++}`}>{str.slice(lastIndex, start)}</span>);
+    }
+    nodes.push(
+      <mark
+        key={`m-${key++}`}
+        className="rounded px-0.5 bg-yellow-300 text-gray-900 font-semibold ring-1 ring-amber-500/80"
+      >
+        {m[0]}
+      </mark>
+    );
+    lastIndex = start + m[0].length;
+  }
+  if (lastIndex < str.length) {
+    nodes.push(<span key={`t-${key++}`}>{str.slice(lastIndex)}</span>);
+  }
+  return nodes;
+};
+
 const DEFAULT_COLUMN_DEFS = [
   { id: 'uniqueId', label: 'Unique ID', key: 'uniqueId', visible: true, builtin: true },
+  { id: 'expoTag', label: 'Expo Tag', key: 'expo_tag', visible: true, builtin: true },
+  { id: 'absCode', label: 'ABS Code', key: 'abs_code', visible: true, builtin: true },
   { id: 'name', label: 'Name', key: 'name', visible: true, builtin: true },
   { id: 'model', label: 'Model Number', key: 'model_number', visible: true, builtin: true },
+  { id: 'productNumber', label: 'Product Number', key: 'product_number', visible: true, builtin: true },
   { id: 'serial', label: 'Serial Number', key: 'serial_number', visible: true, builtin: true },
   { id: 'serialLast4', label: 'Serial Last 4', key: 'serial_last_4', visible: true, builtin: true },
   { id: 'ticket', label: 'Ticket', key: 'ticket_number', visible: true, builtin: true },
@@ -40,6 +90,7 @@ const DEFAULT_COLUMN_DEFS = [
   { id: 'maintenanceVendor', label: 'Maintenance Vendor', key: 'maintenance_vendor', visible: true, builtin: true },
   { id: 'deviceGroup', label: 'Device Group', key: 'device_group', visible: true, builtin: true },
   { id: 'inboundFrom', label: 'Inbound From', key: 'inbound_from', visible: true, builtin: true },
+  { id: 'outboundTo', label: 'Outbound To', key: 'outbound_to', visible: true, builtin: true },
   { id: 'ipAddress', label: 'IP Address', key: 'ip_address', visible: true, builtin: true },
   { id: 'building', label: 'Building', key: 'building', visible: true, builtin: true },
   { id: 'stateComments', label: 'State Comments', key: 'state_comments', visible: true, builtin: true },
@@ -57,8 +108,12 @@ const ALLOWED_STATUS_FILTERS = new Set(['In Store', 'In Use', 'Missing', 'Reserv
 const DEFAULT_COLUMN_ORDER = DEFAULT_COLUMN_DEFS.map((column) => column.id);
 const DEFAULT_VISIBLE_COLUMNS = Object.fromEntries(DEFAULT_COLUMN_DEFS.map((column) => [column.id, column.visible !== false]));
 const REQUIRED_ASSET_COLUMN_IDS = new Set([
+  'expoTag',
+  'absCode',
+  'productNumber',
   'deviceGroup',
   'inboundFrom',
+  'outboundTo',
   'ipAddress',
   'building',
   'stateComments',
@@ -74,6 +129,10 @@ const KNOWN_EDIT_KEYS = new Set([
   'vendor_name',
   'device_group',
   'inbound_from',
+  'outbound_to',
+  'expo_tag',
+  'abs_code',
+  'product_number',
   'ip_address',
   'building',
   'state_comments',
@@ -164,8 +223,13 @@ const Assets = () => {
     condition: '',
     manufacturer: '',
     locationId: '',
+    product_name: '',
     device_group: '',
     inbound_from: '',
+    outbound_to: '',
+    expo_tag: '',
+    abs_code: '',
+    product_number: '',
     ip_address: '',
     building: '',
     state_comments: '',
@@ -254,6 +318,37 @@ const Assets = () => {
     const rawPath = String(path || '').trim();
     if (!rawPath) return undefined;
     return rawPath.split('.').reduce((acc, segment) => (acc == null ? undefined : acc[segment]), obj);
+  };
+  const getValueByAliases = (asset = {}, aliases = []) => {
+    for (const alias of aliases) {
+      const key = String(alias || '').trim();
+      if (!key) continue;
+      const topValue = asset?.[key];
+      if (topValue !== undefined && topValue !== null && String(topValue).trim() !== '') {
+        return String(topValue).trim();
+      }
+      const customValue = asset?.customFields?.[key];
+      if (customValue !== undefined && customValue !== null && String(customValue).trim() !== '') {
+        return String(customValue).trim();
+      }
+    }
+    return '-';
+  };
+
+  const pickAssetField = (asset = {}, aliases = []) => {
+    for (const alias of aliases) {
+      const key = String(alias || '').trim();
+      if (!key) continue;
+      const topValue = asset?.[key];
+      if (topValue !== undefined && topValue !== null && String(topValue).trim() !== '') {
+        return String(topValue).trim();
+      }
+      const customValue = asset?.customFields?.[key];
+      if (customValue !== undefined && customValue !== null && String(customValue).trim() !== '') {
+        return String(customValue).trim();
+      }
+    }
+    return '';
   };
 
   const openCommentModal = (asset) => {
@@ -378,6 +473,10 @@ const Assets = () => {
       'Device Group',
       'Location',
       'Inbound From',
+      'Outbound To',
+      'Expo Tag',
+      'ABS Code',
+      'Product Number',
       'IP Address',
       'Building',
       'State Comments',
@@ -440,6 +539,14 @@ const Assets = () => {
               return a.location || '';
             case 'Inbound From':
               return a.inbound_from || '';
+            case 'Outbound To':
+              return a.outbound_to || '';
+            case 'Expo Tag':
+              return pickAssetField(a, ['expo_tag', 'expoTag', 'expo tag']);
+            case 'ABS Code':
+              return pickAssetField(a, ['abs_code', 'absCode', 'abs code']);
+            case 'Product Number':
+              return pickAssetField(a, ['product_number', 'productNumber', 'product number']);
             case 'IP Address':
               return a.ip_address || '';
             case 'Building':
@@ -526,6 +633,10 @@ const Assets = () => {
     vendor_name: '',
     device_group: '',
     inbound_from: '',
+    outbound_to: '',
+    expo_tag: '',
+    abs_code: '',
+    product_number: '',
     ip_address: '',
     building: '',
     state_comments: '',
@@ -552,6 +663,10 @@ const Assets = () => {
     vendor_name: '',
     device_group: '',
     inbound_from: '',
+    outbound_to: '',
+    expo_tag: '',
+    abs_code: '',
+    product_number: '',
     ip_address: '',
     building: '',
     state_comments: '',
@@ -646,6 +761,10 @@ const Assets = () => {
         maintenanceVendor: true,
         deviceGroup: true,
         inboundFrom: true,
+        outboundTo: true,
+        expoTag: true,
+        absCode: true,
+        productNumber: true,
         ipAddress: true,
         building: true,
         stateComments: true,
@@ -1096,6 +1215,10 @@ const Assets = () => {
         'Maintenance Vendor',
         'Device Group',
         'Inbound From',
+        'Outbound To',
+        'Expo Tag',
+        'ABS Code',
+        'Product Number',
         'IP Address',
         'Building',
         'State Comments',
@@ -1125,6 +1248,10 @@ const Assets = () => {
         'Siemens',
         'Core Security',
         'Main Warehouse',
+        'Logistics Hub',
+        'EXPO-001',
+        'ABS-99',
+        'PN-12345',
         '10.0.10.42',
         'Block A',
         'Rack and power state verified',
@@ -1167,6 +1294,10 @@ const Assets = () => {
       vendor_name: assetToEdit.vendor_name || '',
       device_group: assetToEdit.device_group || '',
       inbound_from: assetToEdit.inbound_from || '',
+      outbound_to: pickAssetField(assetToEdit, ['outbound_to', 'outboundTo', 'outbound to']),
+      expo_tag: pickAssetField(assetToEdit, ['expo_tag', 'expoTag', 'expo tag']),
+      abs_code: pickAssetField(assetToEdit, ['abs_code', 'absCode', 'abs code']),
+      product_number: pickAssetField(assetToEdit, ['product_number', 'productNumber', 'product number']),
       ip_address: assetToEdit.ip_address || '',
       building: assetToEdit.building || '',
       state_comments: assetToEdit.state_comments || '',
@@ -1207,7 +1338,7 @@ const Assets = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    const normalized = ['status', 'condition', 'store', 'location', 'quantity', 'price'].includes(name)
+    const normalized = ['status', 'condition', 'store', 'location', 'quantity', 'price', 'expo_tag', 'abs_code', 'product_number'].includes(name)
       ? value
       : (typeof value === 'string' ? value.toUpperCase() : value);
     setFormData({ ...formData, [name]: normalized });
@@ -1368,7 +1499,7 @@ const Assets = () => {
   
   const handleAddChange = (e) => {
     const { name, value } = e.target;
-    const normalized = ['status', 'condition', 'store', 'location'].includes(name)
+    const normalized = ['status', 'condition', 'store', 'location', 'expo_tag', 'abs_code', 'product_number'].includes(name)
       ? value
       : (typeof value === 'string' ? value.toUpperCase() : value);
     setAddForm({ ...addForm, [name]: normalized });
@@ -1410,6 +1541,17 @@ const Assets = () => {
         ticket_number: '',
         po_number: '',
         vendor_name: '',
+        device_group: '',
+        inbound_from: '',
+        outbound_to: '',
+        expo_tag: '',
+        abs_code: '',
+        product_number: '',
+        ip_address: '',
+        building: '',
+        state_comments: '',
+        remarks: '',
+        comments: '',
         price: '',
         store: '',
         location: '',
@@ -1635,6 +1777,10 @@ const Assets = () => {
       if (bulkForm.manufacturer) updates.manufacturer = bulkForm.manufacturer;
       if (bulkForm.device_group) updates.device_group = bulkForm.device_group;
       if (bulkForm.inbound_from) updates.inbound_from = bulkForm.inbound_from;
+      if (bulkForm.outbound_to) updates.outbound_to = bulkForm.outbound_to;
+      if (bulkForm.expo_tag) updates.expo_tag = bulkForm.expo_tag;
+      if (bulkForm.abs_code) updates.abs_code = bulkForm.abs_code;
+      if (bulkForm.product_number) updates.product_number = bulkForm.product_number;
       if (bulkForm.ip_address) updates.ip_address = bulkForm.ip_address;
       if (bulkForm.building) updates.building = bulkForm.building;
       if (bulkForm.state_comments) updates.state_comments = bulkForm.state_comments;
@@ -1809,8 +1955,11 @@ const Assets = () => {
 
   const columnMeta = useMemo(() => ({
     uniqueId: { label: 'Unique ID', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell font-mono text-xs text-gray-600' },
+    expoTag: { label: 'Expo Tag', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-xs' },
+    absCode: { label: 'ABS Code', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-xs' },
     name: { label: 'Name', thClass: '', tdClass: 'text-sm' },
     model: { label: 'Model', thClass: 'hidden md:table-cell', tdClass: 'hidden md:table-cell text-sm' },
+    productNumber: { label: 'Product Number', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-xs' },
     serial: { label: 'Serial', thClass: '', tdClass: 'text-sm' },
     serialLast4: { label: 'Serial Last 4', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
     ticket: { label: 'Ticket', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
@@ -1832,6 +1981,15 @@ const Assets = () => {
     assignedTo: { label: 'Assigned To', thClass: 'hidden md:table-cell', tdClass: 'hidden md:table-cell text-sm' },
     dateTime: { label: 'Date & Time', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-sm' },
     price: { label: 'Price', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
+    deviceGroup: { label: 'Device Group', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    inboundFrom: { label: 'Inbound From', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    outboundTo: { label: 'Outbound To', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    ipAddress: { label: 'IP Address', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    building: { label: 'Building', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    stateComments: { label: 'State Comments', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    remarks: { label: 'Remarks', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    comments: { label: 'Comments', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    maintenanceVendor: { label: 'Maintenance Vendor', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
     action: { label: 'Action', thClass: '', tdClass: 'text-sm' }
   }), []);
 
@@ -1949,10 +2107,15 @@ const Assets = () => {
   const renderAssetCell = (asset, key) => {
     if (key === 'action') return renderActionCell(asset, key);
 
+    const searchQ = searchTerm.trim();
+
     let value = '-';
     if (key === 'uniqueId') value = asset.uniqueId || '-';
+    if (key === 'expoTag') value = getValueByAliases(asset, ['expo_tag', 'expoTag', 'expo tag']);
+    if (key === 'absCode') value = getValueByAliases(asset, ['abs_code', 'absCode', 'abs code']);
     if (key === 'name') value = asset.name || '-';
     if (key === 'model') value = asset.model_number || '-';
+    if (key === 'productNumber') value = getValueByAliases(asset, ['product_number', 'productNumber', 'product number']);
     if (key === 'serial') value = asset.serial_number || '-';
     if (key === 'serialLast4') value = asset.serial_last_4 || '-';
     if (key === 'ticket') value = asset.ticket_number || '-';
@@ -1970,6 +2133,7 @@ const Assets = () => {
     if (key === 'maintenanceVendor') value = getMaintenanceVendorValue(asset);
     if (key === 'deviceGroup') value = asset.device_group || '-';
     if (key === 'inboundFrom') value = asset.inbound_from || '-';
+    if (key === 'outboundTo') value = getValueByAliases(asset, ['outbound_to', 'outboundTo', 'outbound to']);
     if (key === 'ipAddress') value = asset.ip_address || '-';
     if (key === 'building') value = asset.building || '-';
     if (key === 'stateComments') value = asset.state_comments || '-';
@@ -2008,7 +2172,7 @@ const Assets = () => {
       return (
         <td key={key} className={`px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center ${columnMeta[key]?.tdClass || ''}`}>
           <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${derived.color}`}>
-            {derived.label}
+            {highlightSearchInText(derived.label, searchQ)}
           </span>
         </td>
       );
@@ -2016,14 +2180,15 @@ const Assets = () => {
 
     if (key === 'condition') {
       const faulty = isConditionFaulty(asset);
+      const inner = highlightSearchInText(value, searchQ);
       return (
         <td key={key} className={`px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center ${columnMeta[key]?.tdClass || ''}`}>
           {faulty ? (
             <span className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-              {value}
+              {inner}
             </span>
           ) : (
-            value
+            inner
           )}
         </td>
       );
@@ -2031,7 +2196,7 @@ const Assets = () => {
 
     return (
       <td key={key} className={`px-3 py-2 md:px-6 md:py-4 whitespace-nowrap text-center ${columnMeta[key]?.tdClass || ''}`}>
-        {value}
+        {highlightSearchInText(value, searchQ)}
       </td>
     );
   };
@@ -2330,7 +2495,8 @@ const Assets = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-center">
           <input
             type="text"
-            placeholder="Search (Name, Model, Serial, MAC, Unique ID, Manufacturer, Device Group, IP, Building, Remarks)..."
+            placeholder="Search: type e, x, ex… — rows filter + every match is highlighted"
+            title="Not exact-match: any field may contain your text (case ignored). Each letter or substring is highlighted everywhere it appears in the table (e → all e’s, ex → all ex’s)."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
@@ -2859,289 +3025,342 @@ const Assets = () => {
           </div>
         </div>
 
-      {/* Assign Modal */}
+      {/* Assign Modal — wide landscape layout so fields fit without tall narrow scrolling */}
       {assigningAsset && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Assign Asset</h2>
-            <div className="mb-4">
-              <p className="text-sm text-gray-600 mb-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-600/50 p-3 sm:p-4">
+          <div
+            role="dialog"
+            aria-labelledby="assign-asset-title"
+            className="flex max-h-[min(92vh,56rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+          >
+            <div className="shrink-0 border-b border-gray-200 px-5 py-4">
+              <h2 id="assign-asset-title" className="text-xl font-bold text-gray-900">
+                Assign Asset
+              </h2>
+              <p className="mt-1 text-sm text-gray-600">
                 Assigning {assigningAssetIds.length || 1} asset(s)
-                {assigningAsset ? <>: <span className="font-semibold">{assigningAsset.name}</span> ({assigningAsset.serial_number})</> : null}
+                {assigningAsset ? (
+                  <>
+                    : <span className="font-semibold text-gray-800">{assigningAsset.name}</span>{' '}
+                    <span className="font-mono text-gray-700">({assigningAsset.serial_number})</span>
+                  </>
+                ) : null}
               </p>
             </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Recipient Type</label>
-                <div className="mt-1 flex gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="recipientType"
-                      checked={recipientType === 'Technician'}
-                      onChange={() => setRecipientType('Technician')}
-                    />
-                    Technician
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="recipientType"
-                      checked={recipientType === 'Other'}
-                      onChange={() => setRecipientType('Other')}
-                    />
-                    Other Person
-                  </label>
-                </div>
-              </div>
-              
-              {recipientType === 'Technician' && (
-                <div className="relative">
-                  <label className="block text-sm font-medium text-gray-700">Technician</label>
-                  <input
-                    type="text"
-                    value={techSearch}
-                    onChange={(e) => {
-                      setTechSearch(e.target.value);
-                      setShowTechSuggestions(true);
-                      setAssignForm(prev => ({ ...prev, technicianId: '' }));
-                    }}
-                    onFocus={() => setShowTechSuggestions(true)}
-                    placeholder="Search technician by name, username or phone"
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                  />
-                  {showTechSuggestions && (
-                    <div className="absolute z-10 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto mt-1">
-                      {technicians.filter(t => 
-                        (t.name || '').toLowerCase().includes(techSearch.toLowerCase()) || 
-                        (t.username || '').toLowerCase().includes(techSearch.toLowerCase()) ||
-                        (t.phone || '').includes(techSearch)
-                      ).length > 0 ? (
-                        technicians.filter(t => 
-                          (t.name || '').toLowerCase().includes(techSearch.toLowerCase()) || 
-                          (t.username || '').toLowerCase().includes(techSearch.toLowerCase()) ||
-                          (t.phone || '').includes(techSearch)
-                        ).map(tech => (
-                          <div
-                            key={tech._id}
-                            onClick={() => {
-                              setAssignForm((prev) => ({
-                                ...prev,
-                                technicianId: tech._id,
-                                recipientEmail: tech.email || '',
-                                recipientPhone: tech.phone || '',
-                                gatePassDestination: prev.gatePassDestination || tech.name || ''
-                              }));
-                              setTechSearch(tech.name);
-                              setShowTechSuggestions(false);
-                            }}
-                            className="p-2 hover:bg-amber-50 cursor-pointer border-b last:border-b-0"
-                          >
-                            <div className="font-medium">{tech.name}</div>
-                            <div className="text-xs text-gray-500">
-                              {tech.username} {tech.phone ? `| ${tech.phone}` : ''}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="p-2 text-gray-500 text-sm">No technicians found</div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-x-10 lg:items-start">
+                {/* Left column: recipient + primary picker */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Recipient Type</label>
+                    <div className="mt-1 flex flex-wrap gap-4">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="radio"
+                          name="recipientType"
+                          checked={recipientType === 'Technician'}
+                          onChange={() => setRecipientType('Technician')}
+                        />
+                        Technician
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="radio"
+                          name="recipientType"
+                          checked={recipientType === 'Other'}
+                          onChange={() => setRecipientType('Other')}
+                        />
+                        Other Person
+                      </label>
+                    </div>
+                  </div>
+
+                  {recipientType === 'Technician' && (
+                    <div className="relative">
+                      <label className="block text-sm font-medium text-gray-700">Technician</label>
+                      <input
+                        type="text"
+                        value={techSearch}
+                        onChange={(e) => {
+                          setTechSearch(e.target.value);
+                          setShowTechSuggestions(true);
+                          setAssignForm((prev) => ({ ...prev, technicianId: '' }));
+                        }}
+                        onFocus={() => setShowTechSuggestions(true)}
+                        placeholder="Search by name, username or phone"
+                        className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                      />
+                      {showTechSuggestions && (
+                        <div className="absolute z-20 mt-1 max-h-44 w-full overflow-y-auto rounded-md border border-gray-300 bg-white shadow-lg">
+                          {technicians.filter(
+                            (t) =>
+                              (t.name || '').toLowerCase().includes(techSearch.toLowerCase()) ||
+                              (t.username || '').toLowerCase().includes(techSearch.toLowerCase()) ||
+                              (t.phone || '').includes(techSearch)
+                          ).length > 0 ? (
+                            technicians
+                              .filter(
+                                (t) =>
+                                  (t.name || '').toLowerCase().includes(techSearch.toLowerCase()) ||
+                                  (t.username || '').toLowerCase().includes(techSearch.toLowerCase()) ||
+                                  (t.phone || '').includes(techSearch)
+                              )
+                              .map((tech) => (
+                                <div
+                                  key={tech._id}
+                                  onClick={() => {
+                                    setAssignForm((prev) => ({
+                                      ...prev,
+                                      technicianId: tech._id,
+                                      recipientEmail: tech.email || '',
+                                      recipientPhone: tech.phone || '',
+                                      gatePassDestination: prev.gatePassDestination || tech.name || ''
+                                    }));
+                                    setTechSearch(tech.name);
+                                    setShowTechSuggestions(false);
+                                  }}
+                                  className="cursor-pointer border-b p-2 last:border-b-0 hover:bg-amber-50"
+                                >
+                                  <div className="font-medium">{tech.name}</div>
+                                  <div className="text-xs text-gray-500">
+                                    {tech.username} {tech.phone ? `| ${tech.phone}` : ''}
+                                  </div>
+                                </div>
+                              ))
+                          ) : (
+                            <div className="p-2 text-sm text-gray-500">No technicians found</div>
+                          )}
+                        </div>
+                      )}
+                      {assignForm.technicianId && (
+                        <div className="mt-1 text-xs text-green-600">✓ Technician selected</div>
                       )}
                     </div>
                   )}
-                  {assignForm.technicianId && <div className="text-xs text-green-600 mt-1">✓ Technician selected</div>}
-                  <div className="mt-2">
-                    <label className="block text-sm font-medium text-gray-700">Recipient Email</label>
-                    <input
-                      type="email"
-                      value={assignForm.recipientEmail}
-                      onChange={(e) => setAssignForm({ ...assignForm, recipientEmail: e.target.value })}
-                      placeholder="technician email"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                  {assignForm.needGatePass && (
-                    <div className="mt-2">
-                      <label className="block text-sm font-medium text-gray-700">Recipient Phone (for Gate Pass)</label>
-                      <input
-                        type="text"
-                        value={assignForm.recipientPhone}
-                        onChange={(e) => setAssignForm({ ...assignForm, recipientPhone: e.target.value })}
-                        placeholder="Technician contact number"
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                      />
+
+                  {recipientType === 'Other' && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Recipient Name</label>
+                        <input
+                          type="text"
+                          value={otherRecipient.name}
+                          onChange={(e) => {
+                            const nextName = e.target.value;
+                            setOtherRecipient({ ...otherRecipient, name: nextName });
+                            setAssignForm((prev) => ({
+                              ...prev,
+                              gatePassDestination: prev.gatePassDestination || nextName
+                            }));
+                          }}
+                          placeholder="Enter person name"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Recipient Email</label>
+                        <input
+                          type="email"
+                          value={otherRecipient.email}
+                          onChange={(e) => setOtherRecipient({ ...otherRecipient, email: e.target.value })}
+                          placeholder="Enter email"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Recipient Phone</label>
+                        <input
+                          type="text"
+                          value={otherRecipient.phone}
+                          onChange={(e) => setOtherRecipient({ ...otherRecipient, phone: e.target.value })}
+                          placeholder="Enter phone"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Note</label>
+                        <input
+                          type="text"
+                          value={otherRecipient.note}
+                          onChange={(e) => setOtherRecipient({ ...otherRecipient, note: e.target.value })}
+                          placeholder="Department or reference"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
                     </div>
                   )}
-                  <div className="mt-2">
-                    <label className="block text-sm font-medium text-gray-700">Installation Location *</label>
-                    <input
-                      type="text"
-                      value={assignForm.installationLocation || ''}
-                      onChange={(e) => {
-                        setAssignForm({ ...assignForm, installationLocation: e.target.value });
-                        if (e.target.value.trim()) setAssignInstallationLocationError('');
-                      }}
-                      placeholder="e.g. Server room, office, site"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                    {assignInstallationLocationError && (
-                      <p className="mt-1 text-xs text-rose-600">{assignInstallationLocationError}</p>
-                    )}
-                  </div>
-                </div>
-              )}
 
-              {assigningAssetIds.length <= 1 && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Assign Quantity</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={Math.max(1, Number.parseInt(assigningAsset?.quantity, 10) > 0 ? Number.parseInt(assigningAsset?.quantity, 10) : 1)}
-                    value={assignForm.assignQuantity}
-                    onChange={(e) => setAssignForm((prev) => ({ ...prev, assignQuantity: Number.parseInt(e.target.value, 10) || 1 }))}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Available: {Math.max(1, Number.parseInt(assigningAsset?.quantity, 10) > 0 ? Number.parseInt(assigningAsset?.quantity, 10) : 1)}.
-                    If you assign less than available, remaining quantity stays in store.
-                  </p>
+                  {assigningAssetIds.length <= 1 && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Assign Quantity</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={Math.max(
+                          1,
+                          Number.parseInt(assigningAsset?.quantity, 10) > 0
+                            ? Number.parseInt(assigningAsset?.quantity, 10)
+                            : 1
+                        )}
+                        value={assignForm.assignQuantity}
+                        onChange={(e) =>
+                          setAssignForm((prev) => ({ ...prev, assignQuantity: Number.parseInt(e.target.value, 10) || 1 }))
+                        }
+                        className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Available:{' '}
+                        {Math.max(
+                          1,
+                          Number.parseInt(assigningAsset?.quantity, 10) > 0
+                            ? Number.parseInt(assigningAsset?.quantity, 10)
+                            : 1
+                        )}
+                        . Partial assign leaves the rest in store.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
-              
-              {recipientType === 'Other' && (
-                <div className="grid grid-cols-1 gap-3">
+
+                {/* Right column: contact, location, gate pass */}
+                <div className="space-y-4">
+                  {recipientType === 'Technician' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Recipient Email</label>
+                        <input
+                          type="email"
+                          value={assignForm.recipientEmail}
+                          onChange={(e) => setAssignForm({ ...assignForm, recipientEmail: e.target.value })}
+                          placeholder="technician email"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                      {assignForm.needGatePass && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Recipient Phone (Gate Pass)</label>
+                          <input
+                            type="text"
+                            value={assignForm.recipientPhone}
+                            onChange={(e) => setAssignForm({ ...assignForm, recipientPhone: e.target.value })}
+                            placeholder="Technician contact number"
+                            className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                          />
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Installation Location *</label>
+                        <input
+                          type="text"
+                          value={assignForm.installationLocation || ''}
+                          onChange={(e) => {
+                            setAssignForm({ ...assignForm, installationLocation: e.target.value });
+                            if (e.target.value.trim()) setAssignInstallationLocationError('');
+                          }}
+                          placeholder="e.g. Server room, office, site"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                        {assignInstallationLocationError && (
+                          <p className="mt-1 text-xs text-rose-600">{assignInstallationLocationError}</p>
+                        )}
+                      </div>
+                    </>
+                  )}
+
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Recipient Name</label>
+                    <label className="block text-sm font-medium text-gray-700">Need Gate Pass?</label>
+                    <div className="mt-1 flex flex-wrap gap-4">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="radio"
+                          name="needGatePass"
+                          checked={assignForm.needGatePass === true}
+                          onChange={() => setAssignForm({ ...assignForm, needGatePass: true })}
+                        />
+                        Yes
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="radio"
+                          name="needGatePass"
+                          checked={assignForm.needGatePass === false}
+                          onChange={() => setAssignForm({ ...assignForm, needGatePass: false })}
+                        />
+                        No
+                      </label>
+                    </div>
+                  </div>
+
+                  {assignForm.needGatePass && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Moving From</label>
+                        <input
+                          type="text"
+                          value={assignForm.gatePassOrigin}
+                          onChange={(e) => setAssignForm({ ...assignForm, gatePassOrigin: e.target.value })}
+                          placeholder="Origin location"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Moving To</label>
+                        <input
+                          type="text"
+                          list="movement-destination-options"
+                          value={assignForm.gatePassDestination}
+                          onChange={(e) => setAssignForm({ ...assignForm, gatePassDestination: e.target.value })}
+                          placeholder="Destination"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Justification</label>
+                        <input
+                          type="text"
+                          value={assignForm.gatePassJustification}
+                          onChange={(e) => setAssignForm({ ...assignForm, gatePassJustification: e.target.value })}
+                          placeholder="Reason for movement"
+                          className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Ticket / Reference {assignForm.needGatePass ? '(required if Gate Pass)' : '(optional)'}
+                    </label>
                     <input
                       type="text"
-                      value={otherRecipient.name}
-                      onChange={(e) => {
-                        const nextName = e.target.value;
-                        setOtherRecipient({ ...otherRecipient, name: nextName });
-                        setAssignForm((prev) => ({
-                          ...prev,
-                          gatePassDestination: prev.gatePassDestination || nextName
-                        }));
-                      }}
-                      placeholder="Enter person name"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Recipient Email</label>
-                    <input
-                      type="email"
-                      value={otherRecipient.email}
-                      onChange={(e) => setOtherRecipient({ ...otherRecipient, email: e.target.value })}
-                      placeholder="Enter email"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Recipient Phone</label>
-                    <input
-                      type="text"
-                      value={otherRecipient.phone}
-                      onChange={(e) => setOtherRecipient({ ...otherRecipient, phone: e.target.value })}
-                      placeholder="Enter phone"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Note</label>
-                    <input
-                      type="text"
-                      value={otherRecipient.note}
-                      onChange={(e) => setOtherRecipient({ ...otherRecipient, note: e.target.value })}
-                      placeholder="Department or reference"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                      value={assignForm.ticketNumber}
+                      onChange={(e) => setAssignForm({ ...assignForm, ticketNumber: e.target.value })}
+                      placeholder="Ticket number or reference"
+                      className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
                     />
                   </div>
                 </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Need Gate Pass?</label>
-                <div className="mt-1 flex gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="needGatePass"
-                      checked={assignForm.needGatePass === true}
-                      onChange={() => setAssignForm({ ...assignForm, needGatePass: true })}
-                    />
-                    Yes
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="needGatePass"
-                      checked={assignForm.needGatePass === false}
-                      onChange={() => setAssignForm({ ...assignForm, needGatePass: false })}
-                    />
-                    No
-                  </label>
-                </div>
-              </div>
-              {assignForm.needGatePass && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Moving From (Gate Pass)</label>
-                    <input
-                      type="text"
-                      value={assignForm.gatePassOrigin}
-                      onChange={(e) => setAssignForm({ ...assignForm, gatePassOrigin: e.target.value })}
-                      placeholder="Origin location"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Moving To (Gate Pass)</label>
-                    <input
-                      type="text"
-                      list="movement-destination-options"
-                      value={assignForm.gatePassDestination}
-                      onChange={(e) => setAssignForm({ ...assignForm, gatePassDestination: e.target.value })}
-                      placeholder="Destination"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Justification (Gate Pass)</label>
-                    <input
-                      type="text"
-                      value={assignForm.gatePassJustification}
-                      onChange={(e) => setAssignForm({ ...assignForm, gatePassJustification: e.target.value })}
-                      placeholder="Reason for movement"
-                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                    />
-                  </div>
-                </>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Ticket Number / Reference {assignForm.needGatePass ? '(Required for Gate Pass)' : '(Optional)'}
-                </label>
-                <input
-                  type="text"
-                  value={assignForm.ticketNumber}
-                  onChange={(e) => setAssignForm({ ...assignForm, ticketNumber: e.target.value })}
-                  placeholder="Enter ticket number or any text"
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                />
               </div>
             </div>
-            <div className="mt-6 flex justify-end space-x-3">
+
+            <div className="flex shrink-0 justify-end gap-3 border-t border-gray-200 bg-slate-50 px-5 py-3">
               <button
-                onClick={() => { setAssigningAsset(null); setAssigningAssetIds([]); }}
+                type="button"
+                onClick={() => {
+                  setAssigningAsset(null);
+                  setAssigningAssetIds([]);
+                }}
                 disabled={assignSubmitting}
-                className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 disabled:opacity-50"
+                className="rounded-md bg-gray-200 px-4 py-2 text-gray-700 hover:bg-gray-300 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleAssignSubmit}
                 disabled={assignSubmitting}
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50"
               >
                 {assignSubmitting ? 'Assigning...' : 'Assign'}
               </button>
@@ -3249,6 +3468,22 @@ const Assets = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Inbound From</label>
                 <input type="text" name="inbound_from" value={formData.inbound_from || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Outbound To</label>
+                <input type="text" name="outbound_to" value={formData.outbound_to || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Expo Tag</label>
+                <input type="text" name="expo_tag" value={formData.expo_tag || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">ABS Code</label>
+                <input type="text" name="abs_code" value={formData.abs_code || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Product Number</label>
+                <input type="text" name="product_number" value={formData.product_number || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">IP Address</label>
@@ -3655,6 +3890,22 @@ const Assets = () => {
                 <input type="text" name="inbound_from" value={addForm.inbound_from || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700">Outbound To</label>
+                <input type="text" name="outbound_to" value={addForm.outbound_to || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Expo Tag</label>
+                <input type="text" name="expo_tag" value={addForm.expo_tag || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">ABS Code</label>
+                <input type="text" name="abs_code" value={addForm.abs_code || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Product Number</label>
+                <input type="text" name="product_number" value={addForm.product_number || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700">IP Address</label>
                 <input type="text" name="ip_address" value={addForm.ip_address || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
@@ -3879,6 +4130,22 @@ const Assets = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Inbound From (Optional)</label>
                 <input type="text" value={bulkForm.inbound_from || ''} onChange={(e) => setBulkForm({ ...bulkForm, inbound_from: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Outbound To (Optional)</label>
+                <input type="text" value={bulkForm.outbound_to || ''} onChange={(e) => setBulkForm({ ...bulkForm, outbound_to: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Expo Tag (Optional)</label>
+                <input type="text" value={bulkForm.expo_tag || ''} onChange={(e) => setBulkForm({ ...bulkForm, expo_tag: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">ABS Code (Optional)</label>
+                <input type="text" value={bulkForm.abs_code || ''} onChange={(e) => setBulkForm({ ...bulkForm, abs_code: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Product Number (Optional)</label>
+                <input type="text" value={bulkForm.product_number || ''} onChange={(e) => setBulkForm({ ...bulkForm, product_number: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">IP Address (Optional)</label>

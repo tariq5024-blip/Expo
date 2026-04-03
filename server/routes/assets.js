@@ -154,6 +154,37 @@ function buildMaintenanceVendorMatchClause(maintenanceVendor) {
   };
 }
 
+function buildEffectiveCustomFieldStringExpr(fieldAliases = []) {
+  const trimPath = (path) => ({
+    $trim: { input: { $toString: { $ifNull: [path, ''] } } }
+  });
+  const trimGetField = (fieldName) => ({
+    $trim: {
+      input: {
+        $toString: {
+          $ifNull: [
+            { $getField: { field: fieldName, input: { $ifNull: ['$customFields', {}] } } },
+            ''
+          ]
+        }
+      }
+    }
+  });
+
+  let acc = '';
+  for (const alias of fieldAliases) {
+    const key = String(alias || '').trim();
+    if (!key) continue;
+    const layer = key.includes(' ')
+      ? trimGetField(key)
+      : trimPath(`$customFields.${key}`);
+    acc = {
+      $cond: [{ $gt: [{ $strLenCP: layer }, 0] }, layer, acc || '']
+    };
+  }
+  return acc || '';
+}
+
 function buildExclusiveStatusBucketExpr() {
   return {
     $switch: {
@@ -638,10 +669,17 @@ router.get('/', protect, async (req, res) => {
       filter.disposed = false;
     }
     if (q) {
+      const escapedQ = escapeRegex(q);
       const rx = toContainsRegex(q);
       const orClauses = [
         { name: rx },
+        { expo_tag: rx },
+        { expoTag: rx },
+        { abs_code: rx },
+        { absCode: rx },
         { model_number: rx },
+        { product_number: rx },
+        { productNumber: rx },
         { serial_number: rx },
         { serial_last_4: rx },
         { mac_address: rx },
@@ -660,12 +698,30 @@ router.get('/', protect, async (req, res) => {
         { delivered_by_name: rx },
         { device_group: rx },
         { inbound_from: rx },
+        { outbound_to: rx },
+        { outboundTo: rx },
         { ip_address: rx },
         { building: rx },
         { state_comments: rx },
         { remarks: rx },
         { comments: rx }
       ];
+      const expoTagExpr = buildEffectiveCustomFieldStringExpr(['expo_tag', 'expoTag', 'expo tag']);
+      const absCodeExpr = buildEffectiveCustomFieldStringExpr(['abs_code', 'absCode', 'abs code']);
+      const productNumberExpr = buildEffectiveCustomFieldStringExpr(['product_number', 'productNumber', 'product number']);
+      orClauses.push({
+        $expr: { $regexMatch: { input: expoTagExpr, regex: escapedQ, options: 'i' } }
+      });
+      orClauses.push({
+        $expr: { $regexMatch: { input: absCodeExpr, regex: escapedQ, options: 'i' } }
+      });
+      orClauses.push({
+        $expr: { $regexMatch: { input: productNumberExpr, regex: escapedQ, options: 'i' } }
+      });
+      const outboundToExpr = buildEffectiveCustomFieldStringExpr(['outbound_to', 'outboundTo', 'outbound to']);
+      orClauses.push({
+        $expr: { $regexMatch: { input: outboundToExpr, regex: escapedQ, options: 'i' } }
+      });
 
       const n = Number(q);
       if (!Number.isNaN(n)) {
@@ -938,7 +994,7 @@ router.get('/', protect, async (req, res) => {
         .sort({ updatedAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
         .populate({
           path: 'store',
           select: 'name parentStore',
@@ -1006,7 +1062,7 @@ router.get('/', protect, async (req, res) => {
 router.get('/:id([0-9a-fA-F]{24})', protect, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id)
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate({
         path: 'store',
         select: 'name parentStore',
@@ -1611,6 +1667,10 @@ router.get('/template', async (req, res) => {
       'Maintenance Vendor',
       'Device Group',
       'Inbound From',
+      'Outbound To',
+      'Expo Tag',
+      'ABS Code',
+      'Product Number',
       'IP Address',
       'Building',
       'State Comments',
@@ -1648,6 +1708,10 @@ router.get('/template', async (req, res) => {
       'Siemens',
       'Core Security',
       'Main Warehouse',
+      'Logistics Hub',
+      'EXPO-001',
+      'ABS-99',
+      'PN-12345',
       '10.0.10.42',
       'Block A',
       'Rack and power state verified',
@@ -1679,7 +1743,8 @@ router.post('/', protect, restrictViewer, async (req, res) => {
   const {
     name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
     ticket_number, po_number, product_name, rfid, qr_code, quantity, vendor_name, price,
-    device_group, inbound_from, ip_address, building, state_comments, remarks, comments
+    device_group, inbound_from, outbound_to, expo_tag, abs_code, product_number,
+    ip_address, building, state_comments, remarks, comments
   } = req.body;
   try {
     const normName = capitalizeWords(name);
@@ -1745,6 +1810,10 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       location: normLocation || '',
       device_group: capitalizeWords(device_group || ''),
       inbound_from: capitalizeWords(inbound_from || ''),
+      outbound_to: capitalizeWords(outbound_to || ''),
+      expo_tag: String(expo_tag || '').trim(),
+      abs_code: String(abs_code || '').trim(),
+      product_number: String(product_number || '').trim(),
       ip_address: String(ip_address || '').trim(),
       building: capitalizeWords(building || ''),
       state_comments: String(state_comments || '').trim(),
@@ -1856,6 +1925,10 @@ router.post('/bulk-update', protect, admin, async (req, res) => {
     if (updates.location) data.location = capitalizeWords(updates.location);
     if (updates.device_group !== undefined) data.device_group = capitalizeWords(updates.device_group || '');
     if (updates.inbound_from !== undefined) data.inbound_from = capitalizeWords(updates.inbound_from || '');
+    if (updates.outbound_to !== undefined) data.outbound_to = capitalizeWords(updates.outbound_to || '');
+    if (updates.expo_tag !== undefined) data.expo_tag = String(updates.expo_tag || '').trim();
+    if (updates.abs_code !== undefined) data.abs_code = String(updates.abs_code || '').trim();
+    if (updates.product_number !== undefined) data.product_number = String(updates.product_number || '').trim();
     if (updates.ip_address !== undefined) data.ip_address = String(updates.ip_address || '').trim();
     if (updates.building !== undefined) data.building = capitalizeWords(updates.building || '');
     if (updates.state_comments !== undefined) data.state_comments = String(updates.state_comments || '').trim();
@@ -2150,6 +2223,10 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       const vendorNameFromRow = norm['vendor name'] || norm['vendor'] || '';
       const deviceGroupFromRow = norm['device group'] || norm['device_group'] || '';
       const inboundFromRow = norm['inbound from'] || norm['inbound_from'] || '';
+      const outboundToRow = norm['outbound to'] || norm['outbound_to'] || '';
+      const expoTagRow = norm['expo tag'] || norm['expo_tag'] || '';
+      const absCodeRow = norm['abs code'] || norm['abs_code'] || '';
+      const productNumberRow = norm['product number'] || norm['product_number'] || '';
       const ipAddressFromRow = norm['ip address'] || norm['ip_address'] || '';
       const buildingFromRow = norm['building'] || '';
       const stateCommentsFromRow = norm['state comments'] || norm['state_comments'] || '';
@@ -2186,6 +2263,10 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         delivered_by_name: deliveredByFromRow || '',
         device_group: capitalizeWords(deviceGroupFromRow || ''),
         inbound_from: capitalizeWords(inboundFromRow || ''),
+        outbound_to: capitalizeWords(outboundToRow || ''),
+        expo_tag: String(expoTagRow || '').trim(),
+        abs_code: String(absCodeRow || '').trim(),
+        product_number: String(productNumberRow || '').trim(),
         ip_address: String(ipAddressFromRow || '').trim(),
         building: capitalizeWords(buildingFromRow || ''),
         state_comments: String(stateCommentsFromRow || '').trim(),
@@ -2262,7 +2343,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         const raw = worksheetToAoa(ws, { defval: '', blankrows: false });
         if (Array.isArray(raw) && raw.length > 0) {
           // Find header row dynamically (matches at least one known header)
-          const KNOWN = ['product name','name','model number','serial number','mac address','manufacturer','ticket number','rfid','qr code','store','store location','location','status','condition','asset type','maintenance vendor','device group','inbound from','ip address','building','state comments','remarks','comments'];
+          const KNOWN = ['product name','name','model number','serial number','mac address','manufacturer','ticket number','rfid','qr code','store','store location','location','status','condition','asset type','maintenance vendor','device group','inbound from','outbound to','expo tag','abs code','product number','ip address','building','state comments','remarks','comments'];
           let headerIdx = -1;
           for (let i = 0; i < raw.length; i++) {
             const row = raw[i] || [];
@@ -2443,6 +2524,10 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       const vendorNameFromRow = norm['vendor name'] || norm['vendor'] || '';
       const deviceGroupFromRow = norm['device group'] || norm['device_group'] || '';
       const inboundFromRow = norm['inbound from'] || norm['inbound_from'] || '';
+      const outboundToRow = norm['outbound to'] || norm['outbound_to'] || '';
+      const expoTagRow = norm['expo tag'] || norm['expo_tag'] || '';
+      const absCodeRow = norm['abs code'] || norm['abs_code'] || '';
+      const productNumberRow = norm['product number'] || norm['product_number'] || '';
       const ipAddressFromRow = norm['ip address'] || norm['ip_address'] || '';
       const buildingFromRow = norm['building'] || '';
       const stateCommentsFromRow = norm['state comments'] || norm['state_comments'] || '';
@@ -2527,6 +2612,10 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
           delivered_by_name: deliveredByFromRow || reqDeliveredByName || '',
           device_group: String(deviceGroupFromRow || '').toUpperCase(),
           inbound_from: String(inboundFromRow || '').toUpperCase(),
+          outbound_to: String(outboundToRow || '').toUpperCase(),
+          expo_tag: String(expoTagRow || '').trim(),
+          abs_code: String(absCodeRow || '').trim(),
+          product_number: String(productNumberRow || '').trim(),
           ip_address: String(ipAddressFromRow || '').trim(),
           building: String(buildingFromRow || '').toUpperCase(),
           state_comments: String(stateCommentsFromRow || '').trim(),
@@ -2567,7 +2656,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       const chunk = queryPairs.slice(i, i + CHUNK);
       // eslint-disable-next-line no-await-in-loop
       const existing = await Asset.find({ $or: chunk })
-        .select('store serial_number name model_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code status condition product_name source location vendor_name delivered_by_name device_group inbound_from ip_address building state_comments remarks comments delivered_at quantity price customFields')
+        .select('store serial_number name model_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code status condition product_name source location vendor_name delivered_by_name device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments delivered_at quantity price customFields')
         .lean();
       existing.forEach((doc) => {
         const pairKey = `${String(doc.store)}::${String(doc.serial_number || '').trim().toLowerCase()}`;
@@ -2616,7 +2705,8 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         const compareKeys = [
           'name', 'model_number', 'mac_address', 'manufacturer', 'ticket_number', 'po_number', 'rfid', 'qr_code',
           'status', 'condition', 'product_name', 'source', 'location', 'vendor_name', 'delivered_by_name',
-          'device_group', 'inbound_from', 'ip_address', 'building', 'state_comments', 'remarks', 'comments',
+          'device_group', 'inbound_from', 'outbound_to', 'expo_tag', 'abs_code', 'product_number',
+          'ip_address', 'building', 'state_comments', 'remarks', 'comments',
           'quantity', 'price'
         ];
         const patch = {};
@@ -2856,6 +2946,10 @@ router.get('/export', protect, admin, async (req, res) => {
       'Device Group',
       'Location',
       'Inbound From',
+      'Outbound To',
+      'Expo Tag',
+      'ABS Code',
+      'Product Number',
       'IP Address',
       'Building',
       'State Comments',
@@ -2889,6 +2983,10 @@ router.get('/export', protect, admin, async (req, res) => {
         a.device_group || '',
         a.location || '',
         a.inbound_from || '',
+        a.outbound_to || '',
+        a.expo_tag || '',
+        a.abs_code || '',
+        a.product_number || '',
         a.ip_address || '',
         a.building || '',
         a.state_comments || '',
@@ -2916,13 +3014,13 @@ router.get('/export', protect, admin, async (req, res) => {
     const wsMain = wb.addWorksheet('ASSETS');
     wsMain.addRows([headerMain, ...rowsMain]);
     wsMain.columns = [
-      { width: 16 },{ width: 16 },{ width: 22 },{ width: 18 },{ width: 12 },{ width: 16 },
-      { width: 16 },{ width: 16 },{ width: 16 },{ width: 12 },{ width: 16 },{ width: 12 },
-      { width: 12 },{ width: 12 },{ width: 18 },{ width: 12 },{ width: 16 },{ width: 20 },
-      { width: 16 },{ width: 16 },{ width: 14 },{ width: 16 },{ width: 14 },{ width: 18 },
-      { width: 14 },{ width: 18 },{ width: 14 },{ width: 18 }
+      { width: 16 }, { width: 16 }, { width: 22 }, { width: 18 }, { width: 12 }, { width: 16 },
+      { width: 16 }, { width: 16 }, { width: 16 }, { width: 12 }, { width: 16 }, { width: 12 },
+      { width: 12 }, { width: 12 }, { width: 18 }, { width: 12 }, { width: 16 }, { width: 20 },
+      { width: 16 }, { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
+      { width: 16 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }
     ];
-    wsMain.autoFilter = 'A1:AB1';
+    wsMain.autoFilter = 'A1:AF1';
 
     const wsHist = wb.addWorksheet('HISTORY');
     wsHist.addRows([headerHistory, ...rowsHistory]);
@@ -2964,8 +3062,13 @@ router.get('/import-template', protect, admin, async (req, res) => {
         'Store Location': '',
         'Status': '',
         'Condition': '',
+        'Maintenance Vendor': '',
         'Device Group': '',
         'Inbound From': '',
+        'Outbound To': '',
+        'Expo Tag': '',
+        'ABS Code': '',
+        'Product Number': '',
         'IP Address': '',
         'Building': '',
         'State Comments': '',
@@ -3427,7 +3530,7 @@ router.post('/reserve', protect, admin, async (req, res) => {
     }
 
     const refreshed = await Asset.find({ _id: { $in: normalizedIds } })
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate('store', 'name parentStore')
       .populate('assigned_to', 'name email');
 
@@ -3493,7 +3596,7 @@ router.post('/unreserve', protect, admin, async (req, res) => {
     }
 
     const refreshed = await Asset.find({ _id: { $in: normalizedIds } })
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate('store', 'name parentStore')
       .populate('assigned_to', 'name email');
 
@@ -4560,7 +4663,8 @@ router.put('/:id', protect, admin, async (req, res) => {
   const {
     name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
     ticket_number, po_number, product_name, rfid, qr_code, vendor_name, delivered_by_name, price, quantity, customFields,
-    device_group, inbound_from, ip_address, building, state_comments, remarks, comments, disposed, reserved
+    device_group, inbound_from, outbound_to, expo_tag, abs_code, product_number,
+    ip_address, building, state_comments, remarks, comments, disposed, reserved
   } = req.body;
   try {
     const asset = await Asset.findById(req.params.id);
@@ -4599,6 +4703,10 @@ router.put('/:id', protect, admin, async (req, res) => {
       if (delivered_by_name !== undefined) asset.delivered_by_name = capitalizeWords(delivered_by_name || '');
       if (device_group !== undefined) asset.device_group = capitalizeWords(device_group || '');
       if (inbound_from !== undefined) asset.inbound_from = capitalizeWords(inbound_from || '');
+      if (outbound_to !== undefined) asset.outbound_to = capitalizeWords(outbound_to || '');
+      if (expo_tag !== undefined) asset.expo_tag = String(expo_tag || '').trim();
+      if (abs_code !== undefined) asset.abs_code = String(abs_code || '').trim();
+      if (product_number !== undefined) asset.product_number = String(product_number || '').trim();
       if (ip_address !== undefined) asset.ip_address = String(ip_address || '').trim();
       if (building !== undefined) asset.building = capitalizeWords(building || '');
       if (state_comments !== undefined) asset.state_comments = String(state_comments || '').trim();

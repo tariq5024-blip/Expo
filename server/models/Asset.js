@@ -119,6 +119,26 @@ const assetSchema = new mongoose.Schema({
     default: '',
     index: true
   },
+  outbound_to: {
+    type: String,
+    default: '',
+    index: true
+  },
+  expo_tag: {
+    type: String,
+    default: '',
+    index: true
+  },
+  abs_code: {
+    type: String,
+    default: '',
+    index: true
+  },
+  product_number: {
+    type: String,
+    default: '',
+    index: true
+  },
   ip_address: {
     type: String,
     default: '',

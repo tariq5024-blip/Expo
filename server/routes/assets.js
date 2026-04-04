@@ -35,6 +35,42 @@ function capitalizeWords(s) {
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const toContainsRegex = (value) => new RegExp(escapeRegex(value), 'i');
 
+/** Keep aligned with server/models/Asset.js condition.enum */
+const ASSET_CONDITION_ENUM = Object.freeze([
+  'New',
+  'Used',
+  'Faulty',
+  'Repaired',
+  'Workshop',
+  'Under Repair/Workshop'
+]);
+
+/**
+ * If the search box text clearly refers to asset condition labels, return matching enum value(s).
+ * Used to filter current `condition` only and skip the broad $or (history, comments, return_request, etc.).
+ */
+function resolveAssetConditionEnumMatches(q) {
+  const raw = String(q || '').trim();
+  if (!raw) return null;
+  const qLower = raw.toLowerCase();
+  if (qLower.length < 2) return null;
+  if ('reserved'.startsWith(qLower)) return null;
+
+  const matches = new Set();
+  for (const e of ASSET_CONDITION_ENUM) {
+    const el = e.toLowerCase();
+    if (el === qLower || el.startsWith(qLower)) {
+      matches.add(e);
+      continue;
+    }
+    if (qLower.length >= 4 && el.includes(qLower)) {
+      matches.add(e);
+    }
+  }
+  if (matches.size === 0) return null;
+  return Array.from(matches);
+}
+
 const getScopedStoreId = (req) => String(req.activeStore || req.user?.assignedStore || '').trim();
 const hasAssetStoreAccess = (req, storeId) => {
   if (req.user?.role === 'Super Admin') return true;
@@ -280,6 +316,7 @@ async function createAssignmentGatePass(
     name: a.name || '',
     model: a.model_number || '',
     serial_number: a.serial_number || '',
+    unique_id: String(a.uniqueId || '').trim(),
     brand: a.manufacturer || '',
     asset_model: a.model_number || '',
     location: a.location || '',
@@ -312,7 +349,7 @@ async function createAssignmentGatePass(
     destination: String(destination || recipientName || '').trim(),
     origin: String(origin || asset.location || '').trim(),
     justification: String(justification || '').trim() || `Asset assignment for ${passAssets.length} asset(s)`,
-    notes: `Auto-generated gate pass for asset assignment (${passAssets.map((a) => a.serial_number || 'N/A').join(', ')})`,
+    notes: `Auto-generated gate pass for asset assignment (${passAssets.map((a) => [a.serial_number || 'N/A', a.uniqueId || ''].filter(Boolean).join(' / ')).join('; ')})`,
     store: asset.store || null
   });
 
@@ -735,6 +772,18 @@ router.get('/', protect, async (req, res) => {
       filter.disposed = false;
     }
     if (q) {
+      const qLowerForMode = q.toLowerCase();
+      const reservedPrefixActive = qLowerForMode.length > 0 && 'reserved'.startsWith(qLowerForMode);
+      let useConditionOnlySearch = false;
+      if (!condition && !reservedPrefixActive) {
+        const condMatches = resolveAssetConditionEnumMatches(q);
+        if (condMatches && condMatches.length > 0) {
+          filter.condition = condMatches.length === 1 ? condMatches[0] : { $in: condMatches };
+          useConditionOnlySearch = true;
+        }
+      }
+
+      if (!useConditionOnlySearch) {
       const escapedQ = escapeRegex(q);
       const rx = toContainsRegex(q);
       const orClauses = [
@@ -770,7 +819,14 @@ router.get('/', protect, async (req, res) => {
         { building: rx },
         { state_comments: rx },
         { remarks: rx },
-        { comments: rx }
+        { comments: rx },
+        { operating_system: rx },
+        { operatingSystem: rx },
+        { specification: rx },
+        { service_tag: rx },
+        { serviceTag: rx },
+        { assign_to_department: rx },
+        { assignToDepartment: rx }
       ];
       const expoTagExpr = buildEffectiveCustomFieldStringExpr(['expo_tag', 'expoTag', 'expo tag']);
       const absCodeExpr = buildEffectiveCustomFieldStringExpr(['abs_code', 'absCode', 'abs code']);
@@ -788,6 +844,117 @@ router.get('/', protect, async (req, res) => {
       orClauses.push({
         $expr: { $regexMatch: { input: outboundToExpr, regex: escapedQ, options: 'i' } }
       });
+      const operatingSystemExpr = buildEffectiveCustomFieldStringExpr([
+        'operating_system',
+        'operatingSystem',
+        'operating system'
+      ]);
+      orClauses.push({
+        $expr: { $regexMatch: { input: operatingSystemExpr, regex: escapedQ, options: 'i' } }
+      });
+      const specificationExpr = buildEffectiveCustomFieldStringExpr(['specification', 'spec']);
+      orClauses.push({
+        $expr: { $regexMatch: { input: specificationExpr, regex: escapedQ, options: 'i' } }
+      });
+      const serviceTagExpr = buildEffectiveCustomFieldStringExpr(['service_tag', 'serviceTag', 'service tag']);
+      orClauses.push({
+        $expr: { $regexMatch: { input: serviceTagExpr, regex: escapedQ, options: 'i' } }
+      });
+      const assignDeptExpr = buildEffectiveCustomFieldStringExpr([
+        'assign_to_department',
+        'assignToDepartment',
+        'assign to department',
+        'assign to depratment'
+      ]);
+      orClauses.push({
+        $expr: { $regexMatch: { input: assignDeptExpr, regex: escapedQ, options: 'i' } }
+      });
+
+      const maintenanceVendorSearchExpr = buildEffectiveMaintenanceVendorStringExpr();
+      orClauses.push({
+        $expr: {
+          $regexMatch: {
+            input: maintenanceVendorSearchExpr,
+            regex: escapedQ,
+            options: 'i'
+          }
+        }
+      });
+
+      // Any string value in customFields (keys already covered individually above still benefit).
+      orClauses.push({
+        $expr: {
+          $gt: [
+            {
+              $size: {
+                $filter: {
+                  input: {
+                    $objectToArray: {
+                      $cond: [
+                        { $eq: [{ $type: '$customFields' }, 'object'] },
+                        '$customFields',
+                        {}
+                      ]
+                    }
+                  },
+                  as: 'cv',
+                  cond: {
+                    $regexMatch: {
+                      input: { $toString: '$$cv.v' },
+                      regex: escapedQ,
+                      options: 'i'
+                    }
+                  }
+                }
+              }
+            },
+            0
+          ]
+        }
+      });
+
+      // Do not match on history snapshot condition/status fields: a Repaired asset often still has
+      // older events with previous_condition "Faulty", which wrongly satisfies q=faulty via $or.
+      // Current condition/status are already covered by top-level { condition: rx }, { status: rx }.
+      orClauses.push({
+        history: {
+          $elemMatch: {
+            $or: [
+              { action: rx },
+              { details: rx },
+              { user: rx },
+              { ticket_number: rx },
+              { actor_email: rx },
+              { actor_role: rx },
+              { store_name: rx },
+              { location: rx }
+            ]
+          }
+        }
+      });
+
+      orClauses.push(
+        { 'assigned_to_external.name': rx },
+        { 'assigned_to_external.email': rx },
+        { 'assigned_to_external.phone': rx },
+        { 'assigned_to_external.note': rx }
+      );
+      orClauses.push(
+        { 'return_request.condition': rx },
+        { 'return_request.ticket_number': rx },
+        { 'return_request.notes': rx }
+      );
+      orClauses.push({ disposed_by: rx }, { disposal_reason: rx }, { importBatchId: rx });
+
+      orClauses.push({ product_name: rx });
+      orClauses.push({ reservation_note: rx });
+      orClauses.push({ reserved_by: rx });
+      // Reserved assets keep status "In Store"; UI shows "Reserved" from the boolean only — so substring
+      // search on "r", "re", … must still return those rows for grid highlighting.
+      const qLower = q.toLowerCase();
+      if (qLower.length > 0 && 'reserved'.startsWith(qLower)) {
+        orClauses.push({ reserved: true });
+      }
 
       const n = Number(q);
       if (!Number.isNaN(n)) {
@@ -795,7 +962,41 @@ router.get('/', protect, async (req, res) => {
         orClauses.push({ price: n });
       }
 
+      try {
+        const userHits = await User.find({
+          $or: [
+            { name: rx },
+            { email: rx },
+            { phone: rx },
+            { username: rx }
+          ]
+        })
+          .select('_id')
+          .limit(120)
+          .lean();
+        const uids = userHits.map((u) => u._id).filter(Boolean);
+        if (uids.length > 0) {
+          orClauses.push({ assigned_to: { $in: uids } });
+          orClauses.push({ 'return_request.requested_by': { $in: uids } });
+        }
+      } catch {
+        /* ignore user search errors */
+      }
+
+      try {
+        const storeRoots = await Store.find({ name: rx }).select('_id').limit(120).lean();
+        const rootIds = storeRoots.map((s) => s._id).filter(Boolean);
+        if (rootIds.length > 0) {
+          const childStores = await Store.find({ parentStore: { $in: rootIds } }).select('_id').lean();
+          const allStoreIds = [...rootIds, ...childStores.map((c) => c._id)];
+          orClauses.push({ store: { $in: allStoreIds } });
+        }
+      } catch {
+        /* ignore store search errors */
+      }
+
       filter.$or = orClauses;
+      }
     }
     if (derivedStatus) {
       const addAndClause = (clause) => {
@@ -1060,7 +1261,7 @@ router.get('/', protect, async (req, res) => {
         .sort({ updatedAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+        .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
         .populate({
           path: 'store',
           select: 'name parentStore',
@@ -1130,7 +1331,7 @@ router.get('/', protect, async (req, res) => {
 router.get('/:id([0-9a-fA-F]{24})', protect, async (req, res) => {
   try {
     const asset = await Asset.findById(req.params.id)
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate({
         path: 'store',
         select: 'name parentStore',
@@ -1181,18 +1382,24 @@ router.get('/search-serial', protect, async (req, res) => {
     }
 
     // Optimization: If exactly 4 chars, try exact match on serial_last_4 first (extremely fast)
+    const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(escapedQ, 'i');
     if (q.length === 4) {
       query.$or = [
         { serial_last_4: q },
-        { serial_number: new RegExp(`${q}$`, 'i') }
+        { serial_number: new RegExp(`${escapedQ}`, 'i') },
+        { uniqueId: rx }
       ];
     } else {
-       const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-       query.serial_number = new RegExp(`${escapedQ}$`, 'i');
+      query.$or = [
+        { serial_number: rx },
+        { uniqueId: rx }
+      ];
     }
 
     const assets = await Asset.find(query)
-      .select('name model_number serial_number description')
+      .select('name model_number serial_number uniqueId manufacturer store')
+      .populate('store', 'name')
       .limit(20)
       .lean();
       
@@ -1722,6 +1929,7 @@ router.get('/template', async (req, res) => {
       'Model Number',
       'Quantity',
       'Serial Number',
+      'Unique ID',
       'MAC Address',
       'Manufacturer',
       'Ticket Number',
@@ -1740,6 +1948,10 @@ router.get('/template', async (req, res) => {
       'Expo Tag',
       'ABS Code',
       'Product Number',
+      'Operating System',
+      'Specification',
+      'Service Tag',
+      'Assign To Department',
       'IP Address',
       'Building',
       'State Comments',
@@ -1763,6 +1975,7 @@ router.get('/template', async (req, res) => {
       'MEC-1200',
       '1',
       '1584632152',
+      'AST-88421',
       '',
       'SIEMENS',
       'TKT-1001',
@@ -1781,6 +1994,10 @@ router.get('/template', async (req, res) => {
       'EXPO-001',
       'ABS-99',
       'PN-12345',
+      'Windows 11 Pro',
+      '16GB RAM / 512GB SSD',
+      'ST-88421',
+      'IT Operations',
       '10.0.10.42',
       'Block A',
       'Rack and power state verified',
@@ -1813,6 +2030,7 @@ router.post('/', protect, restrictViewer, async (req, res) => {
     name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
     ticket_number, po_number, product_name, rfid, qr_code, quantity, vendor_name, price,
     device_group, inbound_from, outbound_to, expo_tag, abs_code, product_number,
+    operating_system, specification, service_tag, assign_to_department,
     ip_address, building, state_comments, remarks, comments
   } = req.body;
   try {
@@ -1883,6 +2101,10 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       expo_tag: String(expo_tag || '').trim(),
       abs_code: String(abs_code || '').trim(),
       product_number: String(product_number || '').trim(),
+      operating_system: String(operating_system || '').trim(),
+      specification: String(specification || '').trim(),
+      service_tag: String(service_tag || '').trim(),
+      assign_to_department: String(assign_to_department || '').trim(),
       ip_address: String(ip_address || '').trim(),
       building: capitalizeWords(building || ''),
       state_comments: String(state_comments || '').trim(),
@@ -1998,6 +2220,12 @@ router.post('/bulk-update', protect, admin, async (req, res) => {
     if (updates.expo_tag !== undefined) data.expo_tag = String(updates.expo_tag || '').trim();
     if (updates.abs_code !== undefined) data.abs_code = String(updates.abs_code || '').trim();
     if (updates.product_number !== undefined) data.product_number = String(updates.product_number || '').trim();
+    if (updates.operating_system !== undefined) data.operating_system = String(updates.operating_system || '').trim();
+    if (updates.specification !== undefined) data.specification = String(updates.specification || '').trim();
+    if (updates.service_tag !== undefined) data.service_tag = String(updates.service_tag || '').trim();
+    if (updates.assign_to_department !== undefined) {
+      data.assign_to_department = String(updates.assign_to_department || '').trim();
+    }
     if (updates.ip_address !== undefined) data.ip_address = String(updates.ip_address || '').trim();
     if (updates.building !== undefined) data.building = capitalizeWords(updates.building || '');
     if (updates.state_comments !== undefined) data.state_comments = String(updates.state_comments || '').trim();
@@ -2296,6 +2524,15 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       const expoTagRow = norm['expo tag'] || norm['expo_tag'] || '';
       const absCodeRow = norm['abs code'] || norm['abs_code'] || '';
       const productNumberRow = norm['product number'] || norm['product_number'] || '';
+      const operatingSystemRow = norm['operating system'] || norm['operating_system'] || '';
+      const specificationRow = norm['specification'] || norm['spec'] || '';
+      const serviceTagRow = norm['service tag'] || norm['service_tag'] || '';
+      const assignDeptRow =
+        norm['assign to department']
+        || norm['assign_to_department']
+        || norm['assign to depratment']
+        || norm['assign_to_depratment']
+        || '';
       const ipAddressFromRow = norm['ip address'] || norm['ip_address'] || '';
       const buildingFromRow = norm['building'] || '';
       const stateCommentsFromRow = norm['state comments'] || norm['state_comments'] || '';
@@ -2336,6 +2573,10 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         expo_tag: String(expoTagRow || '').trim(),
         abs_code: String(absCodeRow || '').trim(),
         product_number: String(productNumberRow || '').trim(),
+        operating_system: String(operatingSystemRow || '').trim(),
+        specification: String(specificationRow || '').trim(),
+        service_tag: String(serviceTagRow || '').trim(),
+        assign_to_department: String(assignDeptRow || '').trim(),
         ip_address: String(ipAddressFromRow || '').trim(),
         building: capitalizeWords(buildingFromRow || ''),
         state_comments: String(stateCommentsFromRow || '').trim(),
@@ -2412,7 +2653,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         const raw = worksheetToAoa(ws, { defval: '', blankrows: false });
         if (Array.isArray(raw) && raw.length > 0) {
           // Find header row dynamically (matches at least one known header)
-          const KNOWN = ['product name','name','model number','serial number','mac address','manufacturer','ticket number','rfid','qr code','store','store location','location','status','condition','asset type','maintenance vendor','device group','inbound from','outbound to','expo tag','abs code','product number','ip address','building','state comments','remarks','comments'];
+          const KNOWN = ['product name','name','model number','serial number','unique id','unique_id','mac address','manufacturer','ticket number','rfid','qr code','store','store location','location','status','condition','asset type','maintenance vendor','device group','inbound from','outbound to','expo tag','abs code','product number','operating system','specification','service tag','assign to department','assign to depratment','ip address','building','state comments','remarks','comments'];
           let headerIdx = -1;
           for (let i = 0; i < raw.length; i++) {
             const row = raw[i] || [];
@@ -2597,6 +2838,15 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       const expoTagRow = norm['expo tag'] || norm['expo_tag'] || '';
       const absCodeRow = norm['abs code'] || norm['abs_code'] || '';
       const productNumberRow = norm['product number'] || norm['product_number'] || '';
+      const operatingSystemRow = norm['operating system'] || norm['operating_system'] || '';
+      const specificationRow = norm['specification'] || norm['spec'] || '';
+      const serviceTagRow = norm['service tag'] || norm['service_tag'] || '';
+      const assignDeptRow =
+        norm['assign to department']
+        || norm['assign_to_department']
+        || norm['assign to depratment']
+        || norm['assign_to_depratment']
+        || '';
       const ipAddressFromRow = norm['ip address'] || norm['ip_address'] || '';
       const buildingFromRow = norm['building'] || '';
       const stateCommentsFromRow = norm['state comments'] || norm['state_comments'] || '';
@@ -2685,6 +2935,10 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
           expo_tag: String(expoTagRow || '').trim(),
           abs_code: String(absCodeRow || '').trim(),
           product_number: String(productNumberRow || '').trim(),
+          operating_system: String(operatingSystemRow || '').trim(),
+          specification: String(specificationRow || '').trim(),
+          service_tag: String(serviceTagRow || '').trim(),
+          assign_to_department: String(assignDeptRow || '').trim(),
           ip_address: String(ipAddressFromRow || '').trim(),
           building: String(buildingFromRow || '').toUpperCase(),
           state_comments: String(stateCommentsFromRow || '').trim(),
@@ -2725,7 +2979,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       const chunk = queryPairs.slice(i, i + CHUNK);
       // eslint-disable-next-line no-await-in-loop
       const existing = await Asset.find({ $or: chunk })
-        .select('store serial_number name model_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code status condition product_name source location vendor_name delivered_by_name device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments delivered_at quantity price customFields')
+        .select('store serial_number name model_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code status condition product_name source location vendor_name delivered_by_name device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments delivered_at quantity price customFields')
         .lean();
       existing.forEach((doc) => {
         const pairKey = `${String(doc.store)}::${String(doc.serial_number || '').trim().toLowerCase()}`;
@@ -2775,6 +3029,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
           'name', 'model_number', 'mac_address', 'manufacturer', 'ticket_number', 'po_number', 'rfid', 'qr_code',
           'status', 'condition', 'product_name', 'source', 'location', 'vendor_name', 'delivered_by_name',
           'device_group', 'inbound_from', 'outbound_to', 'expo_tag', 'abs_code', 'product_number',
+          'operating_system', 'specification', 'service_tag', 'assign_to_department',
           'ip_address', 'building', 'state_comments', 'remarks', 'comments',
           'quantity', 'price'
         ];
@@ -3000,6 +3255,7 @@ router.get('/export', protect, admin, async (req, res) => {
       'Model Number',
       'Quantity',
       'Serial Number',
+      'Unique ID',
       'MAC Address',
       'Manufacturer',
       'Ticket Number',
@@ -3019,6 +3275,10 @@ router.get('/export', protect, admin, async (req, res) => {
       'Expo Tag',
       'ABS Code',
       'Product Number',
+      'Operating System',
+      'Specification',
+      'Service Tag',
+      'Assign To Department',
       'IP Address',
       'Building',
       'State Comments',
@@ -3037,6 +3297,7 @@ router.get('/export', protect, admin, async (req, res) => {
         a.model_number || '',
         a.quantity ?? '',
         a.serial_number || '',
+        a.uniqueId || '',
         a.mac_address || '',
         a.manufacturer || '',
         a.ticket_number || '',
@@ -3056,6 +3317,10 @@ router.get('/export', protect, admin, async (req, res) => {
         a.expo_tag || '',
         a.abs_code || '',
         a.product_number || '',
+        a.operating_system || '',
+        a.specification || '',
+        a.service_tag || '',
+        a.assign_to_department || '',
         a.ip_address || '',
         a.building || '',
         a.state_comments || '',
@@ -3083,13 +3348,14 @@ router.get('/export', protect, admin, async (req, res) => {
     const wsMain = wb.addWorksheet('ASSETS');
     wsMain.addRows([headerMain, ...rowsMain]);
     wsMain.columns = [
-      { width: 16 }, { width: 16 }, { width: 22 }, { width: 18 }, { width: 12 }, { width: 16 },
+      { width: 16 }, { width: 16 }, { width: 22 }, { width: 18 }, { width: 12 }, { width: 16 }, { width: 14 },
       { width: 16 }, { width: 16 }, { width: 16 }, { width: 12 }, { width: 16 }, { width: 12 },
       { width: 12 }, { width: 12 }, { width: 18 }, { width: 12 }, { width: 16 }, { width: 20 },
-      { width: 16 }, { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
-      { width: 16 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }
+      { width: 16 }, { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 14 },
+      { width: 14 }, { width: 18 }, { width: 20 }, { width: 14 }, { width: 20 }, { width: 16 },
+      { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }
     ];
-    wsMain.autoFilter = 'A1:AF1';
+    wsMain.autoFilter = 'A1:AK1';
 
     const wsHist = wb.addWorksheet('HISTORY');
     wsHist.addRows([headerHistory, ...rowsHistory]);
@@ -3120,6 +3386,7 @@ router.get('/import-template', protect, admin, async (req, res) => {
         'Model Number': '',
         'Quantity': '',
         'Serial Number': '',
+        'Unique ID': '',
         'MAC Address': '',
         'Manufacturer': '',
         'Ticket Number': '',
@@ -3138,6 +3405,10 @@ router.get('/import-template', protect, admin, async (req, res) => {
         'Expo Tag': '',
         'ABS Code': '',
         'Product Number': '',
+        'Operating System': '',
+        'Specification': '',
+        'Service Tag': '',
+        'Assign To Department': '',
         'IP Address': '',
         'Building': '',
         'State Comments': '',
@@ -3599,7 +3870,7 @@ router.post('/reserve', protect, admin, async (req, res) => {
     }
 
     const refreshed = await Asset.find({ _id: { $in: normalizedIds } })
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate('store', 'name parentStore')
       .populate('assigned_to', 'name email');
 
@@ -3665,7 +3936,7 @@ router.post('/unreserve', protect, admin, async (req, res) => {
     }
 
     const refreshed = await Asset.find({ _id: { $in: normalizedIds } })
-      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
+      .select('name model_number serial_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code uniqueId store location status previous_status condition product_name assigned_to assigned_to_external return_pending return_request reserved reserved_at reserved_by reservation_note source vendor_name delivered_by_name delivered_at device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments disposed disposed_at disposed_by disposal_reason quantity price customFields history createdAt updatedAt')
       .populate('store', 'name parentStore')
       .populate('assigned_to', 'name email');
 
@@ -4733,6 +5004,7 @@ router.put('/:id', protect, admin, async (req, res) => {
     name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
     ticket_number, po_number, product_name, rfid, qr_code, vendor_name, delivered_by_name, price, quantity, customFields,
     device_group, inbound_from, outbound_to, expo_tag, abs_code, product_number,
+    operating_system, specification, service_tag, assign_to_department,
     ip_address, building, state_comments, remarks, comments, disposed, reserved
   } = req.body;
   try {
@@ -4776,6 +5048,10 @@ router.put('/:id', protect, admin, async (req, res) => {
       if (expo_tag !== undefined) asset.expo_tag = String(expo_tag || '').trim();
       if (abs_code !== undefined) asset.abs_code = String(abs_code || '').trim();
       if (product_number !== undefined) asset.product_number = String(product_number || '').trim();
+      if (operating_system !== undefined) asset.operating_system = String(operating_system || '').trim();
+      if (specification !== undefined) asset.specification = String(specification || '').trim();
+      if (service_tag !== undefined) asset.service_tag = String(service_tag || '').trim();
+      if (assign_to_department !== undefined) asset.assign_to_department = String(assign_to_department || '').trim();
       if (ip_address !== undefined) asset.ip_address = String(ip_address || '').trim();
       if (building !== undefined) asset.building = capitalizeWords(building || '');
       if (state_comments !== undefined) asset.state_comments = String(state_comments || '').trim();

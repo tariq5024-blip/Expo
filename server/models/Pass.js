@@ -36,6 +36,7 @@ const passSchema = new mongoose.Schema({
     name: String, // Product
     model: String, // Model
     serial_number: String,
+    unique_id: String, // Asset unique ID (e.g. EXPO tag id)
     brand: String, // Asset Brand
     asset_model: String, // Asset Model
     location: String,
@@ -68,11 +69,13 @@ const passSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Text index for search
-passSchema.index({ 
-  pass_number: 'text', 
+// Text index for search (API also uses regex on serial / unique_id for substring matches)
+passSchema.index({
+  pass_number: 'text',
   'issued_to.name': 'text',
-  'issued_to.company': 'text' 
+  'issued_to.company': 'text',
+  'assets.serial_number': 'text',
+  'assets.unique_id': 'text'
 });
 
 module.exports = mongoose.model('Pass', passSchema);

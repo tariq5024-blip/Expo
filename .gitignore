@@ -44,3 +44,9 @@ backups/
 
 # Generated backup artifacts
 server/storage/immutable-backups/
+
+# Local runtime state (do not commit)
+server/storage/runtime/
+server/storage/oplog-archive/
+server/storage/tmp/
+server/storage/tmp-backups/

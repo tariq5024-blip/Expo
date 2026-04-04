@@ -157,7 +157,7 @@ router.get('/stats', protect, async (req, res) => {
         const minQty = Math.max(toNumber(row?.min_quantity, 0), 0);
         return minQty > 0 && qty <= minQty;
       })
-      .slice(0, 5);
+      .slice(0, 25);
 
     res.json({
       totalQuantity: stats.totalQuantity || 0,

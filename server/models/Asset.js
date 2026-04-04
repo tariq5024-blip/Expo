@@ -139,6 +139,26 @@ const assetSchema = new mongoose.Schema({
     default: '',
     index: true
   },
+  operating_system: {
+    type: String,
+    default: '',
+    index: true
+  },
+  specification: {
+    type: String,
+    default: '',
+    index: true
+  },
+  service_tag: {
+    type: String,
+    default: '',
+    index: true
+  },
+  assign_to_department: {
+    type: String,
+    default: '',
+    index: true
+  },
   ip_address: {
     type: String,
     default: '',

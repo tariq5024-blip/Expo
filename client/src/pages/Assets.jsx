@@ -72,6 +72,10 @@ const DEFAULT_COLUMN_DEFS = [
   { id: 'name', label: 'Name', key: 'name', visible: true, builtin: true },
   { id: 'model', label: 'Model Number', key: 'model_number', visible: true, builtin: true },
   { id: 'productNumber', label: 'Product Number', key: 'product_number', visible: true, builtin: true },
+  { id: 'operatingSystem', label: 'Operating System', key: 'operating_system', visible: true, builtin: true },
+  { id: 'specification', label: 'Specification', key: 'specification', visible: true, builtin: true },
+  { id: 'serviceTag', label: 'Service Tag', key: 'service_tag', visible: true, builtin: true },
+  { id: 'assignToDepartment', label: 'Assign To Department', key: 'assign_to_department', visible: true, builtin: true },
   { id: 'serial', label: 'Serial Number', key: 'serial_number', visible: true, builtin: true },
   { id: 'serialLast4', label: 'Serial Last 4', key: 'serial_last_4', visible: true, builtin: true },
   { id: 'ticket', label: 'Ticket', key: 'ticket_number', visible: true, builtin: true },
@@ -111,6 +115,10 @@ const REQUIRED_ASSET_COLUMN_IDS = new Set([
   'expoTag',
   'absCode',
   'productNumber',
+  'operatingSystem',
+  'specification',
+  'serviceTag',
+  'assignToDepartment',
   'deviceGroup',
   'inboundFrom',
   'outboundTo',
@@ -133,6 +141,10 @@ const KNOWN_EDIT_KEYS = new Set([
   'expo_tag',
   'abs_code',
   'product_number',
+  'operating_system',
+  'specification',
+  'service_tag',
+  'assign_to_department',
   'ip_address',
   'building',
   'state_comments',
@@ -230,6 +242,10 @@ const Assets = () => {
     expo_tag: '',
     abs_code: '',
     product_number: '',
+    operating_system: '',
+    specification: '',
+    service_tag: '',
+    assign_to_department: '',
     ip_address: '',
     building: '',
     state_comments: '',
@@ -458,6 +474,7 @@ const Assets = () => {
       'Model Number',
       'Quantity',
       'Serial Number',
+      'Unique ID',
       'MAC Address',
       'Manufacturer',
       'Ticket Number',
@@ -477,6 +494,10 @@ const Assets = () => {
       'Expo Tag',
       'ABS Code',
       'Product Number',
+      'Operating System',
+      'Specification',
+      'Service Tag',
+      'Assign To Department',
       'IP Address',
       'Building',
       'State Comments',
@@ -509,6 +530,8 @@ const Assets = () => {
               return a.quantity ?? '';
             case 'Serial Number':
               return a.serial_number || '';
+            case 'Unique ID':
+              return a.uniqueId || '';
             case 'MAC Address':
               return a.mac_address || '';
             case 'Manufacturer':
@@ -547,6 +570,20 @@ const Assets = () => {
               return pickAssetField(a, ['abs_code', 'absCode', 'abs code']);
             case 'Product Number':
               return pickAssetField(a, ['product_number', 'productNumber', 'product number']);
+            case 'Operating System':
+              return pickAssetField(a, ['operating_system', 'operatingSystem', 'operating system']);
+            case 'Specification':
+              return pickAssetField(a, ['specification', 'spec']);
+            case 'Service Tag':
+              return pickAssetField(a, ['service_tag', 'serviceTag', 'service tag']);
+            case 'Assign To Department':
+              return pickAssetField(a, [
+                'assign_to_department',
+                'assignToDepartment',
+                'assign to department',
+                'assign to depratment',
+                'assign_to_depratment'
+              ]);
             case 'IP Address':
               return a.ip_address || '';
             case 'Building':
@@ -637,6 +674,10 @@ const Assets = () => {
     expo_tag: '',
     abs_code: '',
     product_number: '',
+    operating_system: '',
+    specification: '',
+    service_tag: '',
+    assign_to_department: '',
     ip_address: '',
     building: '',
     state_comments: '',
@@ -667,6 +708,10 @@ const Assets = () => {
     expo_tag: '',
     abs_code: '',
     product_number: '',
+    operating_system: '',
+    specification: '',
+    service_tag: '',
+    assign_to_department: '',
     ip_address: '',
     building: '',
     state_comments: '',
@@ -765,6 +810,10 @@ const Assets = () => {
         expoTag: true,
         absCode: true,
         productNumber: true,
+        operatingSystem: true,
+        specification: true,
+        serviceTag: true,
+        assignToDepartment: true,
         ipAddress: true,
         building: true,
         stateComments: true,
@@ -813,7 +862,7 @@ const Assets = () => {
           });
         });
 
-        const safeColumns = nextColumns.length > 0 ? nextColumns : [...DEFAULT_COLUMN_DEFS];
+        let safeColumns = nextColumns.length > 0 ? nextColumns : [...DEFAULT_COLUMN_DEFS];
         const hasMaintenanceVendorColumn = safeColumns.some((column) => {
           const key = String(column?.key || '').toLowerCase();
           const label = String(column?.label || '').toLowerCase();
@@ -826,12 +875,28 @@ const Assets = () => {
         if (!hasMaintenanceVendorColumn) {
           safeColumns.push({ id: 'maintenanceVendor', label: 'Maintenance Vendor', key: 'maintenance_vendor', visible: true, builtin: true });
         }
+        const columnById = new Map(safeColumns.map((c) => [String(c.id), c]));
         DEFAULT_COLUMN_DEFS.forEach((builtinColumn) => {
-          if (!REQUIRED_ASSET_COLUMN_IDS.has(builtinColumn.id)) return;
-          if (!safeColumns.some((column) => String(column.id) === String(builtinColumn.id))) {
-            safeColumns.push({ ...builtinColumn, visible: true, builtin: true });
+          const id = String(builtinColumn.id);
+          if (!columnById.has(id)) {
+            const added = { ...builtinColumn, visible: true, builtin: true };
+            safeColumns.push(added);
+            columnById.set(id, added);
           }
         });
+        const ordered = [];
+        const usedIds = new Set();
+        DEFAULT_COLUMN_ORDER.forEach((id) => {
+          const col = columnById.get(String(id));
+          if (col) {
+            ordered.push(col);
+            usedIds.add(String(id));
+          }
+        });
+        safeColumns.forEach((col) => {
+          if (!usedIds.has(String(col.id))) ordered.push(col);
+        });
+        safeColumns = ordered;
         const nextOrder = safeColumns.map((column) => column.id);
         const nextVisible = Object.fromEntries(safeColumns.map((column) => [column.id, column.visible !== false]));
         const maintenanceColumnId = safeColumns.find((column) => {
@@ -1069,7 +1134,6 @@ const Assets = () => {
     filterReserved,
     filterDisposed,
     filterDuplicate,
-    isScyStoreContext,
     filterModelNumber,
     filterSerialNumber,
     filterMacAddress,
@@ -1201,6 +1265,7 @@ const Assets = () => {
         'Model Number',
         'Quantity',
         'Serial Number',
+        'Unique ID',
         'MAC Address',
         'Manufacturer',
         'Ticket Number',
@@ -1219,6 +1284,10 @@ const Assets = () => {
         'Expo Tag',
         'ABS Code',
         'Product Number',
+        'Operating System',
+        'Specification',
+        'Service Tag',
+        'Assign To Department',
         'IP Address',
         'Building',
         'State Comments',
@@ -1234,6 +1303,7 @@ const Assets = () => {
         'MEC-1200',
         1,
         '1584632152',
+        'AST-88421',
         '',
         'SIEMENS',
         'TKT-1001',
@@ -1252,6 +1322,10 @@ const Assets = () => {
         'EXPO-001',
         'ABS-99',
         'PN-12345',
+        'Windows 11 Pro',
+        '16GB RAM / 512GB SSD',
+        'ST-88421',
+        'IT Operations',
         '10.0.10.42',
         'Block A',
         'Rack and power state verified',
@@ -1298,6 +1372,16 @@ const Assets = () => {
       expo_tag: pickAssetField(assetToEdit, ['expo_tag', 'expoTag', 'expo tag']),
       abs_code: pickAssetField(assetToEdit, ['abs_code', 'absCode', 'abs code']),
       product_number: pickAssetField(assetToEdit, ['product_number', 'productNumber', 'product number']),
+      operating_system: pickAssetField(assetToEdit, ['operating_system', 'operatingSystem', 'operating system']),
+      specification: pickAssetField(assetToEdit, ['specification', 'spec']),
+      service_tag: pickAssetField(assetToEdit, ['service_tag', 'serviceTag', 'service tag']),
+      assign_to_department: pickAssetField(assetToEdit, [
+        'assign_to_department',
+        'assignToDepartment',
+        'assign to department',
+        'assign to depratment',
+        'assign_to_depratment'
+      ]),
       ip_address: assetToEdit.ip_address || '',
       building: assetToEdit.building || '',
       state_comments: assetToEdit.state_comments || '',
@@ -1338,7 +1422,7 @@ const Assets = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    const normalized = ['status', 'condition', 'store', 'location', 'quantity', 'price', 'expo_tag', 'abs_code', 'product_number'].includes(name)
+    const normalized = ['status', 'condition', 'store', 'location', 'quantity', 'price', 'expo_tag', 'abs_code', 'product_number', 'operating_system', 'specification', 'service_tag', 'assign_to_department'].includes(name)
       ? value
       : (typeof value === 'string' ? value.toUpperCase() : value);
     setFormData({ ...formData, [name]: normalized });
@@ -1499,7 +1583,7 @@ const Assets = () => {
   
   const handleAddChange = (e) => {
     const { name, value } = e.target;
-    const normalized = ['status', 'condition', 'store', 'location', 'expo_tag', 'abs_code', 'product_number'].includes(name)
+    const normalized = ['status', 'condition', 'store', 'location', 'expo_tag', 'abs_code', 'product_number', 'operating_system', 'specification', 'service_tag', 'assign_to_department'].includes(name)
       ? value
       : (typeof value === 'string' ? value.toUpperCase() : value);
     setAddForm({ ...addForm, [name]: normalized });
@@ -1547,6 +1631,10 @@ const Assets = () => {
         expo_tag: '',
         abs_code: '',
         product_number: '',
+        operating_system: '',
+        specification: '',
+        service_tag: '',
+        assign_to_department: '',
         ip_address: '',
         building: '',
         state_comments: '',
@@ -1575,10 +1663,6 @@ const Assets = () => {
   };
 
   const handleAssignClick = (asset, ids = [asset?._id]) => {
-    const idList = (ids || []).filter(Boolean);
-    const resolved = idList
-      .map((id) => assets.find((a) => String(a._id) === String(id)))
-      .filter(Boolean);
     setAssigningAsset(asset);
     setAssigningAssetIds((ids || []).filter(Boolean));
     setAssignForm({
@@ -1781,6 +1865,10 @@ const Assets = () => {
       if (bulkForm.expo_tag) updates.expo_tag = bulkForm.expo_tag;
       if (bulkForm.abs_code) updates.abs_code = bulkForm.abs_code;
       if (bulkForm.product_number) updates.product_number = bulkForm.product_number;
+      if (bulkForm.operating_system) updates.operating_system = bulkForm.operating_system;
+      if (bulkForm.specification) updates.specification = bulkForm.specification;
+      if (bulkForm.service_tag) updates.service_tag = bulkForm.service_tag;
+      if (bulkForm.assign_to_department) updates.assign_to_department = bulkForm.assign_to_department;
       if (bulkForm.ip_address) updates.ip_address = bulkForm.ip_address;
       if (bulkForm.building) updates.building = bulkForm.building;
       if (bulkForm.state_comments) updates.state_comments = bulkForm.state_comments;
@@ -1907,7 +1995,7 @@ const Assets = () => {
       } else {
         fetchAssets(); // Directly fetch if already on page 1
       }
-    }, 500);
+    }, 200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showRecentUploads, searchTerm, filterLocation, filterStatus, filterCondition, filterManufacturer, filterMaintenanceVendor, filterReserved, filterDisposed, filterDuplicate, isScyStoreContext, filterModelNumber, filterSerialNumber, filterMacAddress, filterProductName, filterTicket, filterRfid, filterQr, filterDateFrom, filterDateTo]);
@@ -1960,6 +2048,10 @@ const Assets = () => {
     name: { label: 'Name', thClass: '', tdClass: 'text-sm' },
     model: { label: 'Model', thClass: 'hidden md:table-cell', tdClass: 'hidden md:table-cell text-sm' },
     productNumber: { label: 'Product Number', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-xs' },
+    operatingSystem: { label: 'Operating System', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    specification: { label: 'Specification', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    serviceTag: { label: 'Service Tag', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
+    assignToDepartment: { label: 'Assign To Department', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
     serial: { label: 'Serial', thClass: '', tdClass: 'text-sm' },
     serialLast4: { label: 'Serial Last 4', thClass: 'hidden xl:table-cell', tdClass: 'hidden xl:table-cell text-xs' },
     ticket: { label: 'Ticket', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-sm' },
@@ -2116,6 +2208,18 @@ const Assets = () => {
     if (key === 'name') value = asset.name || '-';
     if (key === 'model') value = asset.model_number || '-';
     if (key === 'productNumber') value = getValueByAliases(asset, ['product_number', 'productNumber', 'product number']);
+    if (key === 'operatingSystem') value = getValueByAliases(asset, ['operating_system', 'operatingSystem', 'operating system']);
+    if (key === 'specification') value = getValueByAliases(asset, ['specification', 'spec']);
+    if (key === 'serviceTag') value = getValueByAliases(asset, ['service_tag', 'serviceTag', 'service tag']);
+    if (key === 'assignToDepartment') {
+      value = getValueByAliases(asset, [
+        'assign_to_department',
+        'assignToDepartment',
+        'assign to department',
+        'assign to depratment',
+        'assign_to_depratment'
+      ]);
+    }
     if (key === 'serial') value = asset.serial_number || '-';
     if (key === 'serialLast4') value = asset.serial_last_4 || '-';
     if (key === 'ticket') value = asset.ticket_number || '-';
@@ -2495,8 +2599,8 @@ const Assets = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-center">
           <input
             type="text"
-            placeholder="Search: type e, x, ex… — rows filter + every match is highlighted"
-            title="Not exact-match: any field may contain your text (case ignored). Each letter or substring is highlighted everywhere it appears in the table (e → all e’s, ex → all ex’s)."
+            placeholder="Search tags, serials, IDs, OS, spec, dept, vendor, store, assignee, history, custom fields…"
+            title="Substring search (case ignored) across asset fields, effective maintenance vendor, all custom field values, activity history, external assignee, return/disposal/import metadata, matching technician (User) and store names. r, re, res… also includes Reserved rows. Highlights follow visible columns."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="h-10 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
@@ -3486,6 +3590,22 @@ const Assets = () => {
                 <input type="text" name="product_number" value={formData.product_number || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700">Operating System</label>
+                <input type="text" name="operating_system" value={formData.operating_system || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Specification</label>
+                <input type="text" name="specification" value={formData.specification || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Service Tag</label>
+                <input type="text" name="service_tag" value={formData.service_tag || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Assign To Department</label>
+                <input type="text" name="assign_to_department" value={formData.assign_to_department || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700">IP Address</label>
                 <input type="text" name="ip_address" value={formData.ip_address || ''} onChange={handleInputChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
@@ -3906,6 +4026,22 @@ const Assets = () => {
                 <input type="text" name="product_number" value={addForm.product_number || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700">Operating System</label>
+                <input type="text" name="operating_system" value={addForm.operating_system || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Specification</label>
+                <input type="text" name="specification" value={addForm.specification || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Service Tag</label>
+                <input type="text" name="service_tag" value={addForm.service_tag || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Assign To Department</label>
+                <input type="text" name="assign_to_department" value={addForm.assign_to_department || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700">IP Address</label>
                 <input type="text" name="ip_address" value={addForm.ip_address || ''} onChange={handleAddChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
               </div>
@@ -4146,6 +4282,22 @@ const Assets = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Product Number (Optional)</label>
                 <input type="text" value={bulkForm.product_number || ''} onChange={(e) => setBulkForm({ ...bulkForm, product_number: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Operating System (Optional)</label>
+                <input type="text" value={bulkForm.operating_system || ''} onChange={(e) => setBulkForm({ ...bulkForm, operating_system: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Specification (Optional)</label>
+                <input type="text" value={bulkForm.specification || ''} onChange={(e) => setBulkForm({ ...bulkForm, specification: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Service Tag (Optional)</label>
+                <input type="text" value={bulkForm.service_tag || ''} onChange={(e) => setBulkForm({ ...bulkForm, service_tag: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Assign To Department (Optional)</label>
+                <input type="text" value={bulkForm.assign_to_department || ''} onChange={(e) => setBulkForm({ ...bulkForm, assign_to_department: e.target.value })} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" placeholder="No change" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">IP Address (Optional)</label>

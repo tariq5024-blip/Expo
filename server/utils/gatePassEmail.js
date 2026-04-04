@@ -32,7 +32,7 @@ const buildTechnicianGatePassEmailText = (pass) => {
     '',
     'Assets:',
     ...(Array.isArray(p.assets) ? p.assets : []).map((a, i) =>
-      `  ${i + 1}. Model: ${a.model || '—'} | Serial: ${a.serial_number || '—'} | Mfr: ${a.brand || '—'} | Status: ${a.status || '—'} | Remarks: ${a.remarks || '—'}`
+      `  ${i + 1}. Model: ${a.model || '—'} | Serial: ${a.serial_number || '—'} | Unique ID: ${a.unique_id || a.uniqueId || '—'} | Mfr: ${a.brand || '—'} | Status: ${a.status || '—'} | Remarks: ${a.remarks || '—'}`
     ),
     '',
     `Justification: ${p.justification || p.notes || '—'}`
@@ -49,6 +49,7 @@ const buildTechnicianGatePassEmailHtml = (pass, { appLink = '' } = {}) => {
           <td style="border:1px solid #64748b;padding:6px;text-align:center;">${i + 1}</td>
           <td style="border:1px solid #64748b;padding:6px;">${escEmailHtml(a.model)}</td>
           <td style="border:1px solid #64748b;padding:6px;font-family:monospace;">${escEmailHtml(a.serial_number)}</td>
+          <td style="border:1px solid #64748b;padding:6px;font-family:monospace;">${escEmailHtml(a.unique_id || a.uniqueId)}</td>
           <td style="border:1px solid #64748b;padding:6px;">${escEmailHtml(a.brand)}</td>
           <td style="border:1px solid #64748b;padding:6px;">${escEmailHtml(a.status)}</td>
           <td style="border:1px solid #64748b;padding:6px;">${escEmailHtml(a.remarks)}</td>
@@ -108,12 +109,13 @@ const buildTechnicianGatePassEmailHtml = (pass, { appLink = '' } = {}) => {
           <th style="border:1px solid #0f766e;padding:8px;">S.No</th>
           <th style="border:1px solid #0f766e;padding:8px;">Model</th>
           <th style="border:1px solid #0f766e;padding:8px;">Serial</th>
+          <th style="border:1px solid #0f766e;padding:8px;">Unique ID</th>
           <th style="border:1px solid #0f766e;padding:8px;">Manufacturer</th>
           <th style="border:1px solid #0f766e;padding:8px;">Status</th>
           <th style="border:1px solid #0f766e;padding:8px;">Remarks</th>
         </tr>
       </thead>
-      <tbody>${assetRows || '<tr><td colspan="6" style="border:1px solid #64748b;padding:8px;">—</td></tr>'}</tbody>
+      <tbody>${assetRows || '<tr><td colspan="7" style="border:1px solid #64748b;padding:8px;">—</td></tr>'}</tbody>
     </table>
     <p style="font-size:12px;margin:14px 0 0 0;border-top:1px solid #cbd5e1;padding-top:10px;"><b>JUSTIFICATION:</b> ${escEmailHtml(p.justification || p.notes)}</p>
     ${linkBlock}

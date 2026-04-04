@@ -29,20 +29,52 @@ const canAccessPass = async (req, passStoreId) => {
 router.get('/', protect, admin, async (req, res) => {
   try {
     const { type, search } = req.query;
-    let query = {};
-    
-    if (type) query.type = type;
-    if (search) {
-      query.$text = { $search: search };
+    const andClauses = [];
+
+    if (type) andClauses.push({ type });
+
+    const rawSearch = String(search || '').trim();
+    if (rawSearch) {
+      const escaped = rawSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(escaped, 'i');
+      andClauses.push({
+        $or: [
+          { pass_number: rx },
+          { file_no: rx },
+          { ticket_no: rx },
+          { type: rx },
+          { status: rx },
+          { approvalStatus: rx },
+          { requested_by: rx },
+          { provided_by: rx },
+          { collected_by: rx },
+          { approved_by: rx },
+          { origin: rx },
+          { destination: rx },
+          { justification: rx },
+          { notes: rx },
+          { 'issued_to.name': rx },
+          { 'issued_to.company': rx },
+          { 'issued_to.contact': rx },
+          { 'assets.serial_number': rx },
+          { 'assets.unique_id': rx },
+          { 'assets.name': rx },
+          { 'assets.model': rx },
+          { 'assets.brand': rx }
+        ]
+      });
     }
+
     if (req.user?.role !== 'Super Admin') {
       const scopedStoreId = getScopedStoreId(req);
       if (!scopedStoreId) {
         return res.status(403).json({ message: 'Store context is required to view passes' });
       }
       const storeIds = await getStoreIds(scopedStoreId);
-      query.store = { $in: storeIds };
+      andClauses.push({ store: { $in: storeIds } });
     }
+
+    const query = andClauses.length === 0 ? {} : andClauses.length === 1 ? andClauses[0] : { $and: andClauses };
 
     const passes = await Pass.find(query)
       .populate('issued_by', 'name email')

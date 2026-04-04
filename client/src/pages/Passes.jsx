@@ -46,11 +46,24 @@ const highlightSearchInText = (text, query) => {
   return nodes;
 };
 
+function passAssetIdSummary(pass) {
+  const rows = Array.isArray(pass?.assets) ? pass.assets : [];
+  return rows
+    .map((a) => {
+      const uid = String(a?.unique_id || a?.uniqueId || a?.asset?.uniqueId || '').trim();
+      const sn = String(a?.serial_number || a?.asset?.serial_number || '').trim();
+      if (sn && uid) return `${sn} (${uid})`;
+      return sn || uid || '';
+    })
+    .filter(Boolean)
+    .join('; ');
+}
+
 function passMatchesSearch(pass, qRaw) {
   const q = String(qRaw || '').trim().toLowerCase();
   if (!q) return true;
   const approvalLabel = pass.approvalStatus === 'pending' ? 'pending' : 'approved';
-  const hay = [
+  const hayParts = [
     pass.file_no,
     pass.pass_number,
     pass.type,
@@ -63,10 +76,22 @@ function passMatchesSearch(pass, qRaw) {
     pass.origin,
     pass.destination,
     pass.ticket_no,
-    pass.createdAt && new Date(pass.createdAt).toLocaleDateString()
-  ]
-    .map((p) => String(p || '').toLowerCase())
-    .join(' ');
+    pass.createdAt && new Date(pass.createdAt).toLocaleDateString(),
+    passAssetIdSummary(pass)
+  ];
+  (pass.assets || []).forEach((row) => {
+    hayParts.push(
+      row.serial_number,
+      row.unique_id,
+      row.uniqueId,
+      row.name,
+      row.model,
+      row.brand,
+      row.asset?.serial_number,
+      row.asset?.uniqueId
+    );
+  });
+  const hay = hayParts.map((p) => String(p || '').toLowerCase()).join(' ');
   return hay.includes(q);
 }
 
@@ -145,6 +170,7 @@ const PassReferenceQr = ({ pass }) => {
       `From: ${pass?.origin || '-'}`,
       `To: ${pass?.destination || '-'}`,
       `Requested By: ${pass?.requested_by || pass?.issued_to?.name || '-'}`,
+      `Assets: ${passAssetIdSummary(pass) || '—'}`,
       `Created: ${pass?.createdAt || ''}`
     ].join('\n');
 
@@ -199,10 +225,16 @@ const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
 
   return (
     <div className="print-template-hidden" style={{ position: 'absolute', top: '-10000px', left: '-10000px' }}>
-      <div ref={refInstance} className="bg-white text-black font-sans pass-print-root">
+      <div ref={refInstance} className="bg-white text-black font-sans pass-print-root text-[11px] leading-snug">
         <div
-          className="mx-auto border-2 border-slate-700 relative pass-print-sheet"
-          style={{ width: '297mm', padding: '10mm' }}
+          className="mx-auto relative pass-print-sheet border-2 border-slate-800 shadow-sm"
+          style={{
+            width: '297mm',
+            minHeight: '210mm',
+            maxWidth: '297mm',
+            padding: '8mm 10mm',
+            boxSizing: 'border-box'
+          }}
         >
           <img
             src={gatePassLogoUrl || '/gatepass-logo.svg'}
@@ -211,20 +243,15 @@ const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
             style={{ width: '105mm', opacity: 0.05, top: '50%', left: '50%', transform: 'translate(-50%, -45%)' }}
           />
           {/* Header */}
-          <div className="grid grid-cols-3 items-center mb-3 pb-2 border-b border-slate-300">
+          <div className="grid grid-cols-3 items-center mb-3 pb-3 border-b-2 border-slate-200">
             <div className="flex items-center gap-2">
               <PassReferenceQr pass={pass} />
             </div>
-            <div className="text-center font-black text-2xl tracking-[0.07em] text-[#0b3a53]">
-              GATE PASS EXPO CITY DUBAI
+            <div className="text-center font-black text-[22px] tracking-[0.12em] text-[#0b3a53] uppercase">
+              Gate Pass — Expo City Dubai
             </div>
             <div className="flex items-center justify-end gap-2">
-              <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="Expo City Dubai" className="w-14 h-14 object-contain" />
-              <div className="text-left">
-                <div className="text-base font-bold text-gray-900 leading-none tracking-wide">EXPO</div>
-                <div className="text-base font-bold text-gray-900 leading-none tracking-wide">CITY</div>
-                <div className="text-base font-bold text-gray-900 leading-none tracking-wide">DUBAI</div>
-              </div>
+              <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="" className="w-14 h-14 object-contain" />
             </div>
           </div>
 
@@ -286,26 +313,30 @@ const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
           </div>
 
           {/* Assets Table */}
-          <table className="w-full border-collapse border border-slate-700 text-center mb-5 text-[10px] pass-print-table">
-            <thead className="bg-[#005f73] text-white">
+          <table className="w-full border-collapse border border-slate-800 text-center mb-4 text-[9px] pass-print-table">
+            <thead className="bg-[#0b3a53] text-white">
               <tr>
-                <th className="border border-slate-700 p-2 font-bold w-10">S.No</th>
-                <th className="border border-slate-700 p-2 font-bold">Model Number</th>
-                <th className="border border-slate-700 p-2 font-bold">Serial Number</th>
-                <th className="border border-slate-700 p-2 font-bold">Manufacturer</th>
-                <th className="border border-slate-700 p-2 font-bold">Status</th>
-                <th className="border border-slate-700 p-2 font-bold">Remarks</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold w-8">#</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold">Model</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold">Serial Number</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold">Unique ID</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold">Manufacturer</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold">Status</th>
+                <th className="border border-slate-800 px-1 py-2 font-bold">Remarks</th>
               </tr>
             </thead>
             <tbody>
               {(pass.assets || []).map((item, i) => (
-                <tr key={i} className="text-black">
-                  <td className="border border-slate-700 p-1.5">{i + 1}</td>
-                  <td className="border border-slate-700 p-1.5">{item.model || '-'}</td>
-                  <td className="border border-slate-700 p-1.5 font-mono">{item.serial_number}</td>
-                  <td className="border border-slate-700 p-1.5">{item.brand || '-'}</td>
-                  <td className="border border-slate-700 p-1.5">{item.status || '-'}</td>
-                  <td className="border border-slate-700 p-1.5">{item.remarks || '-'}</td>
+                <tr key={i} className={`text-black ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                  <td className="border border-slate-700 p-1">{i + 1}</td>
+                  <td className="border border-slate-700 p-1 text-left pl-2">{item.model || '—'}</td>
+                  <td className="border border-slate-700 p-1 font-mono text-[8px]">{item.serial_number || '—'}</td>
+                  <td className="border border-slate-700 p-1 font-mono text-[8px]">
+                    {item.unique_id || item.uniqueId || (item.asset && typeof item.asset === 'object' ? item.asset.uniqueId : '') || '—'}
+                  </td>
+                  <td className="border border-slate-700 p-1">{item.brand || '—'}</td>
+                  <td className="border border-slate-700 p-1">{item.status || '—'}</td>
+                  <td className="border border-slate-700 p-1 text-left pl-2">{item.remarks || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -448,8 +479,11 @@ const ViewModal = ({
         </div>
         
         {/* Preview Content (Visual Duplicate of Print Template) */}
-        <div className="p-8 bg-gray-50 flex justify-center pass-print-root">
-          <div ref={previewRef} className="bg-white p-8 shadow-sm border-2 border-slate-700 w-full max-w-[297mm] relative overflow-hidden pass-print-sheet">
+        <div className="p-6 bg-slate-100 flex justify-center pass-print-root">
+          <div
+            ref={previewRef}
+            className="bg-white p-8 shadow-md border-2 border-slate-800 w-full max-w-[297mm] min-h-[210mm] relative overflow-hidden pass-print-sheet text-[11px] leading-snug"
+          >
              <img
                src={gatePassLogoUrl || '/gatepass-logo.svg'}
                alt=""
@@ -457,20 +491,15 @@ const ViewModal = ({
                style={{ width: '78mm', opacity: 0.05, top: '50%', left: '50%', transform: 'translate(-50%, -45%)' }}
              />
              {/* Header */}
-             <div className="grid grid-cols-3 items-center mb-4 pb-2 border-b border-slate-300">
+             <div className="grid grid-cols-3 items-center mb-4 pb-3 border-b-2 border-slate-200">
                 <div className="flex items-center gap-2">
                   <PassReferenceQr pass={pass} />
                 </div>
-                <div className="text-center font-black text-2xl tracking-[0.07em] text-[#0b3a53]">
-                  GATE PASS EXPO CITY DUBAI
+                <div className="text-center font-black text-[22px] tracking-[0.12em] text-[#0b3a53] uppercase">
+                  Gate Pass — Expo City Dubai
                 </div>
                 <div className="flex items-center justify-end gap-2">
-                  <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="Expo City Dubai" className="w-16 h-16 object-contain" />
-                  <div className="text-left">
-                    <div className="text-base font-bold text-gray-900 leading-none">EXPO</div>
-                    <div className="text-base font-bold text-gray-900 leading-none">CITY</div>
-                    <div className="text-base font-bold text-gray-900 leading-none">DUBAI</div>
-                  </div>
+                  <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="" className="w-16 h-16 object-contain" />
                 </div>
               </div>
 
@@ -532,26 +561,30 @@ const ViewModal = ({
               </div>
 
               {/* Assets Table */}
-              <table className="w-full border-collapse border border-black text-center mb-6 text-[10px] pass-print-table">
-                <thead className="bg-[#005f73] text-white">
+              <table className="w-full border-collapse border border-slate-800 text-center mb-6 text-[9px] pass-print-table">
+                <thead className="bg-[#0b3a53] text-white">
                   <tr>
-                    <th className="border border-black p-2 font-bold w-10">S.No</th>
-                    <th className="border border-black p-2 font-bold">Model Number</th>
-                    <th className="border border-black p-2 font-bold">Serial Number</th>
-                    <th className="border border-black p-2 font-bold">Manufacturer</th>
-                    <th className="border border-black p-2 font-bold">Status</th>
-                    <th className="border border-black p-2 font-bold">Remarks</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold w-8">#</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold">Model</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold">Serial Number</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold">Unique ID</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold">Manufacturer</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold">Status</th>
+                    <th className="border border-slate-800 px-1 py-2 font-bold">Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(pass.assets || []).map((item, i) => (
-                    <tr key={i} className="text-black">
-                      <td className="border border-black p-2">{i + 1}</td>
-                      <td className="border border-black p-2">{item.model || '-'}</td>
-                      <td className="border border-black p-2 font-mono">{item.serial_number}</td>
-                      <td className="border border-black p-2">{item.brand || '-'}</td>
-                      <td className="border border-black p-2">{item.status || '-'}</td>
-                      <td className="border border-black p-2">{item.remarks || '-'}</td>
+                    <tr key={i} className={`text-black ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                      <td className="border border-slate-700 p-1">{i + 1}</td>
+                      <td className="border border-slate-700 p-1 text-left pl-2">{item.model || '—'}</td>
+                      <td className="border border-slate-700 p-1 font-mono text-[8px]">{item.serial_number || '—'}</td>
+                      <td className="border border-slate-700 p-1 font-mono text-[8px]">
+                        {item.unique_id || item.uniqueId || (item.asset && typeof item.asset === 'object' ? item.asset.uniqueId : '') || '—'}
+                      </td>
+                      <td className="border border-slate-700 p-1">{item.brand || '—'}</td>
+                      <td className="border border-slate-700 p-1">{item.status || '—'}</td>
+                      <td className="border border-slate-700 p-1 text-left pl-2">{item.remarks || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -648,9 +681,9 @@ const Passes = () => {
   const previewRef = useRef();
   const printTimerRef = useRef(null);
   const printPageStyle = `
-    @page { size: A4 landscape; margin: 8mm; }
+    @page { size: A4 landscape; margin: 10mm; }
     @media print {
-      html, body { width: 297mm; height: auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      html, body { width: 297mm; min-height: 210mm; height: auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       body { margin: 0 !important; background: #ffffff !important; }
       .pass-print-root { width: 100% !important; margin: 0 !important; }
       .pass-print-sheet {
@@ -669,7 +702,7 @@ const Passes = () => {
   `;
   const handlePrint = useReactToPrint({
     content: () => printRef.current,
-    documentTitle: 'Gate Pass',
+    documentTitle: 'Gate_Pass_A4_Landscape',
     removeAfterPrint: true,
     pageStyle: printPageStyle
   });
@@ -686,6 +719,7 @@ const Passes = () => {
        name: '', 
        model: '', 
        serial_number: '', 
+       unique_id: '',
        brand: '', 
        asset_model: '', 
        location: '', 
@@ -870,6 +904,7 @@ const Passes = () => {
          name: a.name || '',
          model: a.model || '',
          serial_number: a.serial_number || '',
+         unique_id: a.unique_id || a.uniqueId || (a.asset && typeof a.asset === 'object' ? a.asset.uniqueId : '') || '',
          brand: a.brand || '',
          asset_model: a.asset_model || '',
          location: a.location || '',
@@ -921,6 +956,7 @@ const Passes = () => {
          name: '', 
          model: '', 
          serial_number: '', 
+         unique_id: '',
          brand: '', 
          asset_model: '', 
          location: '', 
@@ -994,6 +1030,7 @@ const Passes = () => {
       name: asset.name,
       model: asset.model_number || '', // map model_number to model
       serial_number: asset.serial_number,
+      unique_id: asset.uniqueId || '',
       brand: asset.manufacturer || '', // map manufacturer to brand
       asset_model: asset.model_number || '', // use model_number as asset_model too default
       location: asset.store?.name || '',
@@ -1017,6 +1054,7 @@ const Passes = () => {
          name: '', 
          model: '', 
          serial_number: '', 
+         unique_id: '',
          brand: '', 
          asset_model: '', 
          location: '', 
@@ -1123,8 +1161,8 @@ const Passes = () => {
             type="search"
             value={passSearch}
             onChange={(e) => setPassSearch(e.target.value)}
-            placeholder="Search exit pass #, type, requester, status…"
-            title="Filters this list. Matching text is highlighted (e.g. EXIT, OUT, date)."
+            placeholder="Search pass #, serial, unique ID, requester, status…"
+            title="Matches pass number, file number, ticket, serial numbers, unique IDs, names, and locations."
             className="h-10 w-full min-w-0 rounded-lg border border-gray-300 px-3 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30 sm:min-w-[280px]"
           />
           <button
@@ -1150,6 +1188,7 @@ const Passes = () => {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pass #</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Requested By</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Serial / Unique ID</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Admin approval</th>
@@ -1176,6 +1215,9 @@ const Passes = () => {
                   <div className="font-medium">
                     {highlightSearchInText(pass.requested_by || pass.issued_to?.name || '-', passSearchQ)}
                   </div>
+                </td>
+                <td className="max-w-[220px] px-6 py-4 text-xs font-mono text-gray-800" title={passAssetIdSummary(pass)}>
+                  {highlightSearchInText(passAssetIdSummary(pass) || '—', passSearchQ)}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-500">
                   {highlightSearchInText(
@@ -1375,6 +1417,7 @@ const Passes = () => {
                          <th className="p-2 border w-48">Product/Name</th>
                          <th className="p-2 border">Model</th>
                          <th className="p-2 border w-40">Serial</th>
+                         <th className="p-2 border w-36">Unique ID</th>
                          <th className="p-2 border">Brand</th>
                          <th className="p-2 border">Asset Model</th>
                          <th className="p-2 border">Location</th>
@@ -1427,12 +1470,27 @@ const Passes = () => {
                                       className="p-2 hover:bg-gray-100 cursor-pointer text-xs"
                                       onClick={() => selectAsset(asset, index)}
                                     >
-                                      <div className="font-bold">{asset.serial_number}</div>
+                                      <div className="font-bold font-mono">{asset.serial_number}</div>
+                                      {asset.uniqueId && (
+                                        <div className="text-[10px] font-mono text-slate-600">ID: {asset.uniqueId}</div>
+                                      )}
                                       <div className="text-gray-600">{asset.name}</div>
                                     </div>
                                   ))}
                                 </div>
                               )}
+                           </td>
+                           <td className="p-2 border">
+                              <input 
+                                className="w-full p-1 border rounded font-mono text-xs" 
+                                value={item.unique_id || ''}
+                                onChange={e => {
+                                  const newAssets = [...formData.assets];
+                                  newAssets[index].unique_id = e.target.value;
+                                  setFormData({...formData, assets: newAssets});
+                                }}
+                                placeholder="From asset lookup or type"
+                              />
                            </td>
                            <td className="p-2 border">
                               <input 

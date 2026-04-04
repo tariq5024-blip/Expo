@@ -21,6 +21,12 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const consumableAtOrBelowMin = (item) => {
+  const min = toNumber(item?.min_quantity, 0);
+  const qty = toNumber(item?.quantity, 0);
+  return min > 0 && qty <= min;
+};
+
 const TechTools = () => {
   const [tools, setTools] = useState([]);
   const [mine, setMine] = useState([]);
@@ -246,14 +252,21 @@ const TechTools = () => {
               <tr><td colSpan={8} className="px-3 py-4 text-slate-500">Loading...</td></tr>
             ) : filteredConsumables.length === 0 ? (
               <tr><td colSpan={8} className="px-3 py-4 text-slate-500">No consumables found.</td></tr>
-            ) : filteredConsumables.map((item) => (
+            ) : filteredConsumables.map((item) => {
+              const consumableLow = consumableAtOrBelowMin(item);
+              return (
               <tr key={item._id} className="border-t">
                 <td className="px-3 py-2">{toDisplay(item.name)}</td>
                 <td className="px-3 py-2">{toDisplay(item.type)}</td>
                 <td className="px-3 py-2">{toDisplay(item.model)}</td>
                 <td className="px-3 py-2">{toDisplay(item.serial_number)}</td>
                 <td className="px-3 py-2">{toDisplay(item.location)}</td>
-                <td className="px-3 py-2">{toNumber(item.quantity, 0)}</td>
+                <td
+                  className={`px-3 py-2 tabular-nums ${consumableLow ? 'text-red-600 font-semibold' : ''}`}
+                  title={consumableLow ? 'At or below minimum quantity' : undefined}
+                >
+                  {toNumber(item.quantity, 0)}
+                </td>
                 <td className="px-3 py-2">
                   <input
                     type="number"
@@ -274,7 +287,8 @@ const TechTools = () => {
                   </button>
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>

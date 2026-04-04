@@ -51,6 +51,13 @@ const asNumber = (value, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+/** Min qty > 0 and current qty at or below minimum (restock line). */
+const isAtOrBelowMinQty = (row) => {
+  const min = asNumber(row?.min_quantity, 0);
+  const qty = asNumber(row?.quantity, 0);
+  return min > 0 && qty <= min;
+};
+
 const Consumables = () => {
   const { user } = useAuth();
   const canWrite = user?.role === 'Admin' || user?.role === 'Super Admin';
@@ -220,7 +227,9 @@ const Consumables = () => {
               <tr><td className="px-3 py-4 text-slate-500" colSpan={11}>Loading...</td></tr>
             ) : rows.length === 0 ? (
               <tr><td className="px-3 py-4 text-slate-500" colSpan={11}>No consumables found.</td></tr>
-            ) : rows.map((row) => (
+            ) : rows.map((row) => {
+              const qtyLow = isAtOrBelowMinQty(row);
+              return (
               <tr key={row._id} className="border-t">
                 <td className="px-3 py-2">{asText(row.name)}</td>
                 <td className="px-3 py-2">{asText(row.type)}</td>
@@ -229,7 +238,12 @@ const Consumables = () => {
                 <td className="px-3 py-2">{asText(row.mac_address)}</td>
                 <td className="px-3 py-2">{asText(row.po_number)}</td>
                 <td className="px-3 py-2">{asText(row.location)}</td>
-                <td className="px-3 py-2">{asNumber(row.quantity, 0)}</td>
+                <td
+                  className={`px-3 py-2 tabular-nums ${qtyLow ? 'text-red-600 font-semibold' : ''}`}
+                  title={qtyLow ? 'At or below minimum quantity — restock' : undefined}
+                >
+                  {asNumber(row.quantity, 0)}
+                </td>
                 <td className="px-3 py-2">{asNumber(row.min_quantity, 0)}</td>
                 <td className="px-3 py-2">{asText(row.comment)}</td>
                 <td className="px-3 py-2">
@@ -240,7 +254,8 @@ const Consumables = () => {
                   </div>
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>

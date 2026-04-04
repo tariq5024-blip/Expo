@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock, MessageSquarePlus, GripVertical, Lock, LockOpen } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import LoadingLogo from '../components/LoadingLogo';
 
 async function loadXlsx() {
   const mod = await import('xlsx');
@@ -2974,8 +2975,13 @@ const Assets = () => {
 
       {/* Loading Indicator */}
       {loading && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 text-center text-slate-500">
-          Loading assets...
+        <div className="mb-4 flex justify-center rounded-xl border border-slate-200 bg-white py-8 shadow-sm">
+          <LoadingLogo
+            message="Loading assets…"
+            subMessage="Fetching rows for this store."
+            sizeClass="w-20 h-20"
+            className="text-slate-700"
+          />
         </div>
       )}
 

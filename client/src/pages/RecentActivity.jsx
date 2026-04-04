@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../api/axios';
 import { History } from 'lucide-react';
+import LoadingLogo from '../components/LoadingLogo';
 
 const RecentActivity = () => {
   const [recent, setRecent] = useState([]);
@@ -21,8 +22,8 @@ const RecentActivity = () => {
   }, []);
 
   if (loading) return (
-    <div className="flex items-center justify-center min-h-screen">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <LoadingLogo message="Loading recent activity…" sizeClass="w-24 h-24" className="text-slate-700" />
     </div>
   );
 

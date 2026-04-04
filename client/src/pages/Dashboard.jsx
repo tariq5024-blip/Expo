@@ -19,6 +19,7 @@ import {
   X,
   RotateCcw,
 } from 'lucide-react';
+import LoadingLogo from '../components/LoadingLogo';
 
 const DASHBOARD_LAYOUT_VERSION = 1;
 const DEFAULT_ANALYTICS_SECTION_ORDER = [
@@ -427,15 +428,13 @@ const Dashboard = () => {
   }, [showLowStockPanel]);
 
   if (loading && !stats) return (
-    <div className="flex min-h-[70vh] flex-col items-center justify-center gap-5 bg-app-page px-4">
-      <div className="relative h-16 w-16">
-        <div className="absolute inset-0 rounded-full border-2 border-app-card" />
-        <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-[rgb(var(--accent-color))] animate-spin" />
-      </div>
-      <div className="text-center space-y-1">
-        <p className="text-sm font-semibold text-app-main">Loading dashboard</p>
-        <p className="text-xs text-app-muted">Fetching live stats and recent activity…</p>
-      </div>
+    <div className="flex min-h-[70vh] flex-col items-center justify-center gap-2 bg-app-page px-4">
+      <LoadingLogo
+        message="Loading dashboard"
+        subMessage="Fetching live stats and recent activity…"
+        sizeClass="w-24 h-24"
+        className="text-app-main"
+      />
     </div>
   );
 
@@ -724,10 +723,14 @@ const Dashboard = () => {
         <h2 className="text-xs font-bold uppercase tracking-widest text-app-muted px-0.5">Analytics</h2>
         <Suspense
           fallback={
-            <div
-              className="min-h-[280px] rounded-2xl border border-app-card bg-app-card/50 animate-pulse"
-              aria-hidden
-            />
+            <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-app-card bg-app-card/40 py-12">
+              <LoadingLogo
+                message="Loading charts…"
+                subMessage="Almost there."
+                sizeClass="w-20 h-20"
+                className="text-app-main"
+              />
+            </div>
           }
         >
           <DashboardCharts

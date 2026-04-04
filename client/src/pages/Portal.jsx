@@ -5,6 +5,7 @@ import api from '../api/axios';
 import { Users, ArrowLeft, Database, AlertTriangle, X, Store, Building2, ChevronRight, Settings, ShieldCheck, Activity, Search, Lock, LogOut, Mail, Send } from 'lucide-react';
 import AddMembers from './AddMembers';
 import ChangePasswordModal from '../components/ChangePasswordModal';
+import LoadingLogo from '../components/LoadingLogo';
 
 const Portal = () => {
   const { user, selectStore, activeStore, logout, branding, refreshBranding } = useAuth();
@@ -584,8 +585,8 @@ const Portal = () => {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-app-page">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
+    <div className="flex min-h-screen items-center justify-center bg-app-page px-4">
+      <LoadingLogo message="Loading portal…" subMessage="Preparing stores and access." sizeClass="w-24 h-24" className="text-app-main" />
     </div>
   );
 

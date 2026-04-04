@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
+import LoadingLogo from './components/LoadingLogo';
+import ApiLoadingOverlay from './components/ApiLoadingOverlay';
 import PropTypes from 'prop-types';
 // Eager-load home route: repeated refresh can abort lazy chunk fetches (Vite dynamic import errors).
 import Dashboard from './pages/Dashboard';
@@ -42,11 +44,13 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
   if (loading || globalLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-gray-600 font-medium">Please wait, processing...</p>
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-app-page px-4 text-app-main">
+        <LoadingLogo
+          message="Please wait…"
+          subMessage="Processing your request."
+          sizeClass="w-24 h-24"
+          className="text-app-main"
+        />
       </div>
     );
   }
@@ -94,12 +98,15 @@ function App() {
     <AuthProvider>
       <ThemeProvider>
         <ErrorBoundary>
+          <ApiLoadingOverlay />
           <Suspense fallback={
-            <div className="flex items-center justify-center min-h-screen bg-gray-50">
-              <div className="flex flex-col items-center gap-4">
-                <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-gray-600 font-medium">Loading Expo Stores...</p>
-              </div>
+            <div className="flex min-h-screen items-center justify-center bg-app-page px-4 text-app-main">
+              <LoadingLogo
+                message="Loading page…"
+                subMessage="Fetching this section of Expo Stores."
+                sizeClass="w-24 h-24"
+                className="text-app-main"
+              />
             </div>
           }>
             <Routes>

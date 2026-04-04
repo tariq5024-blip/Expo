@@ -1,6 +1,7 @@
 import { createContext, useState, useEffect, useContext, useCallback, useMemo } from 'react';
 import api from '../api/axios';
 import PropTypes from 'prop-types';
+import LoadingLogo from '../components/LoadingLogo';
 
 /* eslint-disable react-refresh/only-export-components */
 const AuthContext = createContext();
@@ -228,11 +229,13 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={value}>
       {loading ? (
-        <div className="min-h-screen flex items-center justify-center bg-app-page">
-          <div className="flex flex-col items-center gap-3 text-app-main">
-            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-sm text-slate-500">Loading application...</p>
-          </div>
+        <div className="min-h-screen flex flex-col items-center justify-center gap-2 bg-app-page px-4 text-app-main">
+          <LoadingLogo
+            message="Loading application…"
+            subMessage="Checking your session — safe to refresh if this takes a moment."
+            sizeClass="w-28 h-28"
+            className="text-app-main"
+          />
         </div>
       ) : children}
     </AuthContext.Provider>

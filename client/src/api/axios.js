@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { apiLoadingOnRequest, apiLoadingOnSettled } from '../utils/apiLoadingBus';
 
 const api = axios.create({
   baseURL: '/api',
@@ -26,15 +27,20 @@ api.interceptors.request.use(
       config.headers['x-active-store'] = storeId;
     }
 
+    apiLoadingOnRequest(config);
     return config;
   },
   (error) => Promise.reject(error)
 );
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    apiLoadingOnSettled(response.config);
+    return response;
+  },
   async (error) => {
     const config = error?.config || {};
+    apiLoadingOnSettled(config);
     const status = error?.response?.status;
     const method = String(config?.method || '').toLowerCase();
     const isIdempotent = method === 'get';

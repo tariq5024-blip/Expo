@@ -7,6 +7,10 @@ import QRCode from 'qrcode';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
+/** Header QR and org logo: identical box on screen; print CSS sets mm for A4 landscape. */
+const GATE_PASS_HEADER_BOX_PX = 120;
+const GATE_PASS_HEADER_QR_RENDER_PX = 132;
+
 const escapeRegExpForHighlight = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const highlightSearchInText = (text, query) => {
@@ -177,7 +181,7 @@ const PassReferenceQr = ({ pass }) => {
     QRCode.toDataURL(payload, {
       errorCorrectionLevel: 'M',
       margin: 1,
-      width: 116
+      width: GATE_PASS_HEADER_QR_RENDER_PX
     })
       .then((url) => {
         if (mounted) setQrDataUrl(url);
@@ -192,10 +196,19 @@ const PassReferenceQr = ({ pass }) => {
   }, [pass]);
 
   if (qrDataUrl) {
-    return <img src={qrDataUrl} alt="Pass Reference QR" className="w-[100px] h-[100px] object-contain bg-white p-1 border-2 border-slate-500 rounded-sm" />;
+    return (
+      <img
+        src={qrDataUrl}
+        alt="Pass Reference QR"
+        className="pass-header-emblem object-contain bg-white p-1 border-2 border-slate-500 rounded-sm shrink-0"
+        width={GATE_PASS_HEADER_BOX_PX}
+        height={GATE_PASS_HEADER_BOX_PX}
+        style={{ width: GATE_PASS_HEADER_BOX_PX, height: GATE_PASS_HEADER_BOX_PX }}
+      />
+    );
   }
 
-  return <QrCode size={42} className="text-slate-700" />;
+  return <QrCode size={Math.round(GATE_PASS_HEADER_BOX_PX * 0.35)} className="text-slate-700 shrink-0" />;
 };
 
 PassReferenceQr.propTypes = {
@@ -251,7 +264,14 @@ const PassTemplate = ({ pass, refInstance, gatePassLogoUrl }) => {
               Gate Pass — Expo City Dubai
             </div>
             <div className="flex items-center justify-end gap-2">
-              <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="" className="w-14 h-14 object-contain" />
+              <img
+                src={gatePassLogoUrl || '/gatepass-logo.svg'}
+                alt=""
+                className="pass-header-emblem object-contain shrink-0"
+                width={GATE_PASS_HEADER_BOX_PX}
+                height={GATE_PASS_HEADER_BOX_PX}
+                style={{ width: GATE_PASS_HEADER_BOX_PX, height: GATE_PASS_HEADER_BOX_PX }}
+              />
             </div>
           </div>
 
@@ -482,7 +502,7 @@ const ViewModal = ({
         <div className="p-6 bg-slate-100 flex justify-center pass-print-root">
           <div
             ref={previewRef}
-            className="bg-white p-8 shadow-md border-2 border-slate-800 w-full max-w-[297mm] min-h-[210mm] relative overflow-hidden pass-print-sheet text-[11px] leading-snug"
+            className="bg-white p-8 shadow-md border-2 border-slate-800 w-full max-w-[297mm] min-h-[210mm] relative overflow-visible pass-print-sheet text-[11px] leading-snug"
           >
              <img
                src={gatePassLogoUrl || '/gatepass-logo.svg'}
@@ -499,7 +519,14 @@ const ViewModal = ({
                   Gate Pass — Expo City Dubai
                 </div>
                 <div className="flex items-center justify-end gap-2">
-                  <img src={gatePassLogoUrl || '/gatepass-logo.svg'} alt="" className="w-16 h-16 object-contain" />
+                  <img
+                    src={gatePassLogoUrl || '/gatepass-logo.svg'}
+                    alt=""
+                    className="pass-header-emblem object-contain shrink-0"
+                    width={GATE_PASS_HEADER_BOX_PX}
+                    height={GATE_PASS_HEADER_BOX_PX}
+                    style={{ width: GATE_PASS_HEADER_BOX_PX, height: GATE_PASS_HEADER_BOX_PX }}
+                  />
                 </div>
               </div>
 
@@ -693,6 +720,19 @@ const Passes = () => {
         overflow: visible !important;
         break-inside: auto !important;
         page-break-inside: auto !important;
+        max-width: 277mm !important;
+        box-sizing: border-box !important;
+      }
+      .pass-header-emblem {
+        width: 30mm !important;
+        height: 30mm !important;
+        max-width: 30mm !important;
+        max-height: 30mm !important;
+        min-width: 30mm !important;
+        min-height: 30mm !important;
+        object-fit: contain !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
       }
       .pass-print-table { width: 100% !important; table-layout: fixed !important; }
       .pass-print-table thead { display: table-header-group !important; }
@@ -795,7 +835,7 @@ const Passes = () => {
     styleEl.textContent = `
       @page {
         size: A4 landscape;
-        margin: 8mm;
+        margin: 10mm;
       }
 
       @media print {
@@ -821,8 +861,21 @@ const Passes = () => {
           width: 100% !important;
           min-height: auto !important;
           height: auto !important;
+          max-width: 277mm !important;
           box-sizing: border-box !important;
           page-break-after: auto !important;
+        }
+
+        .pass-header-emblem {
+          width: 30mm !important;
+          height: 30mm !important;
+          max-width: 30mm !important;
+          max-height: 30mm !important;
+          min-width: 30mm !important;
+          min-height: 30mm !important;
+          object-fit: contain !important;
+          box-sizing: border-box !important;
+          flex-shrink: 0 !important;
         }
 
         .pass-print-table {

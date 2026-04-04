@@ -32,6 +32,120 @@ function capitalizeWords(s) {
   if (!s) return s;
   return String(s).toUpperCase();
 }
+
+/** Bulk import / export / template column order (keep in sync with client `BULK_ASSET_EXCEL_HEADERS`). */
+const BULK_ASSET_EXCEL_HEADERS = [
+  'Category',
+  'Product Type',
+  'Product Name',
+  'Unique ID',
+  'ABS Code',
+  'Expo Tag',
+  'Model Number',
+  'Quantity',
+  'Serial Number',
+  'MAC Address',
+  'IP Address',
+  'Manufacturer',
+  'Ticket Number',
+  'Assigned To',
+  'Inbound From',
+  'Outbound To',
+  'PO Number',
+  'Vendor Name',
+  'Price',
+  'RFID',
+  'QR Code',
+  'Store Location',
+  'Status',
+  'Condition',
+  'Maintenance Vendor',
+  'Device Group',
+  'Location',
+  'Product Number',
+  'Operating System',
+  'Specification',
+  'Service Tag',
+  'Assign To Department',
+  'Building',
+  'State Comments',
+  'Remarks',
+  'Comments',
+  'Delivered By',
+  'Delivered At'
+];
+
+const BULK_IMPORT_TEMPLATE_EMPTY_ROW = Object.fromEntries(BULK_ASSET_EXCEL_HEADERS.map((h) => [h, '']));
+
+const BULK_TEMPLATE_SAMPLE_ROW = [
+  'ACCESS CONTROL SYSTEMS',
+  'LOCKS',
+  'MAGNETIC LOCKS',
+  'AST-88421',
+  'ABS-99',
+  'EXPO-001',
+  'MEC-1200',
+  '1',
+  '1584632152',
+  '',
+  '10.0.10.42',
+  'SIEMENS',
+  'TKT-1001',
+  '',
+  'Logistics Hub',
+  'Site Alpha',
+  'PO-1001',
+  'ABC TRADERS',
+  '1250',
+  '',
+  '',
+  'SCY ASSET',
+  'In Store',
+  'New',
+  'Siemens',
+  'Core Security',
+  'Main Warehouse',
+  'PN-12345',
+  'Windows 11 Pro',
+  '16GB RAM / 512GB SSD',
+  'ST-88421',
+  'IT Operations',
+  'Block A',
+  'Rack and power state verified',
+  'Initial install batch',
+  'Commissioned by infra team',
+  'JOHN DOE',
+  '2024-01-01 10:00'
+];
+
+function excelColumnLetterFromIndex1Based(n) {
+  let s = '';
+  let num = n;
+  while (num > 0) {
+    const rem = (num - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    num = Math.floor((num - 1) / 26);
+  }
+  return s;
+}
+
+function buildAssigneeLookupMap(users) {
+  const m = new Map();
+  for (const u of users || []) {
+    if (!u?._id) continue;
+    const n = String(u.name || '').trim().toLowerCase();
+    if (n) m.set(n, u._id);
+    const em = String(u.email || '').trim().toLowerCase();
+    if (em) m.set(em, u._id);
+  }
+  return m;
+}
+
+function resolveAssigneeIdFromCell(raw, lookup) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  return lookup.get(s.toLowerCase()) || null;
+}
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const toContainsRegex = (value) => new RegExp(escapeRegex(value), 'i');
 
@@ -916,29 +1030,36 @@ router.get('/', protect, async (req, res) => {
       // Do not match on history snapshot condition/status fields: a Repaired asset often still has
       // older events with previous_condition "Faulty", which wrongly satisfies q=faulty via $or.
       // Current condition/status are already covered by top-level { condition: rx }, { status: rx }.
+      // Do not apply substring search on history.actor_email unless the query looks like an email:
+      // e.g. q=expo matches scy@expo.com on every asset that user ever touched (false positives).
+      const historyMatchOr = [
+        { action: rx },
+        { details: rx },
+        { user: rx },
+        { ticket_number: rx },
+        { actor_role: rx },
+        { store_name: rx },
+        { location: rx }
+      ];
+      if (q.includes('@')) {
+        historyMatchOr.push({ actor_email: rx });
+      }
       orClauses.push({
         history: {
           $elemMatch: {
-            $or: [
-              { action: rx },
-              { details: rx },
-              { user: rx },
-              { ticket_number: rx },
-              { actor_email: rx },
-              { actor_role: rx },
-              { store_name: rx },
-              { location: rx }
-            ]
+            $or: historyMatchOr
           }
         }
       });
 
       orClauses.push(
         { 'assigned_to_external.name': rx },
-        { 'assigned_to_external.email': rx },
         { 'assigned_to_external.phone': rx },
         { 'assigned_to_external.note': rx }
       );
+      if (q.includes('@')) {
+        orClauses.push({ 'assigned_to_external.email': rx });
+      }
       orClauses.push(
         { 'return_request.condition': rx },
         { 'return_request.ticket_number': rx },
@@ -963,14 +1084,17 @@ router.get('/', protect, async (req, res) => {
       }
 
       try {
-        const userHits = await User.find({
-          $or: [
-            { name: rx },
-            { email: rx },
-            { phone: rx },
-            { username: rx }
-          ]
-        })
+        // Substring on email (e.g. q=expo) matches every *@expo.com user and floods results via assigned_to.
+        // Match email only when the query looks like an address fragment (contains @).
+        const userOr = [
+          { name: rx },
+          { phone: rx },
+          { username: rx }
+        ];
+        if (q.includes('@')) {
+          userOr.push({ email: rx });
+        }
+        const userHits = await User.find({ $or: userOr })
           .select('_id')
           .limit(120)
           .lean();
@@ -1922,44 +2046,7 @@ router.get('/template', async (req, res) => {
   try {
     const wb = new ExcelJS.Workbook();
 
-    const headers = [
-      'Category',
-      'Product Type',
-      'Product Name',
-      'Model Number',
-      'Quantity',
-      'Serial Number',
-      'Unique ID',
-      'MAC Address',
-      'Manufacturer',
-      'Ticket Number',
-      'PO Number',
-      'Vendor Name',
-      'Price',
-      'RFID',
-      'QR Code',
-      'Store Location',
-      'Status',
-      'Condition',
-      'Maintenance Vendor',
-      'Device Group',
-      'Inbound From',
-      'Outbound To',
-      'Expo Tag',
-      'ABS Code',
-      'Product Number',
-      'Operating System',
-      'Specification',
-      'Service Tag',
-      'Assign To Department',
-      'IP Address',
-      'Building',
-      'State Comments',
-      'Remarks',
-      'Comments',
-      'Delivered By',
-      'Delivered At'
-    ];
+    const headers = BULK_ASSET_EXCEL_HEADERS;
 
     // Sheet 1: Template (headers only)
     const templateRows = [headers];
@@ -1968,44 +2055,7 @@ router.get('/template', async (req, res) => {
     wsTemplate.columns = headers.map((_, idx) => ({ width: idx === 0 ? 28 : 20 }));
 
     // Sheet 2: Sample (headers + one example row)
-    const sampleRow = [
-      'ACCESS CONTROL SYSTEMS',
-      'LOCKS',
-      'MAGNETIC LOCKS',
-      'MEC-1200',
-      '1',
-      '1584632152',
-      'AST-88421',
-      '',
-      'SIEMENS',
-      'TKT-1001',
-      'PO-1001',
-      'ABC TRADERS',
-      '1250',
-      '',
-      '',
-      'SCY ASSET',
-      'In Store',
-      'New',
-      'Siemens',
-      'Core Security',
-      'Main Warehouse',
-      'Logistics Hub',
-      'EXPO-001',
-      'ABS-99',
-      'PN-12345',
-      'Windows 11 Pro',
-      '16GB RAM / 512GB SSD',
-      'ST-88421',
-      'IT Operations',
-      '10.0.10.42',
-      'Block A',
-      'Rack and power state verified',
-      'Initial install batch',
-      'Commissioned by infra team',
-      'JOHN DOE',
-      '2024-01-01 10:00'
-    ];
+    const sampleRow = BULK_TEMPLATE_SAMPLE_ROW;
     const wsSample = wb.addWorksheet('Sample');
     wsSample.addRows([headers, sampleRow]);
     wsSample.columns = headers.map((_, idx) => ({ width: idx === 0 ? 28 : 20 }));
@@ -2428,6 +2478,8 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       productLookup[String(root.name).trim().toLowerCase()] = root.name;
       if (root.children) traverse(root.children);
     });
+    const assigneeUsers = await User.find({}).select('name email').lean();
+    const assigneeLookup = buildAssigneeLookupMap(assigneeUsers);
     const normalizeText = (v) => {
       const s = String(v ?? '').trim();
       if (!s) return '';
@@ -2547,6 +2599,16 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         || '';
       const deliveredAtRaw = norm['delivered at'] || norm['delivered_at'] || '';
       const deliveredAtDate = deliveredAtRaw ? new Date(deliveredAtRaw) : new Date();
+      const assignedToRaw =
+        norm['assigned to'] || norm['assigned_to'] || norm['assignee'] || '';
+      const assignedToId = resolveAssigneeIdFromCell(assignedToRaw, assigneeLookup);
+      let assignedToLabel = '';
+      if (assignedToId) {
+        const u = assigneeUsers.find((x) => String(x._id) === String(assignedToId));
+        assignedToLabel = u ? u.name : String(assignedToRaw).trim();
+      } else if (String(assignedToRaw).trim()) {
+        assignedToLabel = `${String(assignedToRaw).trim()} (unmatched)`;
+      }
       const assetData = {
         name: capitalizeWords(name || ''),
         model_number: model,
@@ -2586,6 +2648,10 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
         quantity,
         price
       };
+      if (assignedToId) {
+        assetData.assigned_to = assignedToId;
+      }
+      assetData._assignedToLabel = assignedToLabel;
       if (String(maintenanceVendorFromRow || '').trim()) {
         assetData.customFields = {
           ...(assetData.customFields || {}),
@@ -2653,7 +2719,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         const raw = worksheetToAoa(ws, { defval: '', blankrows: false });
         if (Array.isArray(raw) && raw.length > 0) {
           // Find header row dynamically (matches at least one known header)
-          const KNOWN = ['product name','name','model number','serial number','unique id','unique_id','mac address','manufacturer','ticket number','rfid','qr code','store','store location','location','status','condition','asset type','maintenance vendor','device group','inbound from','outbound to','expo tag','abs code','product number','operating system','specification','service tag','assign to department','assign to depratment','ip address','building','state comments','remarks','comments'];
+          const KNOWN = ['product name','name','model number','serial number','unique id','unique_id','mac address','manufacturer','ticket number','assigned to','assigned_to','assignee','rfid','qr code','store','store location','location','status','condition','asset type','maintenance vendor','device group','inbound from','outbound to','expo tag','abs code','product number','operating system','specification','service tag','assign to department','assign to depratment','ip address','building','state comments','remarks','comments'];
           let headerIdx = -1;
           for (let i = 0; i < raw.length; i++) {
             const row = raw[i] || [];
@@ -2730,6 +2796,9 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       productLookup[String(root.name).trim().toLowerCase()] = root.name;
       if (root.children) traverse(root.children);
     });
+
+    const assigneeUsers = await User.find({}).select('name email').lean();
+    const assigneeLookup = buildAssigneeLookupMap(assigneeUsers);
 
     const fileSeenSerials = new Set();
     const parsedAssets = [];
@@ -2860,7 +2929,10 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         || norm['maintenance_vandor']
         || '';
       const deliveredAtRaw = norm['delivered at'] || norm['delivered_at'] || '';
-      
+      const assignedToRaw =
+        norm['assigned to'] || norm['assigned_to'] || norm['assignee'] || '';
+      const assignedToId = resolveAssigneeIdFromCell(assignedToRaw, assigneeLookup);
+
       // Condition Logic (strict enum mapping)
       const conditionRaw = norm['condition'];
       let condition = 'New';
@@ -2948,6 +3020,9 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
           quantity,
           price
         };
+        if (assignedToId) {
+          assetData.assigned_to = assignedToId;
+        }
         if (String(maintenanceVendorFromRow || '').trim()) {
           assetData.customFields = {
             ...(assetData.customFields || {}),
@@ -2979,7 +3054,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       const chunk = queryPairs.slice(i, i + CHUNK);
       // eslint-disable-next-line no-await-in-loop
       const existing = await Asset.find({ $or: chunk })
-        .select('store serial_number name model_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code status condition product_name source location vendor_name delivered_by_name device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments delivered_at quantity price customFields')
+        .select('store serial_number name model_number serial_last_4 mac_address manufacturer ticket_number po_number rfid qr_code status condition product_name source location vendor_name delivered_by_name device_group inbound_from outbound_to expo_tag abs_code product_number operating_system specification service_tag assign_to_department ip_address building state_comments remarks comments delivered_at quantity price customFields assigned_to')
         .lean();
       existing.forEach((doc) => {
         const pairKey = `${String(doc.store)}::${String(doc.serial_number || '').trim().toLowerCase()}`;
@@ -3053,6 +3128,15 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
         ) {
           patch.delivered_at = incomingDeliveredAt;
           changedFields.push('delivered_at');
+        }
+
+        if (Object.prototype.hasOwnProperty.call(row.assetData, 'assigned_to')) {
+          const nextA = row.assetData.assigned_to ? String(row.assetData.assigned_to) : '';
+          const prevA = existingDoc.assigned_to ? String(existingDoc.assigned_to) : '';
+          if (nextA !== prevA) {
+            patch.assigned_to = row.assetData.assigned_to;
+            changedFields.push('assigned_to');
+          }
         }
 
         const incomingMaintenanceVendor = String(row.assetData?.customFields?.maintenance_vendor || '').trim();
@@ -3248,59 +3332,31 @@ router.get('/export', protect, admin, async (req, res) => {
 
     // Export columns aligned with the bulk import Excel headers
     // so re-importing the exported file doesn't cause field mismatches.
-    const headerMain = [
-      'Category',
-      'Product Type',
-      'Product Name',
-      'Model Number',
-      'Quantity',
-      'Serial Number',
-      'Unique ID',
-      'MAC Address',
-      'Manufacturer',
-      'Ticket Number',
-      'PO Number',
-      'Vendor Name',
-      'Price',
-      'RFID',
-      'QR Code',
-      'Store Location',
-      'Status',
-      'Condition',
-      'Maintenance Vendor',
-      'Device Group',
-      'Location',
-      'Inbound From',
-      'Outbound To',
-      'Expo Tag',
-      'ABS Code',
-      'Product Number',
-      'Operating System',
-      'Specification',
-      'Service Tag',
-      'Assign To Department',
-      'IP Address',
-      'Building',
-      'State Comments',
-      'Remarks',
-      'Comments',
-      'Delivered By',
-      'Delivered At'
-    ];
+    const headerMain = BULK_ASSET_EXCEL_HEADERS;
 
     const rowsMain = assets.map((a) => {
       const maintenanceVendor = a?.customFields?.maintenance_vendor || '';
+      const assignedName =
+        a.assigned_to && typeof a.assigned_to === 'object' && a.assigned_to.name
+          ? a.assigned_to.name
+          : '';
       return ([
-        '', // Category (not stored as a first-class field)
-        '', // Product Type (not stored as a first-class field)
+        '',
+        '',
         a.product_name || '',
+        a.uniqueId || '',
+        a.abs_code || '',
+        a.expo_tag || '',
         a.model_number || '',
         a.quantity ?? '',
         a.serial_number || '',
-        a.uniqueId || '',
         a.mac_address || '',
+        a.ip_address || '',
         a.manufacturer || '',
         a.ticket_number || '',
+        assignedName,
+        a.inbound_from || '',
+        a.outbound_to || '',
         a.po_number || '',
         a.vendor_name || '',
         typeof a.price === 'number' ? a.price : '',
@@ -3312,16 +3368,11 @@ router.get('/export', protect, admin, async (req, res) => {
         maintenanceVendor,
         a.device_group || '',
         a.location || '',
-        a.inbound_from || '',
-        a.outbound_to || '',
-        a.expo_tag || '',
-        a.abs_code || '',
         a.product_number || '',
         a.operating_system || '',
         a.specification || '',
         a.service_tag || '',
         a.assign_to_department || '',
-        a.ip_address || '',
         a.building || '',
         a.state_comments || '',
         a.remarks || '',
@@ -3347,15 +3398,9 @@ router.get('/export', protect, admin, async (req, res) => {
     const wb = new ExcelJS.Workbook();
     const wsMain = wb.addWorksheet('ASSETS');
     wsMain.addRows([headerMain, ...rowsMain]);
-    wsMain.columns = [
-      { width: 16 }, { width: 16 }, { width: 22 }, { width: 18 }, { width: 12 }, { width: 16 }, { width: 14 },
-      { width: 16 }, { width: 16 }, { width: 16 }, { width: 12 }, { width: 16 }, { width: 12 },
-      { width: 12 }, { width: 12 }, { width: 18 }, { width: 12 }, { width: 16 }, { width: 20 },
-      { width: 16 }, { width: 16 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 14 },
-      { width: 14 }, { width: 18 }, { width: 20 }, { width: 14 }, { width: 20 }, { width: 16 },
-      { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }, { width: 14 }, { width: 18 }
-    ];
-    wsMain.autoFilter = 'A1:AK1';
+    wsMain.columns = headerMain.map((_, idx) => ({ width: idx < 3 ? 18 : 16 }));
+    const lastCol = excelColumnLetterFromIndex1Based(headerMain.length);
+    wsMain.autoFilter = `A1:${lastCol}1`;
 
     const wsHist = wb.addWorksheet('HISTORY');
     wsHist.addRows([headerHistory, ...rowsHistory]);
@@ -3378,46 +3423,7 @@ router.get('/export', protect, admin, async (req, res) => {
 // @access  Private/Admin
 router.get('/import-template', protect, admin, async (req, res) => {
   try {
-    const template = [
-      {
-        'Category': '',
-        'Product Type': '',
-        'Product Name': '',
-        'Model Number': '',
-        'Quantity': '',
-        'Serial Number': '',
-        'Unique ID': '',
-        'MAC Address': '',
-        'Manufacturer': '',
-        'Ticket Number': '',
-        'PO Number': '',
-        'Vendor Name': '',
-        'Price': '',
-        'RFID': '',
-        'QR Code': '',
-        'Store Location': '',
-        'Status': '',
-        'Condition': '',
-        'Maintenance Vendor': '',
-        'Device Group': '',
-        'Inbound From': '',
-        'Outbound To': '',
-        'Expo Tag': '',
-        'ABS Code': '',
-        'Product Number': '',
-        'Operating System': '',
-        'Specification': '',
-        'Service Tag': '',
-        'Assign To Department': '',
-        'IP Address': '',
-        'Building': '',
-        'State Comments': '',
-        'Remarks': '',
-        'Comments': '',
-        'Delivered By': '',
-        'Delivered At': ''
-      }
-    ];
+    const template = [{ ...BULK_IMPORT_TEMPLATE_EMPTY_ROW }];
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Template');
     const headers = Object.keys(template[0] || {});

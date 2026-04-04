@@ -812,7 +812,7 @@ const Passes = () => {
     try {
       const { data } = await api.post(`/passes/${pass._id}/approve`);
       const msg = data.emailSent
-        ? 'Gate pass approved. Email sent to technician.'
+        ? 'Gate pass approved. Email sent to the technician with a PDF attachment and full asset details.'
         : `Gate pass approved. ${data.emailSkippedReason || 'Email not sent.'}`;
       alert(msg);
       await loadPasses();

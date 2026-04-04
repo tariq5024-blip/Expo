@@ -67,23 +67,27 @@ const highlightSearchInText = (text, query) => {
 
 const DEFAULT_COLUMN_DEFS = [
   { id: 'uniqueId', label: 'Unique ID', key: 'uniqueId', visible: true, builtin: true },
-  { id: 'expoTag', label: 'Expo Tag', key: 'expo_tag', visible: true, builtin: true },
   { id: 'absCode', label: 'ABS Code', key: 'abs_code', visible: true, builtin: true },
-  { id: 'name', label: 'Name', key: 'name', visible: true, builtin: true },
+  { id: 'expoTag', label: 'Expo Tag', key: 'expo_tag', visible: true, builtin: true },
   { id: 'model', label: 'Model Number', key: 'model_number', visible: true, builtin: true },
+  { id: 'serial', label: 'Serial Number', key: 'serial_number', visible: true, builtin: true },
+  { id: 'mac', label: 'MAC Address', key: 'mac_address', visible: true, builtin: true },
+  { id: 'ipAddress', label: 'IP Address', key: 'ip_address', visible: true, builtin: true },
+  { id: 'manufacturer', label: 'Manufacturer', key: 'manufacturer', visible: true, builtin: true },
+  { id: 'ticket', label: 'Ticket', key: 'ticket_number', visible: true, builtin: true },
+  { id: 'assignedTo', label: 'Assigned To', key: 'assigned_to.name', visible: true, builtin: true },
+  { id: 'inboundFrom', label: 'Inbound From', key: 'inbound_from', visible: true, builtin: true },
+  { id: 'outboundTo', label: 'Outbound To', key: 'outbound_to', visible: true, builtin: true },
+  { id: 'name', label: 'Name', key: 'name', visible: true, builtin: true },
   { id: 'productNumber', label: 'Product Number', key: 'product_number', visible: true, builtin: true },
   { id: 'operatingSystem', label: 'Operating System', key: 'operating_system', visible: true, builtin: true },
   { id: 'specification', label: 'Specification', key: 'specification', visible: true, builtin: true },
   { id: 'serviceTag', label: 'Service Tag', key: 'service_tag', visible: true, builtin: true },
   { id: 'assignToDepartment', label: 'Assign To Department', key: 'assign_to_department', visible: true, builtin: true },
-  { id: 'serial', label: 'Serial Number', key: 'serial_number', visible: true, builtin: true },
   { id: 'serialLast4', label: 'Serial Last 4', key: 'serial_last_4', visible: true, builtin: true },
-  { id: 'ticket', label: 'Ticket', key: 'ticket_number', visible: true, builtin: true },
   { id: 'poNumber', label: 'PO Number', key: 'po_number', visible: true, builtin: true },
-  { id: 'mac', label: 'MAC Address', key: 'mac_address', visible: true, builtin: true },
   { id: 'rfid', label: 'RFID', key: 'rfid', visible: true, builtin: true },
   { id: 'qr', label: 'QR Code', key: 'qr_code', visible: true, builtin: true },
-  { id: 'manufacturer', label: 'Manufacturer', key: 'manufacturer', visible: true, builtin: true },
   { id: 'condition', label: 'Condition', key: 'condition', visible: true, builtin: true },
   { id: 'status', label: 'Status', key: 'status', visible: true, builtin: true },
   { id: 'prevStatus', label: 'Prev Status', key: 'previous_status', visible: true, builtin: true },
@@ -93,9 +97,6 @@ const DEFAULT_COLUMN_DEFS = [
   { id: 'vendor', label: 'Vendor', key: 'vendor_name', visible: true, builtin: true },
   { id: 'maintenanceVendor', label: 'Maintenance Vendor', key: 'maintenance_vendor', visible: true, builtin: true },
   { id: 'deviceGroup', label: 'Device Group', key: 'device_group', visible: true, builtin: true },
-  { id: 'inboundFrom', label: 'Inbound From', key: 'inbound_from', visible: true, builtin: true },
-  { id: 'outboundTo', label: 'Outbound To', key: 'outbound_to', visible: true, builtin: true },
-  { id: 'ipAddress', label: 'IP Address', key: 'ip_address', visible: true, builtin: true },
   { id: 'building', label: 'Building', key: 'building', visible: true, builtin: true },
   { id: 'stateComments', label: 'State Comments', key: 'state_comments', visible: true, builtin: true },
   { id: 'remarks', label: 'Remarks', key: 'remarks', visible: true, builtin: true },
@@ -103,10 +104,92 @@ const DEFAULT_COLUMN_DEFS = [
   { id: 'source', label: 'Source', key: 'source', visible: true, builtin: true },
   { id: 'deliveredBy', label: 'Delivered By', key: 'delivered_by_name', visible: true, builtin: true },
   { id: 'deliveredAt', label: 'Delivered At', key: 'delivered_at', visible: true, builtin: true },
-  { id: 'assignedTo', label: 'Assigned To', key: 'assigned_to.name', visible: true, builtin: true },
   { id: 'dateTime', label: 'Date & Time', key: 'updatedAt', visible: true, builtin: true },
   { id: 'price', label: 'Price', key: 'price', visible: true, builtin: true },
   { id: 'action', label: 'Action', key: 'action', visible: true, builtin: true }
+];
+
+/** Same column order as server template/export/import (bulk Excel). */
+const BULK_ASSET_EXCEL_HEADERS = [
+  'Category',
+  'Product Type',
+  'Product Name',
+  'Unique ID',
+  'ABS Code',
+  'Expo Tag',
+  'Model Number',
+  'Quantity',
+  'Serial Number',
+  'MAC Address',
+  'IP Address',
+  'Manufacturer',
+  'Ticket Number',
+  'Assigned To',
+  'Inbound From',
+  'Outbound To',
+  'PO Number',
+  'Vendor Name',
+  'Price',
+  'RFID',
+  'QR Code',
+  'Store Location',
+  'Status',
+  'Condition',
+  'Maintenance Vendor',
+  'Device Group',
+  'Location',
+  'Product Number',
+  'Operating System',
+  'Specification',
+  'Service Tag',
+  'Assign To Department',
+  'Building',
+  'State Comments',
+  'Remarks',
+  'Comments',
+  'Delivered By',
+  'Delivered At'
+];
+
+const BULK_ASSET_TEMPLATE_SAMPLE_ROW = [
+  'ACCESS CONTROL SYSTEMS',
+  'LOCKS',
+  'MAGNETIC LOCKS',
+  'AST-88421',
+  'ABS-99',
+  'EXPO-001',
+  'MEC-1200',
+  1,
+  '1584632152',
+  '',
+  '10.0.10.42',
+  'SIEMENS',
+  'TKT-1001',
+  '',
+  'Logistics Hub',
+  'Site Alpha',
+  'PO-1001',
+  'ABC TRADERS',
+  1250,
+  '',
+  '',
+  'SCY ASSET',
+  'In Store',
+  'New',
+  'Siemens',
+  'Core Security',
+  'Main Warehouse',
+  'PN-12345',
+  'Windows 11 Pro',
+  '16GB RAM / 512GB SSD',
+  'ST-88421',
+  'IT Operations',
+  'Block A',
+  'Rack and power state verified',
+  'Initial install batch',
+  'Commissioned by infra team',
+  'JOHN DOE',
+  '2024-01-01 10:00'
 ];
 const ALLOWED_STATUS_FILTERS = new Set(['In Store', 'In Use', 'Missing', 'Reserved', 'Disposed', 'Under Repair/Workshop', 'Faulty', 'Repaired', 'Serviceable']);
 const DEFAULT_COLUMN_ORDER = DEFAULT_COLUMN_DEFS.map((column) => column.id);
@@ -330,6 +413,30 @@ const Assets = () => {
     });
   };
 
+  const handleSaveColumnLayout = async () => {
+    const columnById = new Map(columnDefinitions.map((c) => [c.id, c]));
+    const columnsPayload = columnOrder.map((id) => {
+      const def = columnById.get(id);
+      if (!def) return null;
+      return {
+        id,
+        label: def.label,
+        key: def.key,
+        visible: visibleColumns[id] !== false,
+        builtin: Boolean(def.builtin)
+      };
+    }).filter(Boolean);
+    try {
+      setSavingColumnPrefs(true);
+      await api.put('/users/me/assets-table-columns', { config: { columns: columnsPayload } });
+      alert('Column layout saved for your account.');
+    } catch (e) {
+      alert(e?.response?.data?.message || 'Could not save column layout.');
+    } finally {
+      setSavingColumnPrefs(false);
+    }
+  };
+
   const getByPath = (obj, path) => {
     const rawPath = String(path || '').trim();
     if (!rawPath) return undefined;
@@ -467,45 +574,7 @@ const Assets = () => {
 
   const handleExportSelected = async () => {
     if (!selectedIds.length) return;
-    const headers = [
-      'Category',
-      'Product Type',
-      'Product Name',
-      'Model Number',
-      'Quantity',
-      'Serial Number',
-      'Unique ID',
-      'MAC Address',
-      'Manufacturer',
-      'Ticket Number',
-      'PO Number',
-      'Vendor Name',
-      'Price',
-      'RFID',
-      'QR Code',
-      'Store Location',
-      'Status',
-      'Condition',
-      'Maintenance Vendor',
-      'Device Group',
-      'Location',
-      'Inbound From',
-      'Outbound To',
-      'Expo Tag',
-      'ABS Code',
-      'Product Number',
-      'Operating System',
-      'Specification',
-      'Service Tag',
-      'Assign To Department',
-      'IP Address',
-      'Building',
-      'State Comments',
-      'Remarks',
-      'Comments',
-      'Delivered By',
-      'Delivered At'
-    ];
+    const headers = BULK_ASSET_EXCEL_HEADERS;
 
     const rows = assets.filter((a) => selectedIds.includes(a._id)).map((a) => {
       const maintenanceVendor = a?.customFields?.maintenance_vendor || '';
@@ -513,6 +582,7 @@ const Assets = () => {
         ? new Date(a.delivered_at).toLocaleString()
         : '';
       const storeLocation = a?.store?.parentStore?.name || a?.store?.name || '';
+      const assigneeName = a?.assigned_to?.name || a?.assigned_to_external?.name || '';
 
       const out = {};
       headers.forEach((h) => {
@@ -524,20 +594,32 @@ const Assets = () => {
               return '';
             case 'Product Name':
               return a.product_name || '';
+            case 'Unique ID':
+              return a.uniqueId || '';
+            case 'ABS Code':
+              return pickAssetField(a, ['abs_code', 'absCode', 'abs code']);
+            case 'Expo Tag':
+              return pickAssetField(a, ['expo_tag', 'expoTag', 'expo tag']);
             case 'Model Number':
               return a.model_number || '';
             case 'Quantity':
               return a.quantity ?? '';
             case 'Serial Number':
               return a.serial_number || '';
-            case 'Unique ID':
-              return a.uniqueId || '';
             case 'MAC Address':
               return a.mac_address || '';
+            case 'IP Address':
+              return a.ip_address || '';
             case 'Manufacturer':
               return a.manufacturer || '';
             case 'Ticket Number':
               return a.ticket_number || '';
+            case 'Assigned To':
+              return assigneeName;
+            case 'Inbound From':
+              return a.inbound_from || '';
+            case 'Outbound To':
+              return a.outbound_to || '';
             case 'PO Number':
               return a.po_number || '';
             case 'Vendor Name':
@@ -560,14 +642,6 @@ const Assets = () => {
               return a.device_group || '';
             case 'Location':
               return a.location || '';
-            case 'Inbound From':
-              return a.inbound_from || '';
-            case 'Outbound To':
-              return a.outbound_to || '';
-            case 'Expo Tag':
-              return pickAssetField(a, ['expo_tag', 'expoTag', 'expo tag']);
-            case 'ABS Code':
-              return pickAssetField(a, ['abs_code', 'absCode', 'abs code']);
             case 'Product Number':
               return pickAssetField(a, ['product_number', 'productNumber', 'product number']);
             case 'Operating System':
@@ -584,8 +658,6 @@ const Assets = () => {
                 'assign to depratment',
                 'assign_to_depratment'
               ]);
-            case 'IP Address':
-              return a.ip_address || '';
             case 'Building':
               return a.building || '';
             case 'State Comments':
@@ -779,6 +851,7 @@ const Assets = () => {
   });
   const [savingComment, setSavingComment] = useState(false);
   const [revertingImport, setRevertingImport] = useState(false);
+  const [savingColumnPrefs, setSavingColumnPrefs] = useState(false);
 
   useEffect(() => {
     if (showRecentUploads) {
@@ -836,14 +909,7 @@ const Assets = () => {
   useEffect(() => {
     let cancelled = false;
     const loadColumnsConfig = async () => {
-      try {
-        const activeStoreId = activeStore?._id || activeStore;
-        const res = await api.get('/system/assets-columns-config', {
-          params: activeStoreId ? { storeId: activeStoreId } : undefined
-        });
-        if (cancelled) return;
-        const config = res.data?.config || {};
-        const nextColumnsRaw = Array.isArray(config.columns) ? config.columns : DEFAULT_COLUMN_DEFS;
+      const applyMergedColumns = (nextColumnsRaw) => {
         const nextColumns = [];
         const seen = new Set();
         nextColumnsRaw.forEach((column, idx) => {
@@ -875,26 +941,35 @@ const Assets = () => {
         if (!hasMaintenanceVendorColumn) {
           safeColumns.push({ id: 'maintenanceVendor', label: 'Maintenance Vendor', key: 'maintenance_vendor', visible: true, builtin: true });
         }
-        const columnById = new Map(safeColumns.map((c) => [String(c.id), c]));
+        const columnById = new Map(safeColumns.map((c) => [String(c.id), { ...c }]));
         DEFAULT_COLUMN_DEFS.forEach((builtinColumn) => {
           const id = String(builtinColumn.id);
           if (!columnById.has(id)) {
             const added = { ...builtinColumn, visible: true, builtin: true };
-            safeColumns.push(added);
             columnById.set(id, added);
           }
         });
         const ordered = [];
         const usedIds = new Set();
-        DEFAULT_COLUMN_ORDER.forEach((id) => {
-          const col = columnById.get(String(id));
-          if (col) {
-            ordered.push(col);
-            usedIds.add(String(id));
+        nextColumns.forEach((col) => {
+          const id = String(col.id);
+          const full = columnById.get(id);
+          if (full && !usedIds.has(id)) {
+            ordered.push({ ...full, visible: col.visible !== false });
+            usedIds.add(id);
           }
         });
-        safeColumns.forEach((col) => {
-          if (!usedIds.has(String(col.id))) ordered.push(col);
+        DEFAULT_COLUMN_ORDER.forEach((id) => {
+          if (!usedIds.has(id) && columnById.has(id)) {
+            ordered.push(columnById.get(id));
+            usedIds.add(id);
+          }
+        });
+        columnById.forEach((col, id) => {
+          if (!usedIds.has(id)) {
+            ordered.push(col);
+            usedIds.add(id);
+          }
         });
         safeColumns = ordered;
         const nextOrder = safeColumns.map((column) => column.id);
@@ -918,13 +993,38 @@ const Assets = () => {
         setColumnDefinitions(safeColumns);
         setColumnOrder(nextOrder);
         setVisibleColumns(nextVisible);
+      };
+
+      try {
+        let nextColumnsRaw = null;
+        if (user?._id) {
+          try {
+            const userRes = await api.get('/users/me/assets-table-columns');
+            if (cancelled) return;
+            const uc = userRes.data?.config?.columns;
+            if (Array.isArray(uc) && uc.length > 0) nextColumnsRaw = uc;
+          } catch {
+            /* fall back to store defaults */
+          }
+        }
+        if (!nextColumnsRaw) {
+          const activeStoreId = activeStore?._id || activeStore;
+          const res = await api.get('/system/assets-columns-config', {
+            params: activeStoreId ? { storeId: activeStoreId } : undefined
+          });
+          if (cancelled) return;
+          const config = res.data?.config || {};
+          const sc = config.columns;
+          if (Array.isArray(sc) && sc.length > 0) nextColumnsRaw = sc;
+        }
+        applyMergedColumns(nextColumnsRaw && nextColumnsRaw.length ? nextColumnsRaw : DEFAULT_COLUMN_DEFS);
       } catch {
-        // Non-blocking: keep default columns if config is unavailable.
+        if (!cancelled) applyMergedColumns(DEFAULT_COLUMN_DEFS);
       }
     };
     loadColumnsConfig();
     return () => { cancelled = true; };
-  }, [activeStore]);
+  }, [activeStore, user?._id]);
 
   const isConditionFaulty = (asset) => String(asset?.condition || '').trim().toLowerCase() === 'faulty';
   const cannotIssueToTechnician = (asset) => Boolean(asset?.reserved === true) || isConditionFaulty(asset);
@@ -1258,82 +1358,8 @@ const Assets = () => {
 
   const handleDownloadTemplate = async () => {
     try {
-      const headers = [
-        'Category',
-        'Product Type',
-        'Product Name',
-        'Model Number',
-        'Quantity',
-        'Serial Number',
-        'Unique ID',
-        'MAC Address',
-        'Manufacturer',
-        'Ticket Number',
-        'PO Number',
-        'Vendor Name',
-        'Price',
-        'RFID',
-        'QR Code',
-        'Store Location',
-        'Status',
-        'Condition',
-        'Maintenance Vendor',
-        'Device Group',
-        'Inbound From',
-        'Outbound To',
-        'Expo Tag',
-        'ABS Code',
-        'Product Number',
-        'Operating System',
-        'Specification',
-        'Service Tag',
-        'Assign To Department',
-        'IP Address',
-        'Building',
-        'State Comments',
-        'Remarks',
-        'Comments',
-        'Delivered By',
-        'Delivered At'
-      ];
-      const sample = [
-        'ACCESS CONTROL SYSTEMS',
-        'LOCKS',
-        'MAGNETIC LOCKS',
-        'MEC-1200',
-        1,
-        '1584632152',
-        'AST-88421',
-        '',
-        'SIEMENS',
-        'TKT-1001',
-        'PO-1001',
-        'ABC TRADERS',
-        1250,
-        '',
-        '',
-        'SCY ASSET',
-        'In Store',
-        'New',
-        'Siemens',
-        'Core Security',
-        'Main Warehouse',
-        'Logistics Hub',
-        'EXPO-001',
-        'ABS-99',
-        'PN-12345',
-        'Windows 11 Pro',
-        '16GB RAM / 512GB SSD',
-        'ST-88421',
-        'IT Operations',
-        '10.0.10.42',
-        'Block A',
-        'Rack and power state verified',
-        'Initial install batch',
-        'Commissioned by infra team',
-        'JOHN DOE',
-        '2024-01-01 10:00'
-      ];
+      const headers = BULK_ASSET_EXCEL_HEADERS;
+      const sample = BULK_ASSET_TEMPLATE_SAMPLE_ROW;
       const wb = XLSX.utils.book_new();
       const wsTemplate = XLSX.utils.aoa_to_sheet([headers]);
       const wsSample = XLSX.utils.aoa_to_sheet([headers, sample]);
@@ -2019,7 +2045,7 @@ const Assets = () => {
   }, [columnDefinitions]);
 
   const customEditableColumns = useMemo(() => {
-    return (columnDefinitions || []).filter((column) => {
+    const candidates = (columnDefinitions || []).filter((column) => {
       const key = String(column?.key || '').trim();
       if (!key || key === 'action') return false;
       if (NON_EDITABLE_CUSTOM_KEYS.has(key)) return false;
@@ -2027,6 +2053,20 @@ const Assets = () => {
       if (!isScyStoreContext && isMaintenanceVendorColumn(column)) return false;
       return !KNOWN_EDIT_KEYS.has(key);
     });
+    // Store config can add a second column for the same field (e.g. key `customFields.maintenance_vendor`
+    // alongside builtin `maintenance_vendor`); both write to customFields.maintenance_vendor — keep one UI.
+    const maintCols = candidates.filter((c) => isMaintenanceVendorColumn(c));
+    if (maintCols.length <= 1) return candidates;
+    const maintenanceVendorColScore = (c) => {
+      const k = String(c?.key || '').trim();
+      if (String(c?.id) === 'maintenanceVendor') return 4;
+      if (k === 'maintenance_vendor') return 3;
+      if (k === 'customFields.maintenance_vendor') return 2;
+      return 1;
+    };
+    const keepMaint = maintCols.reduce((best, c) =>
+      (maintenanceVendorColScore(c) > maintenanceVendorColScore(best) ? c : best), maintCols[0]);
+    return candidates.filter((c) => !isMaintenanceVendorColumn(c) || c === keepMaint);
   }, [columnDefinitions, isScyStoreContext]);
 
   function isMaintenanceVendorColumn(column) {
@@ -2534,6 +2574,7 @@ const Assets = () => {
                         <th className="px-2 py-2 text-left">Status</th>
                         <th className="px-2 py-2 text-left">Condition</th>
                         <th className="px-2 py-2 text-left">Location</th>
+                        <th className="px-2 py-2 text-left">Assigned To</th>
                         <th className="px-2 py-2 text-left">Vendor</th>
                         <th className="px-2 py-2 text-left">Delivered By</th>
                         <th className="px-2 py-2 text-left">Quantity</th>
@@ -2558,6 +2599,7 @@ const Assets = () => {
                           <td className="px-2 py-2">{a.status || '-'}</td>
                           <td className="px-2 py-2">{a.condition || '-'}</td>
                           <td className="px-2 py-2">{a.location || '-'}</td>
+                          <td className="px-2 py-2">{a._assignedToLabel || '-'}</td>
                           <td className="px-2 py-2">{a.vendor_name || '-'}</td>
                           <td className="px-2 py-2">{a.delivered_by_name || '-'}</td>
                           <td className="px-2 py-2">{a.quantity ?? 1}</td>
@@ -2690,6 +2732,14 @@ const Assets = () => {
               {showColumnMenu && (
                 <div className="absolute z-20 mt-2 right-0 bg-white border border-gray-200 shadow-xl rounded-lg p-3 w-64 max-h-72 overflow-auto">
                   <p className="text-[11px] text-slate-500 mb-2">Drag to reorder columns</p>
+                  <button
+                    type="button"
+                    onClick={() => { handleSaveColumnLayout(); }}
+                    disabled={savingColumnPrefs || !user?._id}
+                    className="mb-2 w-full text-xs font-medium py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingColumnPrefs ? 'Saving…' : 'Save layout to my account'}
+                  </button>
                   {columnOrder.map((key) => {
                     const label = columnDefinitionMap.get(key)?.label || key;
                     return (

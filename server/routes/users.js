@@ -6,6 +6,56 @@ const bcrypt = require('bcryptjs');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 const { sendStoreEmail, getStoreNotificationRecipients } = require('../utils/storeEmail');
 
+function sanitizeAssetsTableColumnsConfig(raw) {
+  const cols = raw?.columns;
+  if (!Array.isArray(cols) || cols.length === 0) return null;
+  const out = [];
+  const seen = new Set();
+  for (const c of cols) {
+    if (out.length > 120) break;
+    const id = String(c?.id || '').trim();
+    const key = String(c?.key || '').trim();
+    if (!id || !key || id.length > 48 || key.length > 120 || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id: id.slice(0, 48),
+      label: String(c?.label || id).slice(0, 80),
+      key: key.slice(0, 120),
+      visible: c?.visible !== false,
+      builtin: Boolean(c?.builtin)
+    });
+  }
+  return out.length ? { columns: out } : null;
+}
+
+// @desc    Get current user's saved Assets table column layout
+// @route   GET /api/users/me/assets-table-columns
+// @access  Private
+router.get('/me/assets-table-columns', protect, async (req, res) => {
+  try {
+    const u = await User.findById(req.user._id).select('assetsTableColumnsConfig').lean();
+    res.json({ config: u?.assetsTableColumnsConfig || null });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Save current user's Assets table column layout (order + visibility)
+// @route   PUT /api/users/me/assets-table-columns
+// @access  Private
+router.put('/me/assets-table-columns', protect, async (req, res) => {
+  try {
+    const config = sanitizeAssetsTableColumnsConfig(req.body?.config);
+    if (!config) {
+      return res.status(400).json({ message: 'Invalid config: expected { columns: [{ id, label, key, visible?, builtin? }, ...] }' });
+    }
+    await User.updateOne({ _id: req.user._id }, { $set: { assetsTableColumnsConfig: config } });
+    res.json({ message: 'Asset column settings saved for your account', config });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 const sendWelcomeEmail = async (userDoc) => {
   if (!userDoc?.email) return;
   try {

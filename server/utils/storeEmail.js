@@ -107,6 +107,7 @@ const sendStoreEmail = async ({
   subject,
   text,
   html,
+  attachments,
   forceConfig,
   context = '',
   bypassNotificationFilter = false
@@ -141,7 +142,11 @@ const sendStoreEmail = async ({
   try {
     const transporter = buildTransport(cfg);
     const from = `${cfg.fromName} <${cfg.fromEmail}>`;
-    const info = await transporter.sendMail({ from, to: filteredRecipients.join(','), subject, text, html });
+    const mailOpts = { from, to: filteredRecipients.join(','), subject, text, html };
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      mailOpts.attachments = attachments;
+    }
+    const info = await transporter.sendMail(mailOpts);
     await EmailLog.create({
       store: resolveStoreId(storeId),
       to: filteredRecipients.join(','),

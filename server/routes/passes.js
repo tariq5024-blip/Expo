@@ -9,6 +9,8 @@ const {
   buildTechnicianGatePassEmailText,
   buildTechnicianGatePassEmailHtml
 } = require('../utils/gatePassEmail');
+const { normalizeGatePassAssets } = require('../utils/gatePassNormalize');
+const { buildGatePassPdfBuffer } = require('../utils/gatePassPdf');
 
 const getScopedStoreId = (req) => String(req.activeStore || req.user?.assignedStore || '').trim();
 const getStoreIds = async (storeId) => {
@@ -189,16 +191,45 @@ router.post('/:id/approve', protect, admin, async (req, res) => {
     const techEmail = String(saved.technicianNotifyEmail || '').trim();
     if (techEmail) {
       try {
+        const populated = await Pass.findById(saved._id)
+          .populate('issued_by', 'name email')
+          .populate({
+            path: 'assets.asset',
+            select:
+              'name product_name model_number serial_number uniqueId manufacturer status condition location ticket_number quantity'
+          })
+          .lean();
+
+        const passForEmail =
+          populated || (saved && typeof saved.toObject === 'function' ? saved.toObject() : saved);
+        const enrichedAssets = normalizeGatePassAssets(passForEmail);
+
+        let pdfBuffer = null;
+        try {
+          pdfBuffer = await buildGatePassPdfBuffer(passForEmail, enrichedAssets);
+        } catch (pdfErr) {
+          console.error('Gate pass PDF generation failed:', pdfErr.message);
+        }
+
         const appBase = String(process.env.PUBLIC_APP_URL || process.env.CLIENT_URL || '')
           .trim()
           .replace(/\/+$/, '');
         const appLink = appBase ? `${appBase}/passes` : '';
+        const pdfName = `GatePass_${String(passForEmail.file_no || passForEmail.pass_number || 'pass')
+          .replace(/[^a-zA-Z0-9._-]+/g, '_')
+          .slice(0, 120)}.pdf`;
+
+        const attachments = pdfBuffer
+          ? [{ filename: pdfName, content: pdfBuffer, contentType: 'application/pdf' }]
+          : undefined;
+
         emailResult = await sendStoreEmail({
           storeId: saved.store || null,
           to: techEmail,
           subject: `Gate Pass EXPO CITY DUBAI — ${saved.file_no || saved.pass_number}`,
-          text: buildTechnicianGatePassEmailText(saved),
-          html: buildTechnicianGatePassEmailHtml(saved, { appLink }),
+          text: buildTechnicianGatePassEmailText(passForEmail, { assets: enrichedAssets }),
+          html: buildTechnicianGatePassEmailHtml(passForEmail, { appLink, assets: enrichedAssets }),
+          attachments,
           context: 'technician-gatepass-approved',
           bypassNotificationFilter: true
         });
@@ -214,7 +245,7 @@ router.post('/:id/approve', protect, admin, async (req, res) => {
       role: req.user.role,
       action: 'Approve Collection Gate Pass',
       details: `Approved gate pass ${saved.pass_number}; email ${
-        emailResult.skipped ? `not sent (${emailResult.reason})` : 'sent to technician'
+        emailResult.skipped ? `not sent (${emailResult.reason})` : 'sent to technician (PDF attachment + asset details)'
       }`,
       store: saved.store || null
     });

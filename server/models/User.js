@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema({
     notifyReceiver: { type: Boolean, default: true },
     notifyIssuer: { type: Boolean, default: true },
     notifyLineManager: { type: Boolean, default: false }
+  },
+  /** Per-user Assets grid: { columns: [{ id, label, key, visible, builtin }] } */
+  assetsTableColumnsConfig: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
   }
 }, { timestamps: true });
 

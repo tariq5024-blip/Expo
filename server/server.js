@@ -121,7 +121,8 @@ app.use(cookieParser(cookieSecret || 'dev-cookie-secret'));
 
 app.use(compression({
   level: 6,
-  threshold: 0,
+  // Skip tiny responses to reduce CPU; JSON/API payloads above this still compress well.
+  threshold: 1024,
   filter: (req, res) => {
     if (req.headers['x-no-compression']) {
       return false;

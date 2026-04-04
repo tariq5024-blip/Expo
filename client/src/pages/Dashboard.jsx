@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import DashboardCharts from '../components/DashboardCharts';
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+
+const DashboardCharts = lazy(() => import('../components/DashboardCharts'));
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -660,14 +661,23 @@ const Dashboard = () => {
 
       <section aria-label="Analytics and charts" className="space-y-2">
         <h2 className="text-xs font-bold uppercase tracking-widest text-app-muted px-0.5">Analytics</h2>
-        <DashboardCharts
-          stats={stats}
-          showMaintenanceVendorFeatures={isScyDashboard}
-          selectedMaintenanceVendor={isScyDashboard ? dashboardVendor : 'All'}
-          analyticsSectionOrder={dashboardLayout.analyticsOrder}
-          showInsightsStrip={dashboardLayout.showInsightsStrip !== false}
-          chartWidgets={dashboardLayout.chartWidgets || DEFAULT_DASHBOARD_LAYOUT.chartWidgets}
-        />
+        <Suspense
+          fallback={
+            <div
+              className="min-h-[280px] rounded-2xl border border-app-card bg-app-card/50 animate-pulse"
+              aria-hidden
+            />
+          }
+        >
+          <DashboardCharts
+            stats={stats}
+            showMaintenanceVendorFeatures={isScyDashboard}
+            selectedMaintenanceVendor={isScyDashboard ? dashboardVendor : 'All'}
+            analyticsSectionOrder={dashboardLayout.analyticsOrder}
+            showInsightsStrip={dashboardLayout.showInsightsStrip !== false}
+            chartWidgets={dashboardLayout.chartWidgets || DEFAULT_DASHBOARD_LAYOUT.chartWidgets}
+          />
+        </Suspense>
       </section>
 
       {dashboardLayout.showRecentActivity !== false && (

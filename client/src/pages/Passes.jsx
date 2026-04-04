@@ -4,8 +4,6 @@ import { useReactToPrint } from 'react-to-print';
 import { QrCode, Printer, Plus, X, Eye, Edit, Trash2, Lock, Download, CheckCircle2 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import QRCode from 'qrcode';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 
 /** Header QR and org logo: identical box on screen; print CSS sets mm for A4 landscape. */
 const GATE_PASS_HEADER_BOX_PX = 120;
@@ -1194,6 +1192,11 @@ const Passes = () => {
         alert('Open gate pass preview first, then download.');
         return;
       }
+
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf')
+      ]);
 
       const canvas = await html2canvas(target, {
         scale: 2,

@@ -2,8 +2,12 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock, MessageSquarePlus, GripVertical, Lock, LockOpen } from 'lucide-react';
 import api from '../api/axios';
-import * as XLSX from 'xlsx';
 import { useAuth } from '../context/AuthContext';
+
+async function loadXlsx() {
+  const mod = await import('xlsx');
+  return mod.default && mod.default.utils ? mod.default : mod;
+}
 
 const flattenProducts = (list, level = 0, ancestors = []) => {
   const out = [];
@@ -678,6 +682,7 @@ const Assets = () => {
       return out;
     });
 
+    const XLSX = await loadXlsx();
     const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Selected Assets');
@@ -1358,6 +1363,7 @@ const Assets = () => {
 
   const handleDownloadTemplate = async () => {
     try {
+      const XLSX = await loadXlsx();
       const headers = BULK_ASSET_EXCEL_HEADERS;
       const sample = BULK_ASSET_TEMPLATE_SAMPLE_ROW;
       const wb = XLSX.utils.book_new();

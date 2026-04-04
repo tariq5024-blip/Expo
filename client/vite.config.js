@@ -33,15 +33,23 @@ export default defineConfig({
   },
   build: {
     sourcemap: false,
-    chunkSizeWarningLimit: 1000,
-    // rollupOptions: {
-    //   output: {
-    //     manualChunks: {
-    //       vendor: ['react', 'react-dom', 'react-router-dom', 'axios', 'recharts', 'lucide-react'],
-    //       xlsx: ['xlsx'],
-    //       qrcode: ['html5-qrcode']
-    //     }
-    //   }
-    // }
+    target: 'es2020',
+    chunkSizeWarningLimit: 1200,
+    reportCompressedSize: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('xlsx')) return 'vendor-xlsx';
+          if (id.includes('apexcharts') || id.includes('react-apexcharts')) return 'vendor-apexcharts';
+          if (id.includes('recharts')) return 'vendor-recharts';
+          if (id.includes('html2canvas') || id.includes('jspdf')) return 'vendor-pdf-canvas';
+          if (id.includes('html5-qrcode')) return 'vendor-html5-qrcode';
+          if (id.includes('lucide-react')) return 'vendor-lucide';
+          if (id.includes('react-dom') || id.includes('react-router') || id.includes('/react/')) return 'vendor-react';
+          if (id.includes('axios')) return 'vendor-axios';
+        }
+      }
+    }
   }
 })

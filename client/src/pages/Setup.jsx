@@ -95,7 +95,6 @@ const Setup = () => {
   const [assetColumnsSaving, setAssetColumnsSaving] = useState(false);
   const assetColumnsScrollRef = useRef(null);
   const assetColumnsLoadEpochRef = useRef(0);
-  const assetColumnsUserMutatedDuringLoadRef = useRef(false);
 
   const resolveUserStoreId = () => {
     const raw = user?.assignedStore;
@@ -214,14 +213,12 @@ const Setup = () => {
     if (!effectiveEmailStoreId) return;
     let cancelled = false;
     const loadEpoch = ++assetColumnsLoadEpochRef.current;
-    assetColumnsUserMutatedDuringLoadRef.current = false;
     const loadAssetColumnsConfig = async () => {
       try {
         setAssetColumnsLoading(true);
         const res = await api.get('/system/assets-columns-config', { params: { storeId: effectiveEmailStoreId } });
         if (cancelled) return;
         if (loadEpoch !== assetColumnsLoadEpochRef.current) return;
-        if (assetColumnsUserMutatedDuringLoadRef.current) return;
         const nextConfig = res.data?.config || buildDefaultColumnsConfig();
         const nextColumns = Array.isArray(nextConfig.columns) ? nextConfig.columns : buildDefaultColumnsConfig().columns;
         setAssetColumnsConfig({
@@ -245,12 +242,7 @@ const Setup = () => {
     return () => { cancelled = true; };
   }, [canManageNotificationPreferences, effectiveEmailStoreId]);
 
-  const markAssetColumnsUserMutation = () => {
-    assetColumnsUserMutatedDuringLoadRef.current = true;
-  };
-
   const moveAssetColumn = (index, direction) => {
-    markAssetColumnsUserMutation();
     setAssetColumnsConfig((prev) => {
       const nextColumns = [...prev.columns];
       const target = direction === 'up' ? index - 1 : index + 1;
@@ -263,7 +255,6 @@ const Setup = () => {
   };
 
   const updateAssetColumnField = (id, field, value) => {
-    markAssetColumnsUserMutation();
     setAssetColumnsConfig((prev) => ({
       ...prev,
       columns: (prev.columns || []).map((column) => (
@@ -277,7 +268,6 @@ const Setup = () => {
   };
 
   const addAssetColumn = () => {
-    markAssetColumnsUserMutation();
     const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const fieldKey = `custom_${stamp}`;
     setAssetColumnsConfig((prev) => ({
@@ -300,7 +290,6 @@ const Setup = () => {
   };
 
   const deleteAssetColumn = (id) => {
-    markAssetColumnsUserMutation();
     setAssetColumnsConfig((prev) => ({
       ...prev,
       columns: (prev.columns || []).filter((column) => column.id !== id)
@@ -308,7 +297,6 @@ const Setup = () => {
   };
 
   const resetAssetColumnsConfig = () => {
-    markAssetColumnsUserMutation();
     setAssetColumnsConfig(buildDefaultColumnsConfig());
   };
 

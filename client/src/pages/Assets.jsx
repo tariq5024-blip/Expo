@@ -269,6 +269,85 @@ const NON_EDITABLE_CUSTOM_KEYS = new Set([
 ]);
 const MAINTENANCE_VENDOR_OPTIONS = ['Siemens', 'G42'];
 
+/** Bulk import preview + confirm can exceed default axios 15s for large workbooks. */
+const IMPORT_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000;
+
+/**
+ * When a user has saved personal Assets column layout, we still need store-defined columns
+ * (including admin-added custom fields) for the table and Edit Asset.
+ */
+function mergeUserPrefAndStoreAssetColumns(userCols, storeCols) {
+  const user = Array.isArray(userCols) ? userCols : [];
+  const store = Array.isArray(storeCols) ? storeCols : [];
+  if (user.length === 0) return store;
+  if (store.length === 0) return user;
+
+  const byId = new Map();
+  store.forEach((c) => {
+    const id = String(c?.id || '').trim();
+    if (!id) return;
+    const key = String(c?.key || '').trim();
+    if (!key) return;
+    byId.set(id, {
+      id,
+      label: String(c.label || '').trim() || id,
+      key,
+      visible: c.visible !== false,
+      builtin: Boolean(c.builtin)
+    });
+  });
+
+  user.forEach((c) => {
+    const id = String(c?.id || '').trim();
+    if (!id) return;
+    const key = String(c?.key || '').trim();
+    const prev = byId.get(id);
+    if (prev) {
+      byId.set(id, {
+        ...prev,
+        visible: c.visible !== false,
+        label: String(c.label || '').trim() || prev.label
+      });
+    } else if (key) {
+      byId.set(id, {
+        id,
+        label: String(c.label || '').trim() || id,
+        key,
+        visible: c.visible !== false,
+        builtin: Boolean(c.builtin)
+      });
+    }
+  });
+
+  const ordered = [];
+  const used = new Set();
+  user.forEach((c) => {
+    const id = String(c?.id || '').trim();
+    if (!id || used.has(id)) return;
+    const m = byId.get(id);
+    if (m) {
+      ordered.push({ ...m, visible: c.visible !== false });
+      used.add(id);
+    }
+  });
+  store.forEach((c) => {
+    const id = String(c?.id || '').trim();
+    if (!id || used.has(id)) return;
+    const m = byId.get(id);
+    if (m) {
+      ordered.push(m);
+      used.add(id);
+    }
+  });
+  byId.forEach((m, id) => {
+    if (!used.has(id)) {
+      ordered.push(m);
+      used.add(id);
+    }
+  });
+  return ordered;
+}
+
 function buildCustomFieldsPayloadFromKeyedValues(keyedValues) {
   const customFieldsPayload = {};
   const setNested = (target, path, val) => {
@@ -338,6 +417,10 @@ const Assets = () => {
   const [importInfo, setImportInfo] = useState(null);
   const [importStep, setImportStep] = useState('select');
   const [importPreview, setImportPreview] = useState(null);
+  const [importPreviewSummary, setImportPreviewSummary] = useState(null);
+  const [importPreviewPage, setImportPreviewPage] = useState(1);
+  const [importPreviewPageSize, setImportPreviewPageSize] = useState(50);
+  const [importPreviewFilter, setImportPreviewFilter] = useState('all');
   const [forceLoading, setForceLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -537,7 +620,11 @@ const Assets = () => {
   };
 
   const handleConfirmImport = async () => {
-    if (!Array.isArray(importPreview) || importPreview.length === 0) return;
+    const rowsWithSerial =
+      importPreviewSummary?.rows_with_serial
+      ?? importPreviewSummary?.preview_rows_total
+      ?? (Array.isArray(importPreview) ? importPreview.length : 0);
+    if (!file || rowsWithSerial === 0) return;
     try {
       setManualLoading(true);
       // Reuse the original file and let server perform robust parsing/upsert
@@ -549,7 +636,10 @@ const Assets = () => {
         const loc = stores.find(s => s._id === bulkLocationId);
         if (loc) form.append('location', loc.name);
       }
-      const res = await api.post('/assets/import', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const res = await api.post('/assets/import', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: IMPORT_UPLOAD_TIMEOUT_MS
+      });
       const warningStrings = Array.isArray(res.data?.warnings)
         ? res.data.warnings.map((w) => String(w))
         : [];
@@ -569,6 +659,7 @@ const Assets = () => {
       alert(res.data?.message || 'Import completed');
       setShowImportModal(false);
       setImportPreview(null);
+      setImportPreviewSummary(null);
       setImportStep('select');
       setFile(null);
       fetchAssets(undefined, { silent: true });
@@ -1035,28 +1126,35 @@ const Assets = () => {
       };
 
       try {
-        let nextColumnsRaw = null;
+        let userCols = null;
         if (user?._id) {
           try {
             const userRes = await api.get('/users/me/assets-table-columns');
             if (cancelled) return;
             const uc = userRes.data?.config?.columns;
-            if (Array.isArray(uc) && uc.length > 0) nextColumnsRaw = uc;
+            if (Array.isArray(uc) && uc.length > 0) userCols = uc;
           } catch {
-            /* fall back to store defaults */
+            /* ignore */
           }
         }
-        if (!nextColumnsRaw) {
-          const activeStoreId = activeStore?._id || activeStore;
-          const res = await api.get('/system/assets-columns-config', {
-            params: activeStoreId ? { storeId: activeStoreId } : undefined
-          });
-          if (cancelled) return;
-          const config = res.data?.config || {};
-          const sc = config.columns;
-          if (Array.isArray(sc) && sc.length > 0) nextColumnsRaw = sc;
+
+        let storeCols = null;
+        const activeStoreId = activeStore?._id || activeStore;
+        if (activeStoreId) {
+          try {
+            const res = await api.get('/system/assets-columns-config', {
+              params: { storeId: activeStoreId }
+            });
+            if (cancelled) return;
+            const sc = res.data?.config?.columns;
+            if (Array.isArray(sc) && sc.length > 0) storeCols = sc;
+          } catch {
+            /* ignore */
+          }
         }
-        applyMergedColumns(nextColumnsRaw && nextColumnsRaw.length ? nextColumnsRaw : DEFAULT_COLUMN_DEFS);
+
+        const mergedRaw = mergeUserPrefAndStoreAssetColumns(userCols, storeCols);
+        applyMergedColumns(mergedRaw.length > 0 ? mergedRaw : DEFAULT_COLUMN_DEFS);
       } catch {
         if (!cancelled) applyMergedColumns(DEFAULT_COLUMN_DEFS);
       }
@@ -1330,9 +1428,18 @@ const Assets = () => {
     }
     try {
       setManualLoading(true);
-      const res = await api.post('/assets/import/preview', formData);
+      const res = await api.post('/assets/import/preview', formData, { timeout: IMPORT_UPLOAD_TIMEOUT_MS });
       const preview = res.data?.assets || [];
       setImportPreview(preview);
+      setImportPreviewSummary({
+        ...(res.data?.summary || {}),
+        invalid_rows: res.data?.invalid_rows || [],
+        invalid_rows_total: res.data?.invalid_rows_total ?? (res.data?.invalid_rows?.length || 0),
+        duplicate_rows: res.data?.duplicate_rows || [],
+        duplicate_rows_total: res.data?.duplicate_rows_total ?? (res.data?.duplicate_rows?.length || 0)
+      });
+      setImportPreviewPage(1);
+      setImportPreviewFilter('all');
       setImportStep('preview');
     } catch (error) {
       const data = error.response?.data;
@@ -2102,6 +2209,32 @@ const Assets = () => {
     );
   }
 
+  const filteredImportPreview = useMemo(() => {
+    const list = importPreview || [];
+    if (importPreviewFilter === 'duplicates') return list.filter((a) => a._duplicateSerial);
+    if (importPreviewFilter === 'clean') return list.filter((a) => !a._duplicateSerial);
+    return list;
+  }, [importPreview, importPreviewFilter]);
+
+  const importPreviewPageCount = Math.max(
+    1,
+    Math.ceil(filteredImportPreview.length / Math.max(1, importPreviewPageSize))
+  );
+
+  const paginatedImportPreview = useMemo(() => {
+    const size = Math.max(1, importPreviewPageSize);
+    const start = (importPreviewPage - 1) * size;
+    return filteredImportPreview.slice(start, start + size);
+  }, [filteredImportPreview, importPreviewPage, importPreviewPageSize]);
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      1,
+      Math.ceil(filteredImportPreview.length / Math.max(1, importPreviewPageSize))
+    );
+    if (importPreviewPage > maxPage) setImportPreviewPage(maxPage);
+  }, [filteredImportPreview.length, importPreviewPageSize, importPreviewPage]);
+
   const columnMeta = useMemo(() => ({
     uniqueId: { label: 'Unique ID', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell font-mono text-xs text-gray-600' },
     expoTag: { label: 'Expo Tag', thClass: 'hidden lg:table-cell', tdClass: 'hidden lg:table-cell text-xs' },
@@ -2505,9 +2638,9 @@ const Assets = () => {
       )}
 
       {showImportModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl relative">
-            <h2 className="text-xl font-bold mb-4">Bulk Import Assets</h2>
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50 p-4">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-6xl max-h-[92vh] flex flex-col relative">
+            <h2 className="text-xl font-bold mb-4 shrink-0">Bulk Import Assets</h2>
             {importStep === 'select' && (
               <>
                 <div className="space-y-4">
@@ -2558,16 +2691,27 @@ const Assets = () => {
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Excel File</label>
                     <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Large imports are supported (default up to about 100MB and 500k rows per file; your server can raise limits with env vars). The table preview may cap rows for speed; Confirm Import still processes the entire workbook.
+                    </p>
                   </div>
                 </div>
                 <div className="mt-6 flex justify-end space-x-3">
                   <button
-                    onClick={() => { setShowImportModal(false); setFile(null); }}
+                    type="button"
+                    onClick={() => {
+                      setShowImportModal(false);
+                      setFile(null);
+                      setImportPreview(null);
+                      setImportPreviewSummary(null);
+                      setImportStep('select');
+                    }}
                     className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={handleUpload}
                     disabled={manualLoading}
                     className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
@@ -2579,67 +2723,186 @@ const Assets = () => {
             )}
             {importStep === 'preview' && (
               <>
-                <div className="mb-4 text-sm text-gray-700">
-                  Previewing {importPreview?.length || 0} assets
+                <div className="mb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-sm shrink-0">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase text-slate-500">File rows</div>
+                    <div className="font-mono text-slate-900">{(importPreviewSummary?.file_rows ?? importPreview?.length ?? 0).toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase text-slate-500">With serial</div>
+                    <div className="font-mono text-slate-900">{(importPreviewSummary?.rows_with_serial ?? importPreview?.length ?? 0).toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase text-amber-800">Duplicates</div>
+                    <div className="font-mono text-amber-950">{(importPreviewSummary?.duplicates_flagged ?? 0).toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase text-rose-800">Invalid (no serial)</div>
+                    <div className="font-mono text-rose-950">{(importPreviewSummary?.invalid_rows_total ?? importPreviewSummary?.invalid ?? 0).toLocaleString()}</div>
+                  </div>
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 lg:col-span-2">
+                    <div className="text-[10px] font-semibold uppercase text-indigo-800">Preview table</div>
+                    <div className="text-xs text-indigo-900">
+                      Showing up to {(importPreviewSummary?.preview_rows_returned ?? importPreview?.length ?? 0).toLocaleString()}
+                      {importPreviewSummary?.preview_truncated
+                        ? ` of ${(importPreviewSummary?.preview_rows_total ?? 0).toLocaleString()} parsed rows (cap for speed). Confirm Import still processes the full file.`
+                        : ' rows in this browser view.'}
+                    </div>
+                  </div>
                 </div>
-                <div className="mb-3 text-xs text-gray-600">
-                  Duplicate serial rows are highlighted in yellow. They will be blocked unless Admin enables &quot;Allow duplicates in same store&quot;.
+                <div className="mb-3 text-xs text-gray-600 shrink-0">
+                  Duplicate serial rows are highlighted in yellow. They will be blocked unless an Admin enables &quot;Allow duplicates in same store&quot;.
                 </div>
-                <div className="max-h-80 overflow-auto border rounded">
+                {(importPreviewSummary?.invalid_rows?.length > 0 || (importPreviewSummary?.invalid_rows_total > 0)) && (
+                  <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-900 shrink-0 max-h-28 overflow-y-auto">
+                    <div className="font-semibold mb-1">Invalid rows (sample)</div>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {(importPreviewSummary?.invalid_rows || []).map((r, i) => (
+                        <li key={i}>{r.reason || 'Invalid'}{r.serial ? ` — serial: ${r.serial}` : ''}</li>
+                      ))}
+                    </ul>
+                    {(importPreviewSummary?.invalid_rows_total || 0) > (importPreviewSummary?.invalid_rows?.length || 0) && (
+                      <div className="mt-1 text-rose-800">
+                        +{(importPreviewSummary.invalid_rows_total - importPreviewSummary.invalid_rows.length).toLocaleString()} more not listed
+                      </div>
+                    )}
+                  </div>
+                )}
+                {(importPreviewSummary?.duplicate_rows?.length > 0 || (importPreviewSummary?.duplicate_rows_total > 0)) && (
+                  <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 shrink-0 max-h-28 overflow-y-auto">
+                    <div className="font-semibold mb-1">Duplicate rows (sample)</div>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {(importPreviewSummary?.duplicate_rows || []).map((r, i) => (
+                        <li key={i}>
+                          <span className="font-mono">{r.serial}</span>
+                          {r.reason ? ` — ${r.reason}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    {(importPreviewSummary?.duplicate_rows_total || 0) > (importPreviewSummary?.duplicate_rows?.length || 0) && (
+                      <div className="mt-1 text-amber-900">
+                        +{(importPreviewSummary.duplicate_rows_total - importPreviewSummary.duplicate_rows.length).toLocaleString()} more not listed
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-3 mb-3 shrink-0">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <span className="text-gray-500">Show</span>
+                    <select
+                      value={importPreviewFilter}
+                      onChange={(e) => { setImportPreviewFilter(e.target.value); setImportPreviewPage(1); }}
+                      className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+                    >
+                      <option value="all">All rows in preview</option>
+                      <option value="duplicates">Duplicates only</option>
+                      <option value="clean">Non-duplicates only</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <span className="text-gray-500">Page size</span>
+                    <select
+                      value={importPreviewPageSize}
+                      onChange={(e) => { setImportPreviewPageSize(Number(e.target.value)); setImportPreviewPage(1); }}
+                      className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+                    >
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                    </select>
+                  </label>
+                  <span className="text-sm text-gray-600">
+                    Page {importPreviewPage} of {importPreviewPageCount} · {filteredImportPreview.length.toLocaleString()} row(s) in view
+                  </span>
+                  <div className="flex gap-1 ml-auto">
+                    <button
+                      type="button"
+                      disabled={importPreviewPage <= 1}
+                      onClick={() => setImportPreviewPage((p) => Math.max(1, p - 1))}
+                      className="px-2 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={importPreviewPage >= importPreviewPageCount}
+                      onClick={() => setImportPreviewPage((p) => Math.min(importPreviewPageCount, p + 1))}
+                      className="px-2 py-1 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 min-h-0 border rounded overflow-auto">
                   <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                       <tr>
-                        <th className="px-2 py-2 text-left">Name</th>
-                        <th className="px-2 py-2 text-left">Model</th>
-                        <th className="px-2 py-2 text-left">Serial</th>
-                        <th className="px-2 py-2 text-left">Status</th>
-                        <th className="px-2 py-2 text-left">Condition</th>
-                        <th className="px-2 py-2 text-left">Location</th>
-                        <th className="px-2 py-2 text-left">Assigned To</th>
-                        <th className="px-2 py-2 text-left">Vendor</th>
-                        <th className="px-2 py-2 text-left">Delivered By</th>
-                        <th className="px-2 py-2 text-left">Quantity</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Name</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Model</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Serial</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Unique ID</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Status</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Condition</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Location</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Assigned To</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Vendor</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Delivered By</th>
+                        <th className="px-2 py-2 text-left whitespace-nowrap">Qty</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(importPreview || []).slice(0, 50).map((a, idx) => (
-                        <tr key={idx} className={`border-t ${a._duplicateSerial ? 'bg-yellow-100' : ''}`}>
-                          <td className="px-2 py-2">{a.name}</td>
-                          <td className="px-2 py-2">{a.model_number || '-'}</td>
-                          <td className="px-2 py-2">
-                            {a.serial_number || '-'}
+                      {paginatedImportPreview.map((a, idx) => (
+                        <tr key={`${a.serial_number || ''}-${idx}`} className={`border-t ${a._duplicateSerial ? 'bg-yellow-100' : ''}`}>
+                          <td className="px-2 py-2 max-w-[140px] truncate" title={a.name}>{a.name}</td>
+                          <td className="px-2 py-2 max-w-[100px] truncate" title={a.model_number}>{a.model_number || '-'}</td>
+                          <td className="px-2 py-2 max-w-[120px]">
+                            <span className="font-mono text-xs">{a.serial_number || '-'}</span>
                             {a._duplicateSerial && (
-                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-yellow-200 text-yellow-900 border border-yellow-300">
-                                Duplicate
+                              <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-yellow-200 text-yellow-900 border border-yellow-300">
+                                Dup
                               </span>
                             )}
                             {a._duplicateSerial && a._duplicateReason && (
-                              <div className="text-[10px] text-yellow-800 mt-1">{a._duplicateReason}</div>
+                              <div className="text-[10px] text-yellow-800 mt-0.5">{a._duplicateReason}</div>
                             )}
                           </td>
-                          <td className="px-2 py-2">{a.status || '-'}</td>
-                          <td className="px-2 py-2">{a.condition || '-'}</td>
-                          <td className="px-2 py-2">{a.location || '-'}</td>
-                          <td className="px-2 py-2">{a._assignedToLabel || '-'}</td>
-                          <td className="px-2 py-2">{a.vendor_name || '-'}</td>
-                          <td className="px-2 py-2">{a.delivered_by_name || '-'}</td>
-                          <td className="px-2 py-2">{a.quantity ?? 1}</td>
+                          <td className="px-2 py-2 font-mono text-xs text-gray-600 max-w-[100px] truncate" title={a.uniqueId}>{a.uniqueId || '-'}</td>
+                          <td className="px-2 py-2 whitespace-nowrap">{a.status || '-'}</td>
+                          <td className="px-2 py-2 whitespace-nowrap">{a.condition || '-'}</td>
+                          <td className="px-2 py-2 max-w-[120px] truncate" title={a.location}>{a.location || '-'}</td>
+                          <td className="px-2 py-2 max-w-[120px] truncate" title={a._assignedToLabel}>{a._assignedToLabel || '-'}</td>
+                          <td className="px-2 py-2 max-w-[120px] truncate" title={a.vendor_name}>{a.vendor_name || '-'}</td>
+                          <td className="px-2 py-2 max-w-[120px] truncate" title={a.delivered_by_name}>{a.delivered_by_name || '-'}</td>
+                          <td className="px-2 py-2 whitespace-nowrap">{a.quantity ?? 1}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {paginatedImportPreview.length === 0 && (
+                    <div className="p-8 text-center text-sm text-gray-500">No rows match this filter.</div>
+                  )}
                 </div>
-                <div className="mt-6 flex justify-end space-x-3">
+                <div className="mt-6 flex justify-end space-x-3 shrink-0">
                   <button
-                    onClick={() => { setImportStep('select'); setImportPreview(null); }}
+                    type="button"
+                    onClick={() => {
+                      setImportStep('select');
+                      setImportPreview(null);
+                      setImportPreviewSummary(null);
+                    }}
                     className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
                   >
                     Back
                   </button>
                   <button
+                    type="button"
                     onClick={handleConfirmImport}
-                    disabled={manualLoading}
-                    className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
+                    disabled={
+                      manualLoading
+                      || !(importPreviewSummary?.rows_with_serial ?? importPreviewSummary?.preview_rows_total ?? importPreview?.length ?? 0)
+                    }
+                    className={`text-white px-4 py-2 rounded ${manualLoading ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     {manualLoading ? 'Importing…' : 'Confirm Import'}
                   </button>

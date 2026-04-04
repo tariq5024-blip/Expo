@@ -21,9 +21,24 @@ const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
+const MAX_IMPORT_UPLOAD_BYTES = Math.min(
+  Math.max(15 * 1024 * 1024, (Number.parseInt(process.env.MAX_IMPORT_UPLOAD_MB || '100', 10) || 100) * 1024 * 1024),
+  250 * 1024 * 1024
+);
+/** Hard safety cap; override with env MAX_BULK_IMPORT_ROWS (e.g. 1000000). */
+const MAX_BULK_IMPORT_ROWS = Math.min(
+  Math.max(20000, Number.parseInt(process.env.MAX_BULK_IMPORT_ROWS || '500000', 10) || 500000),
+  2000000
+);
+/** Max asset objects returned in import preview JSON (full file is still validated server-side). */
+const IMPORT_PREVIEW_RESPONSE_CAP = Math.min(
+  Math.max(5000, Number.parseInt(process.env.IMPORT_PREVIEW_MAX_ROWS || '20000', 10) || 20000),
+  100000
+);
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 }
+  limits: { fileSize: MAX_IMPORT_UPLOAD_BYTES }
 });
 
  
@@ -391,6 +406,20 @@ async function generateUniqueId(assetType) {
   }
   // Fallback: use timestamp if random fails
   return `${prefix}${Date.now().toString().slice(-4)}`;
+}
+
+/** Fast non-colliding IDs for bulk import / preview (real create path uses the same pattern). */
+function createFastUniqueIdGenerator() {
+  let seq = 0;
+  return (assetType) => {
+    seq += 1;
+    const raw = String(assetType || 'AST').replace(/[^a-z0-9]/gi, '').toUpperCase();
+    const prefix = (raw.slice(0, 3) || 'AST').padEnd(3, 'X');
+    const ts = Date.now().toString(36).toUpperCase();
+    const n = seq.toString(36).toUpperCase();
+    const rand = Math.floor(Math.random() * 1296).toString(36).toUpperCase().padStart(2, '0');
+    return `${prefix}${ts}${n}${rand}`;
+  };
 }
 
 async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [] }) {
@@ -2489,6 +2518,11 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
     if (!Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ message: 'Invalid Excel file: no data rows found' });
     }
+    if (rows.length > MAX_BULK_IMPORT_ROWS) {
+      return res.status(400).json({
+        message: `Too many rows (${rows.length.toLocaleString()}). Maximum per file is ${MAX_BULK_IMPORT_ROWS.toLocaleString()}. Split the file or raise MAX_BULK_IMPORT_ROWS on the server.`
+      });
+    }
     const stores = await Store.find().lean();
     const storeMapLower = {};
     stores.forEach(s => { if (s.name) storeMapLower[s.name.trim().toLowerCase()] = s._id; });
@@ -2507,15 +2541,18 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
     });
     const assigneeUsers = await User.find({}).select('name email').lean();
     const assigneeLookup = buildAssigneeLookupMap(assigneeUsers);
+    const assigneeById = new Map(assigneeUsers.map((u) => [String(u._id), u]));
+    const makeFastUniqueId = createFastUniqueIdGenerator();
     const normalizeText = (v) => {
       const s = String(v ?? '').trim();
       if (!s) return '';
       if (/^(?:N\/A|NA|-|—)$/i.test(s)) return '';
       return s;
     };
-    const preview = [];
+    const staged = [];
     const invalid_rows = [];
-    const duplicate_rows = [];
+    let duplicate_rows_total = 0;
+    const duplicate_rows_sample = [];
     const allowDuplicates = String(req.body?.allowDuplicates || '').toLowerCase() === 'true';
     const isAdminUser = req.user?.role === 'Admin' || req.user?.role === 'Super Admin';
     const seenSerialByStore = new Set();
@@ -2594,7 +2631,7 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       if (req.activeStore) {
         storeId = req.activeStore;
       }
-      const uniqueId = await generateUniqueId(name);
+      const uniqueId = makeFastUniqueId(name);
       const deliveredByFromRow = norm['delivered by'] || norm['delivered_by'] || norm['deliveredby'] || '';
       const vendorNameFromRow = norm['vendor name'] || norm['vendor'] || '';
       const deviceGroupFromRow = norm['device group'] || norm['device_group'] || '';
@@ -2631,7 +2668,7 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       const assignedToId = resolveAssigneeIdFromCell(assignedToRaw, assigneeLookup);
       let assignedToLabel = '';
       if (assignedToId) {
-        const u = assigneeUsers.find((x) => String(x._id) === String(assignedToId));
+        const u = assigneeById.get(String(assignedToId));
         assignedToLabel = u ? u.name : String(assignedToRaw).trim();
       } else if (String(assignedToRaw).trim()) {
         assignedToLabel = `${String(assignedToRaw).trim()} (unmatched)`;
@@ -2692,24 +2729,77 @@ router.post('/import/preview', protect, restrictViewer, upload.single('file'), a
       const serialKey = String(assetData.serial_number || '').trim().toLowerCase();
       const storeKey = String(storeId || '').trim().toLowerCase();
       const dedupeKey = `${storeKey}::${serialKey}`;
-      let duplicateReason = '';
+      let fileDuplicateReason = '';
       if (seenSerialByStore.has(dedupeKey)) {
-        duplicateReason = 'Duplicate serial in uploaded file';
-      } else if (serialKey && storeId) {
-        // eslint-disable-next-line no-await-in-loop
-        const existing = await Asset.findOne({ serial_number: assetData.serial_number, store: storeId }).select('_id').lean();
-        if (existing) duplicateReason = 'Duplicate serial already exists in store';
+        fileDuplicateReason = 'Duplicate serial in uploaded file';
       }
       if (serialKey) seenSerialByStore.add(dedupeKey);
+      staged.push({ assetData, serialKey, storeId, fileDuplicateReason });
+    }
+
+    const queryPairs = [];
+    const queryPairSeen = new Set();
+    for (const row of staged) {
+      if (row.fileDuplicateReason || !row.serialKey || !row.storeId) continue;
+      const pair = `${String(row.storeId)}::${row.serialKey}`;
+      if (queryPairSeen.has(pair)) continue;
+      queryPairSeen.add(pair);
+      queryPairs.push({ store: row.storeId, serial_number: row.assetData.serial_number });
+    }
+    const existingPairSet = new Set();
+    const PREVIEW_CHUNK = 500;
+    for (let i = 0; i < queryPairs.length; i += PREVIEW_CHUNK) {
+      const chunk = queryPairs.slice(i, i + PREVIEW_CHUNK);
+      // eslint-disable-next-line no-await-in-loop
+      const existing = await Asset.find({ $or: chunk }).select('store serial_number').lean();
+      existing.forEach((doc) => {
+        const pk = `${String(doc.store)}::${String(doc.serial_number || '').trim().toLowerCase()}`;
+        existingPairSet.add(pk);
+      });
+    }
+
+    const preview = [];
+    for (const row of staged) {
+      const { assetData, serialKey, storeId, fileDuplicateReason } = row;
+      let duplicateReason = fileDuplicateReason;
+      if (!duplicateReason && serialKey && storeId) {
+        const pk = `${String(storeId)}::${serialKey}`;
+        if (existingPairSet.has(pk)) duplicateReason = 'Duplicate serial already exists in store';
+      }
       if (duplicateReason) {
-        duplicate_rows.push({ serial: assetData.serial_number, reason: duplicateReason });
+        duplicate_rows_total += 1;
+        if (duplicate_rows_sample.length < 200) {
+          duplicate_rows_sample.push({ serial: assetData.serial_number, reason: duplicateReason });
+        }
       }
       assetData._duplicateSerial = Boolean(duplicateReason);
       assetData._duplicateReason = duplicateReason;
       assetData._duplicateAllowed = Boolean(duplicateReason && allowDuplicates && isAdminUser);
       preview.push(assetData);
     }
-    res.json({ assets: preview, invalid_rows, duplicate_rows });
+
+    const totalPreviewRows = preview.length;
+    const assetsOut = preview.length > IMPORT_PREVIEW_RESPONSE_CAP
+      ? preview.slice(0, IMPORT_PREVIEW_RESPONSE_CAP)
+      : preview;
+    const invalidSample = invalid_rows.slice(0, 200);
+
+    res.json({
+      assets: assetsOut,
+      invalid_rows: invalidSample,
+      invalid_rows_total: invalid_rows.length,
+      duplicate_rows: duplicate_rows_sample,
+      duplicate_rows_total,
+      summary: {
+        file_rows: rows.length,
+        rows_with_serial: totalPreviewRows,
+        preview_rows_total: totalPreviewRows,
+        preview_rows_returned: assetsOut.length,
+        preview_truncated: totalPreviewRows > IMPORT_PREVIEW_RESPONSE_CAP,
+        invalid: invalid_rows.length,
+        duplicates_flagged: duplicate_rows_total
+      }
+    });
   } catch (error) {
     res.status(500).json({ message: 'Error parsing file', error: error.message });
   }
@@ -2777,9 +2867,9 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
     if (!Array.isArray(data) || data.length === 0) {
       return res.status(400).json({ message: 'Invalid Excel file: no data rows found' });
     }
-    if (data.length > 20000) {
+    if (data.length > MAX_BULK_IMPORT_ROWS) {
       return res.status(400).json({
-        message: 'Too many rows in one import file. Please keep it up to 20,000 rows per upload.'
+        message: `Too many rows in one import file (${data.length.toLocaleString()}). Maximum is ${MAX_BULK_IMPORT_ROWS.toLocaleString()} per upload (set MAX_BULK_IMPORT_ROWS to raise).`
       });
     }
 
@@ -2829,18 +2919,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
 
     const fileSeenSerials = new Set();
     const parsedAssets = [];
-    const makeFastUniqueId = (() => {
-      let seq = 0;
-      return (assetType) => {
-        seq += 1;
-        const raw = String(assetType || 'AST').replace(/[^a-z0-9]/gi, '').toUpperCase();
-        const prefix = (raw.slice(0, 3) || 'AST').padEnd(3, 'X');
-        const ts = Date.now().toString(36).toUpperCase();
-        const n = seq.toString(36).toUpperCase();
-        const rand = Math.floor(Math.random() * 1296).toString(36).toUpperCase().padStart(2, '0');
-        return `${prefix}${ts}${n}${rand}`;
-      };
-    })();
+    const makeFastUniqueId = createFastUniqueIdGenerator();
     const invalidRows = [];
     
     // Helper to check for N/A

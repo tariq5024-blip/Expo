@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { subscribeApiLoading } from '../utils/apiLoadingBus';
-import LoadingLogo from './LoadingLogo';
+import AppSpinner from './AppSpinner';
 
 /**
- * Shows branded spinner when API requests are in flight (debounced), without blocking interaction.
+ * Lightweight indicator when API requests are in flight (debounced). Does not block clicks.
+ * Dashboard initial load skips the global counter via X-Skip-Global-Loading to avoid double spinners.
  */
 export default function ApiLoadingOverlay() {
   const [count, setCount] = useState(0);
@@ -13,10 +14,10 @@ export default function ApiLoadingOverlay() {
 
   useEffect(() => {
     if (count > 0) {
-      const id = setTimeout(() => setShow(true), 200);
+      const id = setTimeout(() => setShow(true), 280);
       return () => clearTimeout(id);
     }
-    const id = setTimeout(() => setShow(false), 120);
+    const id = setTimeout(() => setShow(false), 100);
     return () => clearTimeout(id);
   }, [count]);
 
@@ -24,16 +25,16 @@ export default function ApiLoadingOverlay() {
 
   return (
     <div
-      className="pointer-events-none fixed inset-0 z-[100] flex items-center justify-center bg-app-page/55 backdrop-blur-[2px] transition-opacity"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex justify-center pb-8 pt-24 bg-gradient-to-t from-app-page/90 via-app-page/40 to-transparent"
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="pointer-events-none rounded-2xl bg-white/90 px-10 py-8 shadow-lg dark:bg-slate-900/90">
-        <LoadingLogo
+      <div className="pointer-events-none rounded-2xl border border-app-card bg-app-card/95 px-8 py-5 shadow-card backdrop-blur-md">
+        <AppSpinner
           message="Working…"
-          subMessage="Please wait while we finish your request."
-          className="text-slate-700 dark:text-slate-200"
-          sizeClass="w-20 h-20"
+          subMessage="Finishing your request."
+          size="md"
+          compact
         />
       </div>
     </div>

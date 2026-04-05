@@ -24,8 +24,23 @@ export function getApiLoadingCount() {
   return active;
 }
 
+function hasSkipGlobalLoadingHeader(headers) {
+  if (!headers) return false;
+  if (typeof headers.get === 'function') {
+    return Boolean(
+      headers.get('X-Skip-Global-Loading')
+      || headers.get('x-skip-global-loading')
+    );
+  }
+  return Boolean(
+    headers['X-Skip-Global-Loading']
+    || headers['x-skip-global-loading']
+  );
+}
+
 function shouldSkipGlobalLoading(config) {
-  if (!config || config.headers?.['X-Skip-Global-Loading']) return true;
+  if (!config) return true;
+  if (hasSkipGlobalLoadingHeader(config.headers)) return true;
   const url = String(config.url || '');
   return (
     url.includes('/auth/csrf-token')

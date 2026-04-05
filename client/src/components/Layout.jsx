@@ -3,8 +3,9 @@ import { Outlet, Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Menu, ChevronDown, Settings } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuth } from '../context/AuthContext';
+import api from '../api/axios';
 
-const DASHBOARD_VENDOR_OPTIONS = ['All', 'Siemens', 'G42'];
+const DEFAULT_DASHBOARD_VENDOR_OPTIONS = ['All', 'Siemens', 'G42'];
 
 const Layout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -15,6 +16,7 @@ const Layout = () => {
   const { user, logout, activeStore } = useAuth();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [dashboardVendorOptions, setDashboardVendorOptions] = useState(DEFAULT_DASHBOARD_VENDOR_OPTIONS);
 
   const scopeHints = useMemo(
     () =>
@@ -32,11 +34,39 @@ const Layout = () => {
     hasScyHint || (!hasItHint && !hasNocHint && user?.role !== 'Super Admin');
   const isDashboardHome = location.pathname === '/';
 
+  useEffect(() => {
+    const storeId = activeStore?._id || activeStore;
+    if (!storeId) {
+      setDashboardVendorOptions(DEFAULT_DASHBOARD_VENDOR_OPTIONS);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get('/system/maintenance-vendors', { params: { storeId } })
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.data?.vendors;
+        if (Array.isArray(list) && list.length > 0) {
+          setDashboardVendorOptions(['All', ...list]);
+        } else {
+          setDashboardVendorOptions(DEFAULT_DASHBOARD_VENDOR_OPTIONS);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDashboardVendorOptions(DEFAULT_DASHBOARD_VENDOR_OPTIONS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStore]);
+
   const headerDashboardVendor = useMemo(() => {
     const v = searchParams.get('maintenance_vendor');
-    if (v === 'Siemens' || v === 'G42') return v;
-    return 'All';
-  }, [searchParams]);
+    if (!v) return 'All';
+    if (v === 'All') return 'All';
+    if (dashboardVendorOptions.includes(v)) return v;
+    return v;
+  }, [searchParams, dashboardVendorOptions]);
 
   const setHeaderDashboardVendor = (vendor) => {
     setSearchParams(
@@ -128,7 +158,7 @@ const Layout = () => {
               <div className="w-full pt-1 border-t border-white/10">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-white/70 mb-1.5">Vendor scope</p>
                 <div className="flex gap-1 overflow-x-auto pb-0.5">
-                  {DASHBOARD_VENDOR_OPTIONS.map((vendor) => {
+                  {dashboardVendorOptions.map((vendor) => {
                     const active = headerDashboardVendor === vendor;
                     return (
                       <button
@@ -152,22 +182,22 @@ const Layout = () => {
         <header className="hidden md:flex items-center justify-between gap-6 bg-app-header border-b border-app-card px-6 lg:px-8 py-3 shadow-sm z-30">
             <div className="flex flex-1 min-w-0 items-center">
               {showMaintenanceVendorScope && isDashboardHome ? (
-                <div className="flex flex-col gap-2 min-w-0 max-w-2xl">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="h-2 w-2 rounded-full bg-[rgb(var(--accent-color))] shrink-0" aria-hidden />
-                    <span className="text-xs font-bold text-app-main uppercase tracking-wide truncate">
+                <div className="flex w-fit max-w-full flex-col items-start gap-2 min-w-0">
+                  <div className="flex min-w-0 max-w-full items-center gap-2">
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-[rgb(var(--accent-color))]" aria-hidden />
+                    <span className="truncate text-xs font-bold uppercase tracking-wide text-app-main">
                       Maintenance vendor scope
                     </span>
                   </div>
-                  <p className="text-[11px] text-app-muted leading-snug hidden xl:block">
-                    All shows the full SCY picture. Siemens or G42 narrows dashboard stats and the asset list to that vendor.
+                  <p className="hidden max-w-md text-[11px] leading-snug text-app-muted xl:block">
+                    All shows the full SCY picture. Choosing a vendor narrows dashboard stats and the asset list to that maintenance vendor (configured in Setup).
                   </p>
                   <div
-                    className="inline-flex flex-wrap items-center rounded-xl border border-app-card bg-white/80 dark:bg-white/5 p-1 gap-0.5 shadow-sm"
+                    className="inline-flex w-fit max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-app-card bg-white/80 p-1 shadow-sm dark:bg-white/5"
                     role="group"
                     aria-label="Dashboard maintenance vendor filter"
                   >
-                    {DASHBOARD_VENDOR_OPTIONS.map((vendor) => {
+                    {dashboardVendorOptions.map((vendor) => {
                       const active = headerDashboardVendor === vendor;
                       return (
                         <button

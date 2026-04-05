@@ -176,6 +176,24 @@ const resolveAssetsColumnsStoreId = (req, inputStoreId) => {
   return req.user?.assignedStore || req.activeStore || null;
 };
 
+const DEFAULT_MAINTENANCE_VENDORS = ['Siemens', 'G42'];
+
+function sanitizeMaintenanceVendorsList(raw) {
+  if (!Array.isArray(raw)) return [...DEFAULT_MAINTENANCE_VENDORS];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const s = String(item ?? '').trim().slice(0, 80);
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+    if (out.length >= 50) break;
+  }
+  return out.length > 0 ? out : [...DEFAULT_MAINTENANCE_VENDORS];
+}
+
 const maxBackupUploadMb = Number.parseInt(process.env.MAX_BACKUP_UPLOAD_MB || '1024', 10);
 const MAX_BACKUP_UPLOAD_BYTES = Math.max(10, maxBackupUploadMb) * 1024 * 1024;
 const backupUploadTempDir = path.join(__dirname, '../storage/tmp-backups');
@@ -819,6 +837,47 @@ router.put('/assets-columns-config', protect, admin, async (req, res) => {
       { upsert: true }
     );
     res.json({ message: 'Asset columns configuration saved', storeId: String(storeId), config });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// @desc    List maintenance vendor names for filters and forms (per store)
+// @route   GET /api/system/maintenance-vendors
+// @access  Private
+router.get('/maintenance-vendors', protect, async (req, res) => {
+  try {
+    const storeId = resolveAssetsColumnsStoreId(req, req.query.storeId);
+    if (!storeId) {
+      return res.json({ storeId: null, vendors: [...DEFAULT_MAINTENANCE_VENDORS] });
+    }
+    const key = `maintenanceVendors:${String(storeId)}`;
+    const doc = await Setting.findOne({ key }).lean();
+    const list = doc?.value?.vendors;
+    const vendors = sanitizeMaintenanceVendorsList(list);
+    res.json({ storeId: String(storeId), vendors });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Save maintenance vendor list for a store
+// @route   PUT /api/system/maintenance-vendors
+// @access  Private/Admin
+router.put('/maintenance-vendors', protect, admin, async (req, res) => {
+  try {
+    const storeId = resolveAssetsColumnsStoreId(req, req.body?.storeId);
+    if (!storeId) {
+      return res.status(400).json({ message: 'Store context is required' });
+    }
+    const vendors = sanitizeMaintenanceVendorsList(req.body?.vendors);
+    const key = `maintenanceVendors:${String(storeId)}`;
+    await Setting.updateOne(
+      { key },
+      { $set: { value: { vendors }, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ message: 'Maintenance vendors saved', storeId: String(storeId), vendors });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

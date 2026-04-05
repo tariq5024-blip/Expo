@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-const DashboardCharts = lazy(() => import('../components/DashboardCharts'));
+import DashboardCharts from '../components/DashboardCharts';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -19,7 +19,16 @@ import {
   X,
   RotateCcw,
 } from 'lucide-react';
-import LoadingLogo from '../components/LoadingLogo';
+import AppSpinner from '../components/AppSpinner';
+
+/** Avoid stacking ApiLoadingOverlay on top of this page’s own loading UI. */
+const DASHBOARD_API = { headers: { 'X-Skip-Global-Loading': '1' } };
+
+function isAbortLike(error) {
+  const c = error?.code;
+  const n = error?.name;
+  return c === 'ERR_CANCELED' || n === 'CanceledError' || n === 'AbortError';
+}
 
 const DASHBOARD_LAYOUT_VERSION = 1;
 const DEFAULT_ANALYTICS_SECTION_ORDER = [
@@ -132,21 +141,18 @@ const Dashboard = () => {
   const [systemOk, setSystemOk] = useState(true);
   const [_HEALTH, setHealth] = useState({ backend: false, db: false });
   const [recentAssets, setRecentAssets] = useState([]);
+  const [recentLoading, setRecentLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [showLowStockPanel, setShowLowStockPanel] = useState(false);
   const lowStockTriggerRef = useRef(null);
   const lowStockOverlayRef = useRef(null);
   const fetchSeqRef = useRef(0);
+  const recentRidRef = useRef(0);
   const statsRef = useRef(null);
 
   useEffect(() => {
     statsRef.current = stats;
   }, [stats]);
-
-  // Download chart chunk in parallel with /assets/stats so analytics paint sooner after data arrives.
-  useEffect(() => {
-    import('../components/DashboardCharts');
-  }, []);
 
   const analyticsSectionOptions = useMemo(
     () => [
@@ -195,6 +201,10 @@ const Dashboard = () => {
     ? `?maintenance_vendor=${encodeURIComponent(dashboardVendor)}`
     : '';
   const assetsLink = `/assets${assetsQuery}`;
+
+  useEffect(() => {
+    setRecentAssets([]);
+  }, [dashboardVendor, isScyDashboard]);
 
   useEffect(() => {
     // Per-user dashboard layout persistence (local-only for now).
@@ -303,8 +313,11 @@ const Dashboard = () => {
 
   useEffect(() => {
     let cancelled = false;
+    const ac = new AbortController();
     const fetchSeq = ++fetchSeqRef.current;
     const isStale = () => cancelled || fetchSeq !== fetchSeqRef.current;
+    const withSignal = { ...DASHBOARD_API, signal: ac.signal };
+
     const fetchStats = async () => {
       const maxAttempts = 3;
       let lastError = null;
@@ -318,49 +331,82 @@ const Dashboard = () => {
           if (!isStale()) setError(null);
           const vendorFilter = isScyDashboard && dashboardVendor !== 'All' ? { maintenance_vendor: dashboardVendor } : {};
           const statsParams = vendorFilter;
-          const recentParams = { page: 1, limit: 8, ...vendorFilter };
-          const [statsResponse, recentResponse] = await Promise.all([
-            api.get('/assets/stats', { params: statsParams }),
-            api.get('/assets', { params: recentParams })
+          const recentParams = { page: 1, limit: 8, light: 1, ...vendorFilter };
+
+          const recentRid = ++recentRidRef.current;
+          if (!isStale()) setRecentLoading(true);
+          const recentP = api.get('/assets', { params: recentParams, ...withSignal });
+
+          const [statsSettled, consumablesSettled, toolsSettled] = await Promise.allSettled([
+            api.get('/assets/stats', { params: statsParams, ...withSignal }),
+            api.get('/consumables/stats', withSignal),
+            api.get('/tools/stats', withSignal)
           ]);
           if (isStale()) return;
-          setStats(normalizeStats(statsResponse.data));
-          setRecentAssets(recentResponse.data?.assets || recentResponse.data?.items || []);
+
+          if (statsSettled.status === 'rejected') {
+            throw statsSettled.reason;
+          }
+
+          setStats(normalizeStats(statsSettled.value.data));
           setLastUpdated(new Date());
-          // Core dashboard (metrics, charts, recent table) — show immediately; do not wait on consumables/tools.
+
+          if (consumablesSettled.status === 'fulfilled') {
+            setConsumablesStats(consumablesSettled.value.data || {});
+            setConsumablesError('');
+          } else {
+            const e = consumablesSettled.reason;
+            if (isAbortLike(e)) throw e;
+            console.warn('Failed to load consumables stats:', e);
+            setConsumablesStats({});
+            setConsumablesError(
+              e?.response?.data?.message || e?.message || 'Unknown error'
+            );
+          }
+
+          if (toolsSettled.status === 'fulfilled') {
+            setToolsStats(toolsSettled.value.data || {});
+            setToolsError('');
+          } else {
+            const e = toolsSettled.reason;
+            if (isAbortLike(e)) throw e;
+            console.warn('Failed to load tools stats:', e);
+            setToolsStats({});
+            setToolsError(e?.response?.data?.message || e?.message || 'Unknown error');
+          }
+
+          // One paint: KPI row + consumables/tools banners + charts (recent table may still stream).
           if (!isStale()) {
             setLoading(false);
             setRefreshing(false);
           }
 
-          if (!hadStats) {
-            setConsumablesStats(null);
-            setToolsStats(null);
-          }
-          setConsumablesError('');
-          setToolsError('');
-          const extrasSeq = fetchSeq;
-          Promise.all([api.get('/consumables/stats'), api.get('/tools/stats')])
-            .then(([consumablesResponse, toolsResponse]) => {
-              if (cancelled || extrasSeq !== fetchSeqRef.current) return;
-              setConsumablesStats(consumablesResponse.data || {});
-              setToolsStats(toolsResponse.data || {});
-              setConsumablesError('');
-              setToolsError('');
+          recentP
+            .then((recentResponse) => {
+              if (isStale() || recentRid !== recentRidRef.current) return;
+              setRecentAssets(recentResponse.data?.assets || recentResponse.data?.items || []);
             })
             .catch((e) => {
-              if (cancelled || extrasSeq !== fetchSeqRef.current) return;
-              console.warn('Failed to load consumables/tools stats:', e);
-              setConsumablesStats({});
-              setToolsStats({});
-              const msg = e?.response?.data?.message || e?.message || 'Unknown error';
-              setConsumablesError(msg);
-              setToolsError(msg);
+              if (isAbortLike(e) || isStale() || recentRid !== recentRidRef.current) return;
+              console.warn('Failed to load recent assets:', e);
+              setRecentAssets([]);
+            })
+            .finally(() => {
+              if (isStale() || recentRid !== recentRidRef.current) return;
+              setRecentLoading(false);
             });
 
           lastError = null;
           break;
         } catch (error) {
+          if (isAbortLike(error)) {
+            if (!isStale()) {
+              setLoading(false);
+              setRefreshing(false);
+              setRecentLoading(false);
+            }
+            return;
+          }
           lastError = error;
           const status = error?.response?.status;
           const transient = !status || status >= 500 || status === 429 || error?.code === 'ECONNABORTED' || error?.message === 'Network Error';
@@ -371,6 +417,7 @@ const Dashboard = () => {
       if (lastError) {
         if (isStale()) return;
         console.error('Error fetching stats:', lastError);
+        setRecentLoading(false);
         if (!statsRef.current) {
           const scopeLabel = isScyDashboard && dashboardVendor !== 'All' ? `${dashboardVendor} ` : '';
           setError(`Failed to load ${scopeLabel}dashboard data. Please try refreshing.`);
@@ -385,6 +432,7 @@ const Dashboard = () => {
     fetchStats();
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [dashboardVendor, isScyDashboard]);
 
@@ -427,16 +475,23 @@ const Dashboard = () => {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [showLowStockPanel]);
 
-  if (loading && !stats) return (
-    <div className="flex min-h-[70vh] flex-col items-center justify-center gap-2 bg-app-page px-4">
-      <LoadingLogo
-        message="Loading dashboard"
-        subMessage="Fetching live stats and recent activity…"
-        sizeClass="w-24 h-24"
-        className="text-app-main"
-      />
-    </div>
-  );
+  if (loading && !stats) {
+    return (
+      <div
+        className="isolate flex min-h-[70vh] flex-col items-center justify-center bg-app-page px-4"
+        style={{ WebkitFontSmoothing: 'antialiased' }}
+      >
+        {/* Single flat layer (no backdrop-blur / translucent card) avoids compositor “double” edges on some GPUs */}
+        <div className="flex w-full max-w-sm flex-col items-center rounded-2xl border border-app-card bg-app-card px-8 py-12 shadow-card">
+          <AppSpinner
+            message="Loading dashboard"
+            subMessage="Syncing live metrics and recent activity for your store."
+            size="lg"
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (error && !stats) return (
     <div className="min-h-screen bg-app-page flex items-center justify-center p-6">
@@ -721,27 +776,14 @@ const Dashboard = () => {
 
       <section aria-label="Analytics and charts" className="space-y-2">
         <h2 className="text-xs font-bold uppercase tracking-widest text-app-muted px-0.5">Analytics</h2>
-        <Suspense
-          fallback={
-            <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-app-card bg-app-card/40 py-12">
-              <LoadingLogo
-                message="Loading charts…"
-                subMessage="Almost there."
-                sizeClass="w-20 h-20"
-                className="text-app-main"
-              />
-            </div>
-          }
-        >
-          <DashboardCharts
-            stats={stats}
-            showMaintenanceVendorFeatures={isScyDashboard}
-            selectedMaintenanceVendor={isScyDashboard ? dashboardVendor : 'All'}
-            analyticsSectionOrder={dashboardLayout.analyticsOrder}
-            showInsightsStrip={dashboardLayout.showInsightsStrip !== false}
-            chartWidgets={dashboardLayout.chartWidgets || DEFAULT_DASHBOARD_LAYOUT.chartWidgets}
-          />
-        </Suspense>
+        <DashboardCharts
+          stats={stats}
+          showMaintenanceVendorFeatures={isScyDashboard}
+          selectedMaintenanceVendor={isScyDashboard ? dashboardVendor : 'All'}
+          analyticsSectionOrder={dashboardLayout.analyticsOrder}
+          showInsightsStrip={dashboardLayout.showInsightsStrip !== false}
+          chartWidgets={dashboardLayout.chartWidgets || DEFAULT_DASHBOARD_LAYOUT.chartWidgets}
+        />
       </section>
 
       {dashboardLayout.showRecentActivity !== false && (
@@ -749,7 +791,11 @@ const Dashboard = () => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-app-card px-5 py-4 bg-app-elevated/30">
           <div>
             <h2 className="text-base font-bold text-app-main">Recent asset activity</h2>
-            <p className="text-xs text-app-muted mt-0.5">Last {recentAssets.length} updated {recentAssets.length === 1 ? 'record' : 'records'}</p>
+            <p className="text-xs text-app-muted mt-0.5">
+              {recentLoading && recentAssets.length === 0
+                ? 'Loading recent updates…'
+                : `Last ${recentAssets.length} updated ${recentAssets.length === 1 ? 'record' : 'records'}`}
+            </p>
           </div>
           <Link
             to={assetsLink}
@@ -769,7 +815,19 @@ const Dashboard = () => {
               </tr>
             </thead>
             <tbody>
-              {recentAssets.length === 0 && (
+              {recentLoading && recentAssets.length === 0 && [0, 1, 2].map((i) => (
+                <tr key={`sk-${i}`} className="border-b border-app-card last:border-0">
+                  <td className="px-5 py-3.5" colSpan={4}>
+                    <div className="flex gap-4 animate-pulse">
+                      <div className="h-10 flex-1 max-w-xs rounded-lg bg-app-elevated" />
+                      <div className="h-10 w-24 rounded-lg bg-app-elevated" />
+                      <div className="h-10 flex-1 max-w-[10rem] rounded-lg bg-app-elevated" />
+                      <div className="h-10 w-20 rounded-lg bg-app-elevated" />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!recentLoading && recentAssets.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-5 py-14 text-center text-app-muted">
                     <div className="inline-flex flex-col items-center gap-3 max-w-xs mx-auto">

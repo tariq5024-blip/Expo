@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Truck, FileText, Box, CheckSquare, RefreshCw, Trash2, Database, AlertTriangle, Mail, Send, Palette, SlidersHorizontal, ArrowUp, ArrowDown, Plus } from 'lucide-react';
+import { Truck, FileText, Box, CheckSquare, RefreshCw, Trash2, Database, AlertTriangle, Mail, Send, Palette, SlidersHorizontal, ArrowUp, ArrowDown, Plus, Wrench } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 
@@ -93,6 +93,9 @@ const Setup = () => {
   const [assetColumnsConfig, setAssetColumnsConfig] = useState(buildDefaultColumnsConfig);
   const [assetColumnsLoading, setAssetColumnsLoading] = useState(false);
   const [assetColumnsSaving, setAssetColumnsSaving] = useState(false);
+  const [maintenanceVendorsText, setMaintenanceVendorsText] = useState('Siemens\nG42');
+  const [maintenanceVendorsLoading, setMaintenanceVendorsLoading] = useState(false);
+  const [maintenanceVendorsSaving, setMaintenanceVendorsSaving] = useState(false);
   const assetColumnsScrollRef = useRef(null);
   const assetColumnsLoadEpochRef = useRef(0);
 
@@ -241,6 +244,57 @@ const Setup = () => {
     loadAssetColumnsConfig();
     return () => { cancelled = true; };
   }, [canManageNotificationPreferences, effectiveEmailStoreId]);
+
+  useEffect(() => {
+    if (!canManageNotificationPreferences || !effectiveEmailStoreId) return;
+    let cancelled = false;
+    const loadVendors = async () => {
+      try {
+        setMaintenanceVendorsLoading(true);
+        const res = await api.get('/system/maintenance-vendors', { params: { storeId: effectiveEmailStoreId } });
+        if (cancelled) return;
+        const v = res.data?.vendors;
+        if (Array.isArray(v) && v.length > 0) {
+          setMaintenanceVendorsText(v.join('\n'));
+        } else {
+          setMaintenanceVendorsText('Siemens\nG42');
+        }
+      } catch (e) {
+        if (!cancelled) console.error('Failed to load maintenance vendors:', e);
+      } finally {
+        if (!cancelled) setMaintenanceVendorsLoading(false);
+      }
+    };
+    loadVendors();
+    return () => { cancelled = true; };
+  }, [canManageNotificationPreferences, effectiveEmailStoreId]);
+
+  const saveMaintenanceVendorsConfig = async () => {
+    if (!effectiveEmailStoreId) {
+      alert(
+        user?.role === 'Super Admin'
+          ? 'Select a store first (same as column defaults / email settings).'
+          : 'No store is assigned to your account.'
+      );
+      return;
+    }
+    try {
+      setMaintenanceVendorsSaving(true);
+      const vendors = maintenanceVendorsText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await api.put('/system/maintenance-vendors', {
+        storeId: effectiveEmailStoreId,
+        vendors
+      });
+      alert('Maintenance vendors saved. They appear in Assets filters, bulk edit, and the dashboard vendor scope.');
+    } catch (error) {
+      alert('Failed to save maintenance vendors: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setMaintenanceVendorsSaving(false);
+    }
+  };
 
   const moveAssetColumn = (index, direction) => {
     setAssetColumnsConfig((prev) => {
@@ -979,6 +1033,47 @@ const Setup = () => {
                   className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm"
                 >
                   {assetColumnsSaving ? 'Saving...' : 'Save Columns Layout'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {canManageNotificationPreferences && (
+        <div className="mt-6 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center mb-4">
+            <Wrench className="w-6 h-6 text-indigo-600 mr-2" />
+            <h2 className="text-xl font-bold text-gray-800">Maintenance vendors</h2>
+          </div>
+          <p className="text-sm text-gray-500 mb-4">
+            Names used for the <strong>All Vendors</strong> filter on Assets, bulk edit, edit/add asset maintenance vendor fields, and the dashboard <strong>vendor scope</strong> buttons. Enter one vendor per line (max 50, duplicates removed).
+          </p>
+          {user?.role === 'Super Admin' && !effectiveEmailStoreId && (
+            <p className="mb-4 text-xs text-amber-800 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              Select a store above (column defaults) to load and save this list.
+            </p>
+          )}
+          {maintenanceVendorsLoading ? (
+            <p className="text-sm text-gray-500">Loading vendors…</p>
+          ) : (
+            <>
+              <textarea
+                value={maintenanceVendorsText}
+                onChange={(e) => setMaintenanceVendorsText(e.target.value)}
+                rows={8}
+                className="w-full max-w-xl border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder={'Siemens\nG42'}
+                disabled={!effectiveEmailStoreId}
+              />
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={saveMaintenanceVendorsConfig}
+                  disabled={maintenanceVendorsSaving || !effectiveEmailStoreId}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm"
+                >
+                  {maintenanceVendorsSaving ? 'Saving…' : 'Save maintenance vendors'}
                 </button>
               </div>
             </>

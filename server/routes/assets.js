@@ -322,9 +322,78 @@ function buildEffectiveMaintenanceVendorStringExpr() {
   return acc;
 }
 
+/** Query value for "Maintenance Vendor" filter = assets with no assigned vendor (UI shows "–"). */
+const MAINTENANCE_VENDOR_FILTER_NONE = '__NO_MAINTENANCE_VENDOR__';
+
+/**
+ * First non-empty trimmed maintenance-related field, same candidate order as
+ * client getMaintenanceVendorValue() before the vendor_name Siemens/G42 fallback.
+ */
+function buildFirstNonEmptyMaintenanceCandidateExpr() {
+  const trimPath = (path) => ({
+    $trim: { input: { $toString: { $ifNull: [path, ''] } } }
+  });
+  const trimGetField = (fieldName) => ({
+    $trim: {
+      input: {
+        $toString: {
+          $ifNull: [
+            { $getField: { field: fieldName, input: { $ifNull: ['$customFields', {}] } } },
+            ''
+          ]
+        }
+      }
+    }
+  });
+  const layers = [
+    trimPath('$maintenance_vendor'),
+    trimPath('$maintenanceVendor'),
+    trimPath('$customFields.maintenance_vendor'),
+    trimPath('$customFields.maintenance_vandor'),
+    trimPath('$customFields.maintenanceVendor'),
+    trimGetField('maintenance vendor'),
+    trimGetField('maintenance vandor')
+  ];
+  function fold(i) {
+    if (i >= layers.length) return '';
+    const head = layers[i];
+    if (i === layers.length - 1) {
+      return { $cond: [{ $gt: [{ $strLenCP: head }, 0] }, head, ''] };
+    }
+    return { $cond: [{ $gt: [{ $strLenCP: head }, 0] }, head, fold(i + 1)] };
+  }
+  return fold(0);
+}
+
+/** Matches assets whose Maintenance Vendor column would show "–" (forgotten on import, etc.). */
+function buildMaintenanceVendorMissingMatchClause() {
+  const firstMaint = buildFirstNonEmptyMaintenanceCandidateExpr();
+  const vnTrimmed = {
+    $trim: { input: { $toString: { $ifNull: ['$vendor_name', ''] } } }
+  };
+  const vnNorm = buildMongoNormalizeMaintenanceVendorKeyExpr(vnTrimmed);
+  const impliedFromVendorName = {
+    $or: [
+      { $eq: [vnNorm, 'siemens'] },
+      { $eq: [vnNorm, 'g42'] }
+    ]
+  };
+  return {
+    $expr: {
+      $and: [
+        { $eq: [{ $strLenCP: firstMaint }, 0] },
+        { $not: [impliedFromVendorName] }
+      ]
+    }
+  };
+}
+
 /** SCY maintenance vendor filter: same effective field as UI; G-42 matches G42 */
 function buildMaintenanceVendorMatchClause(maintenanceVendor) {
   const raw = String(maintenanceVendor || '').trim();
+  if (raw === MAINTENANCE_VENDOR_FILTER_NONE) {
+    return buildMaintenanceVendorMissingMatchClause();
+  }
   const normalizedFilter = normalizeMaintenanceVendorKeyForCompare(raw);
   if (!normalizedFilter) {
     return { $expr: { $eq: [1, 0] } };
@@ -1427,6 +1496,30 @@ router.get('/', protect, async (req, res) => {
       filter._id = { $in: duplicateAssetIds };
     }
 
+    /** Dashboard “recent activity”: skip count, duplicate scan, category hydration, heavy populate */
+    const lightList =
+      String(req.query.light || '').trim() === '1'
+      && page === 1
+      && limit <= 50
+      && duplicateParam !== 'true'
+      && !q;
+
+    if (lightList) {
+      const fetchedItems = await Asset.find(filter)
+        .sort({ updatedAt: -1 })
+        .limit(limit)
+        .select('name serial_number status condition location updatedAt store')
+        .populate('store', 'name')
+        .lean();
+      const items = Array.isArray(fetchedItems) ? fetchedItems : [];
+      return res.json({
+        items,
+        total: items.length,
+        page: 1,
+        pages: 1
+      });
+    }
+
     const [total, fetchedItems] = await Promise.all([
       Asset.countDocuments(filter),
       Asset.find(filter)
@@ -2339,6 +2432,11 @@ router.post('/bulk-update', protect, admin, async (req, res) => {
     if (updates.comments !== undefined) data.comments = String(updates.comments || '').trim();
     let prodName = updates.product_name ? String(updates.product_name) : '';
     if (prodName) data.product_name = capitalizeWords(prodName);
+
+    const mvRaw = String(updates.maintenance_vendor ?? updates.customFields?.maintenance_vendor ?? '').trim();
+    if (mvRaw) {
+      data['customFields.maintenance_vendor'] = mvRaw;
+    }
 
     const match = { _id: { $in: ids } };
     if (req.user?.role !== 'Super Admin') {

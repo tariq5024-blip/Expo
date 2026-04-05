@@ -267,7 +267,10 @@ const NON_EDITABLE_CUSTOM_KEYS = new Set([
   'updatedAt',
   'createdAt'
 ]);
-const MAINTENANCE_VENDOR_OPTIONS = ['Siemens', 'G42'];
+const DEFAULT_MAINTENANCE_VENDORS = ['Siemens', 'G42'];
+
+/** Assets list filter: show rows with no maintenance vendor (must match server MAINTENANCE_VENDOR_FILTER_NONE). */
+const MAINTENANCE_VENDOR_FILTER_NONE = '__NO_MAINTENANCE_VENDOR__';
 
 /** Bulk import preview + confirm can exceed default axios 15s for large workbooks. */
 const IMPORT_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000;
@@ -449,9 +452,11 @@ const Assets = () => {
     building: '',
     state_comments: '',
     remarks: '',
-    comments: ''
+    comments: '',
+    maintenance_vendor: ''
   });
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [maintenanceVendorList, setMaintenanceVendorList] = useState(() => [...DEFAULT_MAINTENANCE_VENDORS]);
   const [showRecentUploads, setShowRecentUploads] = useState(false);
   const [prevVisibleColumns, setPrevVisibleColumns] = useState(null);
 
@@ -1163,6 +1168,29 @@ const Assets = () => {
     return () => { cancelled = true; };
   }, [activeStore, user?._id]);
 
+  useEffect(() => {
+    const storeId = activeStore?._id || activeStore;
+    if (!storeId) {
+      setMaintenanceVendorList([...DEFAULT_MAINTENANCE_VENDORS]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get('/system/maintenance-vendors', { params: { storeId } })
+      .then((res) => {
+        if (cancelled) return;
+        const v = res.data?.vendors;
+        if (Array.isArray(v) && v.length > 0) setMaintenanceVendorList(v);
+        else setMaintenanceVendorList([...DEFAULT_MAINTENANCE_VENDORS]);
+      })
+      .catch(() => {
+        if (!cancelled) setMaintenanceVendorList([...DEFAULT_MAINTENANCE_VENDORS]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStore]);
+
   const isConditionFaulty = (asset) => String(asset?.condition || '').trim().toLowerCase() === 'faulty';
   const cannotIssueToTechnician = (asset) => Boolean(asset?.reserved === true) || isConditionFaulty(asset);
   const topAssignDisabled = selectedIds.length === 0;
@@ -1173,6 +1201,7 @@ const Assets = () => {
       const asset = assets.find(a => a._id === selectedIds[0]);
       if (asset) handleEditClick(asset);
     } else {
+      setShowColumnMenu(false);
       setShowBulkEditModal(true);
     }
   };
@@ -2030,6 +2059,7 @@ const Assets = () => {
       if (bulkForm.comments) updates.comments = bulkForm.comments;
       // category/product_type removed
       if (bulkForm.product_name) updates.product_name = bulkForm.product_name;
+      if (bulkForm.maintenance_vendor) updates.maintenance_vendor = bulkForm.maintenance_vendor;
       if (bulkForm.locationId) {
         const loc = stores.find(s => s._id === bulkForm.locationId);
         if (loc) updates.location = loc.name;
@@ -2522,7 +2552,8 @@ const Assets = () => {
                  Add New Asset
                </button>
               <button
-                onClick={() => setShowBulkEditModal(true)}
+                type="button"
+                onClick={() => { setShowColumnMenu(false); setShowBulkEditModal(true); }}
                 disabled={selectedIds.length === 0}
                 className={`inline-flex items-center gap-2 h-10 px-4 rounded-xl border text-sm shadow-sm ${selectedIds.length === 0 ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
               >
@@ -2535,7 +2566,13 @@ const Assets = () => {
               >
                  {bulkLoading ? 'Deleting…' : `Delete Selected (${selectedIds.length})`}
                </button>
-              <button onClick={() => setShowImportModal(true)} className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-sm">Bulk Import</button>
+              <button
+                type="button"
+                onClick={() => { setShowColumnMenu(false); setShowImportModal(true); }}
+                className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-sm"
+              >
+                Bulk Import
+              </button>
               <button onClick={handleDownloadTemplate} className="inline-flex items-center gap-2 h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-sm">Download Sample</button>
              </>
            )}
@@ -2638,7 +2675,7 @@ const Assets = () => {
       )}
 
       {showImportModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[200] p-4">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-6xl max-h-[92vh] flex flex-col relative">
             <h2 className="text-xl font-bold mb-4 shrink-0">Bulk Import Assets</h2>
             {importStep === 'select' && (
@@ -2923,7 +2960,7 @@ const Assets = () => {
 
       <div
         className={`bg-white rounded-xl shadow border border-gray-100 p-4 mb-4 ${
-          showColumnMenu ? 'relative z-50' : ''
+          showColumnMenu ? 'relative z-20' : ''
         }`}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-center">
@@ -2997,8 +3034,10 @@ const Assets = () => {
               className="h-10 px-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             >
               <option value="">All Vendors</option>
-              <option value="Siemens">Siemens</option>
-              <option value="G42">G42</option>
+              <option value={MAINTENANCE_VENDOR_FILTER_NONE}>No maintenance vendor</option>
+              {maintenanceVendorList.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
             </select>
           )}
           <div className="flex gap-2 sm:col-span-2 lg:col-span-4 items-center">
@@ -3009,7 +3048,7 @@ const Assets = () => {
               <Filter className="w-4 h-4" />
               {showAdvancedFilters ? 'Hide Filters' : 'Filters'}
             </button>
-            <div className="relative z-[60]">
+            <div className="relative z-30">
               <button
                 type="button"
                 onClick={() => setShowColumnMenu(v => !v)}
@@ -3019,7 +3058,7 @@ const Assets = () => {
                 Columns
               </button>
               {showColumnMenu && (
-                <div className="absolute right-0 top-full z-[70] mt-2 w-64 max-h-[min(24rem,70vh)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 shadow-2xl">
+                <div className="absolute right-0 top-full z-40 mt-2 w-64 max-h-[min(24rem,70vh)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 shadow-2xl">
                   <p className="text-[11px] text-slate-500 mb-2">Drag to reorder columns</p>
                   <button
                     type="button"
@@ -3177,8 +3216,9 @@ const Assets = () => {
                 onChange={(e) => setFilterMaintenanceVendor(e.target.value)}
                 className="h-10 px-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               >
-                <option value="">Maintenance Vendor</option>
-                {MAINTENANCE_VENDOR_OPTIONS.map((option) => (
+                <option value="">Maintenance Vendor (all)</option>
+                <option value={MAINTENANCE_VENDOR_FILTER_NONE}>No maintenance vendor</option>
+                {maintenanceVendorList.map((option) => (
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
@@ -3475,7 +3515,7 @@ const Assets = () => {
 
       {/* Assign Modal — wide landscape layout so fields fit without tall narrow scrolling */}
       {assigningAsset && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-600/50 p-3 sm:p-4">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-600/50 p-3 sm:p-4">
           <div
             role="dialog"
             aria-labelledby="assign-asset-title"
@@ -3819,7 +3859,7 @@ const Assets = () => {
 
       {/* Edit Modal */}
       {editingAsset && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[200]">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Edit Asset</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4206,7 +4246,7 @@ const Assets = () => {
                               className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                             >
                               <option value="">Select Maintenance Vendor</option>
-                              {MAINTENANCE_VENDOR_OPTIONS.map((option) => (
+                              {maintenanceVendorList.map((option) => (
                                 <option key={option} value={option}>{option}</option>
                               ))}
                             </select>
@@ -4245,7 +4285,7 @@ const Assets = () => {
       )}
       {/* Add Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[200]">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Add New Asset</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4519,7 +4559,7 @@ const Assets = () => {
                               className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                             >
                               <option value="">Select Maintenance Vendor</option>
-                              {MAINTENANCE_VENDOR_OPTIONS.map((option) => (
+                              {maintenanceVendorList.map((option) => (
                                 <option key={option} value={option}>{option}</option>
                               ))}
                             </select>
@@ -4560,7 +4600,7 @@ const Assets = () => {
 
       {/* Bulk Edit Modal */}
       {showBulkEditModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[200]">
           <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Bulk Edit Assets</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4625,6 +4665,21 @@ const Assets = () => {
                   placeholder="e.g., SIEMENS"
                 />
               </div>
+              {isScyStoreContext && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Maintenance Vendor (Optional)</label>
+                  <select
+                    value={bulkForm.maintenance_vendor || ''}
+                    onChange={(e) => setBulkForm({ ...bulkForm, maintenance_vendor: e.target.value })}
+                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                  >
+                    <option value="">No change</option>
+                    {maintenanceVendorList.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700">Location (Optional)</label>
                 <select

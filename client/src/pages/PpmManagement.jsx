@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
@@ -7,6 +7,9 @@ const EQUIPMENT_OPTIONS = ['Ladder', 'Scaffold', 'Manlift', 'Rope', 'Safety Harn
 
 /** Must match server `VMS_CHECKLIST_KEY` */
 const VMS_CHECKLIST_KEY = 'vms_online';
+
+/** Schedule table page size (server allows up to 200). Keeps DOM light for ~10k tasks. */
+const SCHEDULE_PAGE_SIZE = 50;
 
 const ppmDownloadFallbackFilename = () => {
   const d = new Date();
@@ -90,6 +93,8 @@ const PpmManagement = () => {
     health: 100
   });
   const [rows, setRows] = useState([]);
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskListMeta, setTaskListMeta] = useState({ total: 0, pages: 1 });
   const [techs, setTechs] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -138,17 +143,36 @@ const PpmManagement = () => {
   const checklistFieldsLocked =
     Boolean(selected) && ['Completed', 'Cancelled', 'Not Completed'].includes(selected.status);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const gen = ++loadGenRef.current;
     try {
       setLoading(true);
-      const [o, list] = await Promise.all([
+      const listParams = {
+        page: taskPage,
+        limit: SCHEDULE_PAGE_SIZE,
+        ...(statusFilter ? { status: statusFilter } : {}),
+        ...(q.trim() ? { q: q.trim() } : {})
+      };
+      const [o, listRes] = await Promise.all([
         api.get('/ppm/overview'),
-        api.get('/ppm', { params: { limit: 1000 } })
+        api.get('/ppm', { params: listParams })
       ]);
       if (gen !== loadGenRef.current) return;
       setOverview(o.data || { total: 0, overdue: 0, completed: 0, notCompleted: 0, open: 0, health: 100 });
-      setRows(Array.isArray(list.data) ? list.data : []);
+      const payload = listRes.data;
+      const items = Array.isArray(payload) ? payload : (payload?.items || []);
+      const total = Array.isArray(payload) ? items.length : Number(payload?.total ?? items.length ?? 0);
+      const derivedPageCount =
+        total > 0 ? Math.max(1, Math.ceil(total / SCHEDULE_PAGE_SIZE)) : 1;
+      const pages = Array.isArray(payload)
+        ? 1
+        : Math.max(1, Number(payload?.pages ?? derivedPageCount));
+      const serverPage = Array.isArray(payload) ? taskPage : Number(payload?.page ?? taskPage);
+      setRows(items);
+      setTaskListMeta({ total, pages });
+      if (!Array.isArray(payload) && serverPage !== taskPage) {
+        setTaskPage(serverPage);
+      }
       if (isAdminUi) {
         try {
           const u = await api.get('/users');
@@ -165,7 +189,8 @@ const PpmManagement = () => {
       if (gen === loadGenRef.current) {
         setSelected((prev) => {
           if (!prev) return null;
-          return (Array.isArray(list.data) ? list.data : []).find((r) => r._id === prev._id) || null;
+          const found = items.find((r) => r._id === prev._id);
+          return found || prev;
         });
       }
     } catch (error) {
@@ -174,7 +199,7 @@ const PpmManagement = () => {
     } finally {
       if (gen === loadGenRef.current) setLoading(false);
     }
-  };
+  }, [isAdminUi, taskPage, statusFilter, q]);
 
   const confirmResetPpmProgram = async () => {
     const password = resetProgramPassword.trim();
@@ -229,7 +254,12 @@ const PpmManagement = () => {
     }
   };
 
-  useEffect(() => { load(); }, [isAdminUi]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      load();
+    }, q.trim() ? 320 : 0);
+    return () => clearTimeout(t);
+  }, [load]);
 
   useEffect(() => {
     if (!q.trim()) setPpmPickHint(null);
@@ -295,36 +325,29 @@ const PpmManagement = () => {
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
-  const filteredTasks = useMemo(() => {
-    const qt = q.trim();
-    return rows.filter((row) => {
-      if (qt) {
-        return assetMatchesPpmSearch(row.asset || {}, q);
-      }
-      if (statusFilter && row.status !== statusFilter) return false;
-      return true;
-    });
-  }, [rows, q, statusFilter]);
-
+  /** Task rows are already filtered/paginated on the server; merge asset-only matches when searching. */
   const displayRows = useMemo(() => {
     const qt = q.trim();
-    const taskPart = filteredTasks.map((task) => ({ kind: 'task', task }));
+    const taskPart = rows.map((task) => ({ kind: 'task', task }));
     if (!qt) return taskPart;
 
     const seenAsset = new Set(
-      filteredTasks.map((r) => (r.asset?._id ? String(r.asset._id) : '')).filter(Boolean)
+      rows.map((r) => (r.asset?._id ? String(r.asset._id) : '')).filter(Boolean)
     );
     const extras = [];
+    let extraCap = 0;
     for (const a of searchAssets) {
+      if (extraCap >= 100) break;
       const id = a?._id ? String(a._id) : '';
       if (!id || seenAsset.has(id)) continue;
       if (assetMatchesPpmSearch(a, qt)) {
         extras.push({ kind: 'asset', asset: a });
         seenAsset.add(id);
+        extraCap += 1;
       }
     }
     return [...taskPart, ...extras];
-  }, [filteredTasks, searchAssets, q]);
+  }, [rows, searchAssets, q]);
 
   const createSelectedPreview = useMemo(() => {
     if (!form.asset_id) return null;
@@ -471,7 +494,7 @@ const PpmManagement = () => {
         <div className="bg-white border rounded-xl p-4 shadow-sm sm:col-span-2 lg:col-span-1">
           <div className="text-xs uppercase text-slate-500">In PPM program</div>
           <div className="text-3xl font-bold text-slate-900 mt-2">{overview.total}</div>
-          <div className="text-xs text-slate-600 mt-1">Assets marked with PPM (new checkboxes add here immediately)</div>
+          <div className="text-xs text-slate-600 mt-1">Flagged for PPM or has a schedule task in this store</div>
         </div>
       </div>
 
@@ -576,8 +599,23 @@ const PpmManagement = () => {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 bg-white border rounded-xl shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b flex flex-wrap gap-2 items-center">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by Unique ID, ABS code, IP, serial, model…" className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[220px]" />
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
+            <input
+              value={q}
+              onChange={(e) => {
+                setTaskPage(1);
+                setQ(e.target.value);
+              }}
+              placeholder="Search by Unique ID, ABS code, IP, serial, model…"
+              className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[220px]"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setTaskPage(1);
+                setStatusFilter(e.target.value);
+              }}
+              className="border rounded-lg px-3 py-2 text-sm"
+            >
               <option value="">All status</option>
               <option value="Scheduled">Scheduled</option>
               <option value="In Progress">In Progress</option>
@@ -619,7 +657,7 @@ const PpmManagement = () => {
               <span className="text-xs text-slate-500 w-full sm:w-auto">While searching, all task statuses are shown; clear the box to use the status filter.</span>
             ) : null}
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[min(70vh,40rem)] overflow-y-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 border-b">
                 <tr>
@@ -715,9 +753,48 @@ const PpmManagement = () => {
               </tbody>
             </table>
           </div>
+          {taskListMeta.pages > 1 ? (
+            <div className="px-4 py-2 border-t flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600 bg-slate-50/90">
+              <span>
+                Showing{' '}
+                <span className="font-medium tabular-nums">
+                  {taskListMeta.total === 0
+                    ? 0
+                    : `${(taskPage - 1) * SCHEDULE_PAGE_SIZE + 1}–${Math.min(taskPage * SCHEDULE_PAGE_SIZE, taskListMeta.total)}`}
+                </span>
+                {' '}of <span className="font-medium tabular-nums">{taskListMeta.total}</span> tasks
+                {q.trim() ? ' (search; up to 10k scanned)' : ''}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={loading || taskPage <= 1}
+                  onClick={() => setTaskPage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span className="tabular-nums text-slate-700">
+                  Page {taskPage} / {taskListMeta.pages}
+                </span>
+                <button
+                  type="button"
+                  disabled={loading || taskPage >= taskListMeta.pages}
+                  onClick={() => setTaskPage((p) => p + 1)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          ) : taskListMeta.total > 0 ? (
+            <div className="px-4 py-2 border-t text-xs text-slate-500 bg-slate-50/50">
+              {taskListMeta.total} task{taskListMeta.total !== 1 ? 's' : ''} · {SCHEDULE_PAGE_SIZE} per page
+            </div>
+          ) : null}
         </div>
 
-        <div className="bg-white border rounded-xl shadow-sm p-4">
+        <div className="bg-white border rounded-xl shadow-sm p-4 lg:sticky lg:top-4 lg:self-start min-h-0 max-h-[calc(100vh-5rem)] overflow-y-auto min-w-0">
           {!selected && ppmPickHint && isAdminUi ? (
             <div className="space-y-2 text-sm">
               <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-indigo-950">
@@ -747,8 +824,8 @@ const PpmManagement = () => {
             </div>
           ) : null}
           {selected ? (
-            <div className="space-y-3">
-              <h3 className="text-lg font-semibold">PPM maintenance checklist</h3>
+            <div className="space-y-3 min-h-0">
+              <h3 className="text-lg font-semibold shrink-0">PPM maintenance checklist</h3>
               <div className="text-xs text-slate-600">
                 [{selected.asset?.abs_code || '-'}] · {selected.asset?.name || selected.asset?.model_number || 'Asset'}
               </div>

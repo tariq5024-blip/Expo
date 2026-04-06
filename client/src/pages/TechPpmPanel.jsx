@@ -52,6 +52,11 @@ const UNHEALTHY_CONDITIONS = new Set(['faulty', 'workshop', 'under repair/worksh
 
 const isAssetUnhealthy = (condition) => UNHEALTHY_CONDITIONS.has(String(condition || '').trim().toLowerCase());
 
+const isRowUnhealthyForSystemHealth = (r) => {
+  if (isAssetUnhealthy(r?.asset?.condition)) return true;
+  return String(r?.vms_label || '').trim() === 'Offline';
+};
+
 /** Must match server `VMS_CHECKLIST_KEY` */
 const VMS_CHECKLIST_KEY = 'vms_online';
 
@@ -197,14 +202,29 @@ const TechPpmPanel = () => {
       : Math.max(0, taskTotal - completedCount - notCompletedCount);
   const completedPct = taskTotal > 0 ? Math.round((completedCount / taskTotal) * 100) : 0;
 
-  const systemHealthPct = useMemo(() => {
-    if (!rows.length) return overview.health ?? 100;
-    const unhealthy = rows.filter((r) => isAssetUnhealthy(r.asset?.condition)).length;
-    return Math.round(((rows.length - unhealthy) / rows.length) * 100);
-  }, [rows, overview.health]);
+  /** Drop invalid / duplicate assets so the table and KPIs stay aligned (duplicate React keys caused blank rows). */
+  const displayRows = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      const id = r?.asset?._id;
+      if (id == null || id === '') continue;
+      const k = String(id);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    return out;
+  }, [rows]);
 
-  const allVisiblePpmOn = rows.length > 0 && rows.every((r) => Boolean(r.asset?.ppm_enabled));
-  const someVisiblePpmOn = rows.some((r) => Boolean(r.asset?.ppm_enabled));
+  const systemHealthPct = useMemo(() => {
+    if (!displayRows.length) return overview.health ?? 100;
+    const unhealthy = displayRows.filter((r) => isRowUnhealthyForSystemHealth(r)).length;
+    return Math.round(((displayRows.length - unhealthy) / displayRows.length) * 100);
+  }, [displayRows, overview.health]);
+
+  const allVisiblePpmOn = displayRows.length > 0 && displayRows.every((r) => Boolean(r.asset?.ppm_enabled));
+  const someVisiblePpmOn = displayRows.some((r) => Boolean(r.asset?.ppm_enabled));
 
   useEffect(() => {
     const el = ppmSelectAllRef.current;
@@ -212,7 +232,7 @@ const TechPpmPanel = () => {
   }, [someVisiblePpmOn, allVisiblePpmOn]);
 
   const toggleAllPpmInVisibleList = async () => {
-    const ids = rows.map((r) => r.asset?._id).filter(Boolean);
+    const ids = displayRows.map((r) => r.asset?._id).filter(Boolean);
     if (!ids.length) return;
     const nextEnabled = !allVisiblePpmOn;
     try {
@@ -373,8 +393,8 @@ const TechPpmPanel = () => {
           {canManagePpmInclusion ? (
             <>
               <span className="font-semibold">Type in the search box</span> to find assets in the store; matching rows appear so you can tick{' '}
-              <span className="font-semibold">PPM</span> to add them to the program. With an empty search, this table shows{' '}
-              <span className="font-semibold">only assets already in the PPM program</span> (technicians see the same set). Open the wrench to run the checklist.
+              <span className="font-semibold">PPM</span> to add them to the program. With an empty search, this table lists the same{' '}
+              <span className="font-semibold">PPM scope as the overview</span> (flagged for PPM or with a non-cancelled PPM task). Open the wrench to run the checklist.
             </>
           ) : (
             <>Search by Unique ID, ABS code, or IP. Open the wrench on a listed asset to run the checklist.</>
@@ -443,7 +463,7 @@ const TechPpmPanel = () => {
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase text-slate-500">System health</div>
           <div className="text-4xl font-bold text-emerald-700 mt-2">{systemHealthPct}%</div>
-          <div className="text-xs text-slate-500 mt-1">Assets in this list: healthy vs faulty / under repair</div>
+          <div className="text-xs text-slate-500 mt-1">Condition (faulty / workshop) and VMS Offline count as not healthy</div>
         </div>
       </div>
 
@@ -502,7 +522,7 @@ const TechPpmPanel = () => {
                           ref={ppmSelectAllRef}
                           type="checkbox"
                           checked={allVisiblePpmOn}
-                          disabled={bulkPpmBusy || rows.length === 0}
+                          disabled={bulkPpmBusy || displayRows.length === 0}
                           onChange={toggleAllPpmInVisibleList}
                           className="rounded border-slate-300"
                           title="Select all PPM checkboxes in the list below (current search results)"
@@ -523,7 +543,7 @@ const TechPpmPanel = () => {
               <tbody>
                 {loading ? (
                   <tr><td colSpan={workOrderColSpan} className="px-3 py-6 text-slate-500">Loading assets…</td></tr>
-                ) : rows.length === 0 ? (
+                ) : displayRows.length === 0 ? (
                   <tr>
                     <td colSpan={workOrderColSpan} className="px-3 py-6 text-slate-500">
                       {canManagePpmInclusion && !query.trim()
@@ -531,7 +551,7 @@ const TechPpmPanel = () => {
                         : 'No assets match your search (or this store has no assets yet).'}
                     </td>
                   </tr>
-                ) : rows.map((row) => {
+                ) : displayRows.map((row) => {
                   const a = row.asset || {};
                   const ns = nextServiceMeta(row.open_task, row.last_completed_at);
                   const rid = String(a._id || '');

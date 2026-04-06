@@ -167,6 +167,39 @@ const ensureTaskAccess = (task, req) => {
   return false;
 };
 
+/**
+ * Same asset set as GET /ppm/overview "in program": ppm_enabled ∪ in-store asset with a non-cancelled PPM task.
+ * Work Orders (self-service) must use this for empty search so KPIs match the table.
+ */
+const loadProgramScopedAssetObjectIds = async (storeOid) => {
+  const [enabledIds, taskAssetIdsRaw] = await Promise.all([
+    Asset.find({
+      store: storeOid,
+      disposed: { $ne: true },
+      ppm_enabled: true
+    }).distinct('_id'),
+    PpmTask.distinct('asset', {
+      store: storeOid,
+      status: { $ne: 'Cancelled' }
+    })
+  ]);
+
+  const taskAssetIdsValid =
+    taskAssetIdsRaw.length > 0
+      ? await Asset.find({
+        _id: { $in: taskAssetIdsRaw },
+        store: storeOid,
+        disposed: { $ne: true }
+      }).distinct('_id')
+      : [];
+
+  const programIdSet = new Set([
+    ...enabledIds.map((id) => String(id)),
+    ...taskAssetIdsValid.map((id) => String(id))
+  ]);
+  return [...programIdSet].map((id) => new mongoose.Types.ObjectId(id));
+};
+
 router.get('/overview', protect, allowPpmRead, async (req, res) => {
   try {
     const now = new Date();
@@ -175,13 +208,7 @@ router.get('/overview', protect, allowPpmRead, async (req, res) => {
     }
     const storeOid = new mongoose.Types.ObjectId(req.activeStore);
 
-    /** Total PPM scope = assets marked for PPM (new checkboxes add to this count immediately). */
-    const programAssetIds = await Asset.find({
-      store: storeOid,
-      disposed: { $ne: true },
-      ppm_enabled: true
-    })
-      .distinct('_id');
+    const programAssetIds = await loadProgramScopedAssetObjectIds(storeOid);
 
     const total = programAssetIds.length;
 
@@ -370,40 +397,53 @@ router.get('/self-service-assets', protect, restrictViewer, async (req, res) => 
     const programOnly =
       String(req.query.program_only || '').toLowerCase() === 'true';
 
-    const limit = keywordLower ? 2500 : 1200;
-    let assets = await Asset.find({ store: storeOid, disposed: { $ne: true } })
-      .select(
-        'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag ticket_number status condition product_name customFields store assigned_to ppm_enabled'
-      )
-      .populate('assigned_to', 'name email')
-      .sort({ uniqueId: 1, name: 1 })
-      .limit(limit)
-      .lean();
+    const assetSelect =
+      'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag ticket_number status condition product_name customFields store assigned_to ppm_enabled';
 
+    let assets;
     if (keywordLower) {
+      assets = await Asset.find({ store: storeOid, disposed: { $ne: true } })
+        .select(assetSelect)
+        .populate('assigned_to', 'name email')
+        .sort({ uniqueId: 1, name: 1 })
+        .limit(2500)
+        .lean();
       assets = assets.filter((a) => assetMatchesPpmSearch(a, keyword));
     } else if (cameraOnly) {
+      assets = await Asset.find({ store: storeOid, disposed: { $ne: true } })
+        .select(assetSelect)
+        .populate('assigned_to', 'name email')
+        .sort({ uniqueId: 1, name: 1 })
+        .limit(1200)
+        .lean();
       assets = assets.filter((a) =>
         /camera/i.test(String(a.product_name || a.name || a.model_number || ''))
       );
-    }
-
-    let assignedOpenAssetIds = null;
-    if (req.user?.role === 'Technician') {
-      const assignedOpen = await PpmTask.find({
+    } else {
+      /**
+       * Empty search: same asset universe as GET /ppm/overview so KPIs match the table.
+       * (Previously: admins only saw ppm_enabled; overview also counted task-only assets → wrong % / counts.)
+       */
+      const useProgramListScope =
+        req.user?.role === 'Technician' ||
+        (isAdminRole(req.user?.role) && programOnly);
+      if (!useProgramListScope) {
+        return res.json([]);
+      }
+      const programIds = await loadProgramScopedAssetObjectIds(storeOid);
+      if (programIds.length === 0) {
+        return res.json([]);
+      }
+      assets = await Asset.find({
         store: storeOid,
-        status: { $in: ['Scheduled', 'In Progress'] },
-        assigned_to: req.user._id
+        disposed: { $ne: true },
+        _id: { $in: programIds }
       })
-        .select('asset')
+        .select(assetSelect)
+        .populate('assigned_to', 'name email')
+        .sort({ uniqueId: 1, name: 1 })
+        .limit(8000)
         .lean();
-      assignedOpenAssetIds = new Set(assignedOpen.map((t) => String(t.asset)));
-      assets = assets.filter(
-        (a) => Boolean(a.ppm_enabled) || assignedOpenAssetIds.has(String(a._id))
-      );
-    } else if (isAdminRole(req.user?.role) && !keywordLower && programOnly) {
-      /** Admin work orders: empty search = only assets already in the PPM program. */
-      assets = assets.filter((a) => Boolean(a.ppm_enabled));
     }
 
     const assetIds = assets.map((a) => a._id);
@@ -463,6 +503,23 @@ router.get('/self-service-assets', protect, restrictViewer, async (req, res) => 
   }
 });
 
+const ppmListKeywordMatch = (row, keyword) => {
+  if (!keyword) return true;
+  if (assetMatchesPpmSearch(row.asset || {}, keyword)) return true;
+  if (String(row.status || '').toLowerCase().includes(keyword.toLowerCase())) return true;
+  return String(row.technician_notes || '').toLowerCase().includes(keyword.toLowerCase());
+};
+
+const applyPpmTaskListPopulates = (q) =>
+  q
+    .populate('assigned_to', 'name email role')
+    .populate('completed_by', 'name email')
+    .populate('incomplete_by', 'name email')
+    .populate(
+      'asset',
+      'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag product_name ticket_number status store'
+    );
+
 router.get('/', protect, allowPpmRead, async (req, res) => {
   try {
     const {
@@ -471,7 +528,8 @@ router.get('/', protect, allowPpmRead, async (req, res) => {
       q = '',
       from = '',
       to = '',
-      limit = '200'
+      limit = '200',
+      page: pageRaw
     } = req.query || {};
     const filter = applyStoreScope(req);
     if (status) filter.status = status;
@@ -484,29 +542,50 @@ router.get('/', protect, allowPpmRead, async (req, res) => {
       if (to) filter.due_at.$lte = new Date(to);
     }
 
-    const rows = await PpmTask.find(filter)
-      .populate('assigned_to', 'name email role')
-      .populate('completed_by', 'name email')
-      .populate('incomplete_by', 'name email')
-      .populate(
-        'asset',
-        'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag product_name ticket_number status store'
-      )
-      .sort({ due_at: 1, createdAt: -1 })
-      .limit(Math.min(1000, Math.max(1, Number(limit) || 200)))
-      .lean();
-
     const keyword = String(q || '').trim();
-    const filtered = keyword
-      ? rows.filter((r) => {
-        if (assetMatchesPpmSearch(r.asset || {}, keyword)) return true;
-        if (String(r.status || '').toLowerCase().includes(keyword.toLowerCase())) return true;
-        return String(r.technician_notes || '').toLowerCase().includes(keyword.toLowerCase());
-      })
-      : rows;
+    const hasPage =
+      pageRaw !== undefined && pageRaw !== null && String(pageRaw).trim() !== '';
+    const pageNum = hasPage ? Math.max(1, parseInt(String(pageRaw), 10) || 1) : 1;
+    const legacyLimit = Math.min(1000, Math.max(1, Number(limit) || 200));
+    const pageSize = hasPage
+      ? Math.min(200, Math.max(1, parseInt(String(limit), 10) || 50))
+      : legacyLimit;
+
+    let rows;
+    let totalForPage = 0;
+
+    if (hasPage) {
+      if (!keyword) {
+        totalForPage = await PpmTask.countDocuments(filter);
+        const pages = Math.max(1, Math.ceil(totalForPage / pageSize));
+        const safePage = Math.min(pageNum, pages);
+        rows = await applyPpmTaskListPopulates(
+          PpmTask.find(filter).sort({ due_at: 1, createdAt: -1 })
+        )
+          .skip((safePage - 1) * pageSize)
+          .limit(pageSize)
+          .lean();
+      } else {
+        /** Keyword filter still runs in memory; cap scan so huge stores stay bounded. */
+        const scanCap = 10000;
+        const scanned = await applyPpmTaskListPopulates(
+          PpmTask.find(filter).sort({ due_at: 1, createdAt: -1 }).limit(scanCap)
+        ).lean();
+        const filtered = scanned.filter((r) => ppmListKeywordMatch(r, keyword));
+        totalForPage = filtered.length;
+        const pages = Math.max(1, Math.ceil(totalForPage / pageSize));
+        const safePage = Math.min(pageNum, pages);
+        rows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+      }
+    } else {
+      rows = await applyPpmTaskListPopulates(
+        PpmTask.find(filter).sort({ due_at: 1, createdAt: -1 }).limit(legacyLimit)
+      ).lean();
+      rows = keyword ? rows.filter((r) => ppmListKeywordMatch(r, keyword)) : rows;
+    }
 
     const now = Date.now();
-    const withDerived = filtered.map((row) => {
+    const withDerived = rows.map((row) => {
       const derived = { ...row };
       if (
         (derived.status === 'Scheduled' || derived.status === 'In Progress')
@@ -518,6 +597,18 @@ router.get('/', protect, allowPpmRead, async (req, res) => {
       derived.checklist = mergePpmChecklistShape(derived.checklist || []);
       return derived;
     });
+
+    if (hasPage) {
+      const pages = Math.max(1, Math.ceil((totalForPage || 0) / pageSize));
+      const safePage = Math.min(pageNum, pages);
+      return res.json({
+        items: withDerived,
+        total: totalForPage,
+        page: safePage,
+        limit: pageSize,
+        pages
+      });
+    }
 
     res.json(withDerived);
   } catch (error) {

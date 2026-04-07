@@ -21,6 +21,12 @@ const {
   getStoreNotificationRecipients,
   getStoreNotificationSubjects
 } = require('../utils/storeEmail');
+const {
+  buildTechnicianGatePassEmailText,
+  buildTechnicianGatePassEmailHtml,
+  normalizeGatePassAssets
+} = require('../utils/gatePassEmail');
+const { buildGatePassPdfBuffer } = require('../utils/gatePassPdf');
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -606,6 +612,49 @@ async function createAssignmentGatePass(
   });
 
   return pass;
+}
+
+async function sendAssignmentGatePassEmail({
+  pass,
+  recipientEmail,
+  storeId
+}) {
+  const to = String(recipientEmail || '').trim().toLowerCase();
+  if (!to || !pass) return { skipped: true, reason: 'No recipient email' };
+  try {
+    const passObj = pass && typeof pass.toObject === 'function' ? pass.toObject() : pass;
+    const enrichedAssets = normalizeGatePassAssets(passObj);
+    let pdfBuffer = null;
+    try {
+      pdfBuffer = await buildGatePassPdfBuffer(passObj, enrichedAssets);
+    } catch (pdfErr) {
+      console.error('Gate pass PDF generation failed during assignment:', pdfErr.message);
+    }
+    const appBase = String(process.env.PUBLIC_APP_URL || process.env.CLIENT_URL || '')
+      .trim()
+      .replace(/\/+$/, '');
+    const appLink = appBase ? `${appBase}/passes` : '';
+    const pdfName = `GatePass_${String(passObj.file_no || passObj.pass_number || 'pass')
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .slice(0, 120)}.pdf`;
+    const attachments = pdfBuffer
+      ? [{ filename: pdfName, content: pdfBuffer, contentType: 'application/pdf' }]
+      : undefined;
+    await sendStoreEmail({
+      storeId: storeId || passObj.store || null,
+      to,
+      subject: `Gate Pass EXPO CITY DUBAI - ${passObj.file_no || passObj.pass_number}`,
+      text: buildTechnicianGatePassEmailText(passObj, { assets: enrichedAssets }),
+      html: buildTechnicianGatePassEmailHtml(passObj, { appLink, assets: enrichedAssets }),
+      attachments,
+      context: 'assignment-gatepass-email',
+      bypassNotificationFilter: true
+    });
+    return { skipped: false };
+  } catch (error) {
+    console.error('Assignment gate pass email failed:', error.message);
+    return { skipped: true, reason: error.message || 'Email send failed' };
+  }
 }
 
 const resolveAuditWhere = (asset, explicitLocation = '') => {
@@ -4176,7 +4225,8 @@ router.post('/assign', protect, admin, async (req, res) => {
     recipientPhone,
     gatePassOrigin,
     gatePassDestination,
-    gatePassJustification
+    gatePassJustification,
+    sendGatePassEmail
   } = req.body;
   try {
     const normalizedIds = Array.from(
@@ -4301,6 +4351,7 @@ router.post('/assign', protect, admin, async (req, res) => {
     }
 
     let gatePass = null;
+    let gatePassEmail = { skipped: true, reason: 'Gate pass email not requested' };
     const updatedAssets = [];
 
     // Admin can assign either to a technician or to an external person.
@@ -4369,6 +4420,15 @@ router.post('/assign', protect, admin, async (req, res) => {
           destination: finalDestination,
           justification: gatePassJustification
         });
+        if (sendGatePassEmail === true && targetEmail) {
+          gatePassEmail = await sendAssignmentGatePassEmail({
+            pass: gatePass,
+            recipientEmail: targetEmail,
+            storeId: primaryAsset.store || null
+          });
+        } else if (sendGatePassEmail === true && !targetEmail) {
+          gatePassEmail = { skipped: true, reason: 'Recipient email is empty' };
+        }
       }
       await notifyAssetEvent({
         asset: primaryAsset,
@@ -4392,7 +4452,9 @@ router.post('/assign', protect, admin, async (req, res) => {
         asset: primaryAsset,
         assets: updatedAssets,
         assignedCount: updatedAssets.length,
-        gatePass: gatePass || null
+        gatePass: gatePass || null,
+        gatePassEmailSent: gatePassEmail.skipped === false,
+        gatePassEmailSkippedReason: gatePassEmail.skipped ? gatePassEmail.reason : undefined
       });
     } else if (otherRecipient && otherRecipient.name) {
       const otherInfo = `Name: ${otherRecipient.name}${otherRecipient.phone ? `, Phone: ${otherRecipient.phone}` : ''}${otherRecipient.note ? `, Note: ${otherRecipient.note}` : ''}`;
@@ -4450,6 +4512,15 @@ router.post('/assign', protect, admin, async (req, res) => {
           destination: finalDestination,
           justification: gatePassJustification || otherRecipient.note || ''
         });
+        if (sendGatePassEmail === true && externalEmail) {
+          gatePassEmail = await sendAssignmentGatePassEmail({
+            pass: gatePass,
+            recipientEmail: externalEmail,
+            storeId: primaryAsset.store || null
+          });
+        } else if (sendGatePassEmail === true && !externalEmail) {
+          gatePassEmail = { skipped: true, reason: 'Recipient email is empty' };
+        }
       }
       await notifyAssetEvent({
         asset: primaryAsset,
@@ -4473,7 +4544,9 @@ router.post('/assign', protect, admin, async (req, res) => {
         asset: primaryAsset,
         assets: updatedAssets,
         assignedCount: updatedAssets.length,
-        gatePass: gatePass || null
+        gatePass: gatePass || null,
+        gatePassEmailSent: gatePassEmail.skipped === false,
+        gatePassEmailSkippedReason: gatePassEmail.skipped ? gatePassEmail.reason : undefined
       });
     } else {
       return res.status(400).json({ message: 'Provide technicianId or otherRecipient.name' });

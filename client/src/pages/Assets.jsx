@@ -434,6 +434,7 @@ const Assets = () => {
   const reservedParam = searchParams.get('reserved');
   const disposedParam = searchParams.get('disposed');
   const duplicateParam = searchParams.get('duplicate');
+  const editAssetIdParam = searchParams.get('edit');
   const { user, activeStore } = useAuth();
   const scopeHints = [
     activeStore?.name,
@@ -889,6 +890,7 @@ const Assets = () => {
     assignQuantity: 1,
     ticketNumber: '',
     needGatePass: false,
+    sendGatePassEmail: false,
     gatePassOrigin: '',
     gatePassDestination: '',
     gatePassJustification: ''
@@ -898,12 +900,21 @@ const Assets = () => {
   const [recipientType, setRecipientType] = useState('Technician');
   const [assignSubmitting, setAssignSubmitting] = useState(false);
   const [assignInstallationLocationError, setAssignInstallationLocationError] = useState('');
+  const [toasts, setToasts] = useState([]);
   const [otherRecipient, setOtherRecipient] = useState({
     name: '',
     email: '',
     phone: '',
     note: ''
   });
+
+  const showToast = useCallback((message, tone = 'info') => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((prev) => [...prev, { id, message: String(message || ''), tone }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3600);
+  }, []);
 
   // Edit State
   const [editingAsset, setEditingAsset] = useState(null);
@@ -1675,6 +1686,33 @@ const Assets = () => {
     setSelectedProduct(assetToEdit.product_name || '');
   };
 
+  useEffect(() => {
+    const id = String(editAssetIdParam || '').trim();
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get(`/assets/${id}`);
+        if (cancelled) return;
+        setEditingAsset(res.data);
+        setupEditForm(res.data);
+        const next = new URLSearchParams(location.search);
+        next.delete('edit');
+        const qs = next.toString();
+        navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true });
+      } catch (e) {
+        if (!cancelled) {
+          alert(e.response?.data?.message || 'Could not open asset for editing');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Open edit modal from deep link (e.g. PPM → Edit). Intentionally omit setupEditForm from deps — it is stable for this purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run when ?edit= id appears
+  }, [editAssetIdParam]);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     const normalized = ['status', 'condition', 'store', 'location', 'quantity', 'price', 'expo_tag', 'abs_code', 'product_number', 'operating_system', 'specification', 'service_tag', 'assign_to_department'].includes(name)
@@ -1909,6 +1947,7 @@ const Assets = () => {
       installationLocation: asset?.location || '',
       ticketNumber: '',
       needGatePass: false,
+      sendGatePassEmail: false,
       gatePassOrigin: asset?.location || '',
       gatePassDestination: '',
       gatePassJustification: ''
@@ -1928,44 +1967,44 @@ const Assets = () => {
       .filter(Boolean);
     const guardList = resolvedGuard.length ? resolvedGuard : assigningAsset ? [assigningAsset] : [];
     if (recipientType === 'Technician' && guardList.some(cannotIssueToTechnician)) {
-      alert('Faulty or reserved assets cannot be issued to technicians.');
+      showToast('Faulty or reserved assets cannot be issued to technicians.', 'error');
       return;
     }
     if (recipientType === 'Technician' && !assignForm.technicianId) {
-      alert('Please select a technician');
+      showToast('Please select a technician.', 'error');
       return;
     }
     if (recipientType === 'Technician' && !assignForm.recipientEmail) {
-      alert('Please enter recipient email for notification');
+      showToast('Please enter recipient email for notification.', 'error');
       return;
     }
     if (recipientType === 'Technician' && !String(assignForm.installationLocation || '').trim()) {
       setAssignInstallationLocationError('Installation location is required for technician assignment.');
-      alert('Please enter installation location for technician assignment');
+      showToast('Please enter installation location for technician assignment.', 'error');
       return;
     }
     setAssignInstallationLocationError('');
     if (recipientType === 'Other') {
       if (!otherRecipient.name) {
-        alert('Please enter recipient name');
+        showToast('Please enter recipient name.', 'error');
         return;
       }
       if (!otherRecipient.email) {
-        alert('Please enter recipient email for notification');
+        showToast('Please enter recipient email for notification.', 'error');
         return;
       }
     }
     if (assignForm.needGatePass) {
       if (!assignForm.ticketNumber) {
-        alert('Ticket number is required when gate pass is enabled');
+        showToast('Ticket number is required when gate pass is enabled.', 'error');
         return;
       }
       if (!assignForm.gatePassOrigin || !assignForm.gatePassDestination) {
-        alert('Please fill gate pass "Moving From" and "Moving To"');
+        showToast('Please fill gate pass "Moving From" and "Moving To".', 'error');
         return;
       }
       if (recipientType === 'Other' && !otherRecipient.phone) {
-        alert('Recipient phone is required for external gate pass');
+        showToast('Recipient phone is required for external gate pass.', 'error');
         return;
       }
     }
@@ -1973,7 +2012,7 @@ const Assets = () => {
       const availableQty = Math.max(1, Number.parseInt(assigningAsset?.quantity, 10) > 0 ? Number.parseInt(assigningAsset?.quantity, 10) : 1);
       const qtyToAssign = Number.parseInt(assignForm.assignQuantity, 10);
       if (!Number.isFinite(qtyToAssign) || qtyToAssign <= 0 || qtyToAssign > availableQty) {
-        alert(`Assign quantity must be between 1 and ${availableQty}`);
+        showToast(`Assign quantity must be between 1 and ${availableQty}.`, 'error');
         return;
       }
     }
@@ -1986,6 +2025,7 @@ const Assets = () => {
         ticketNumber: assignForm.ticketNumber,
         installationLocation: assignForm.installationLocation,
         needGatePass: Boolean(assignForm.needGatePass),
+        sendGatePassEmail: Boolean(assignForm.needGatePass && assignForm.sendGatePassEmail),
         recipientEmail: assignForm.recipientEmail,
         recipientPhone: recipientType === 'Technician' ? assignForm.recipientPhone : otherRecipient.phone,
         gatePassOrigin: assignForm.gatePassOrigin,
@@ -2002,13 +2042,23 @@ const Assets = () => {
       setAssigningAssetIds([]);
       fetchAssets(undefined, { silent: true });
       if (res.data?.gatePass?.pass_number) {
-        alert(`${res.data?.assignedCount || payload.assetIds.length} asset(s) assigned successfully. Single gate pass created: ${res.data.gatePass.pass_number}`);
+        const base = `${res.data?.assignedCount || payload.assetIds.length} asset(s) assigned successfully. Single gate pass created: ${res.data.gatePass.pass_number}`;
+        if (payload.sendGatePassEmail) {
+          if (res.data?.gatePassEmailSent) {
+            showToast(`${base}. Gate pass email sent to recipient.`, 'success');
+          } else {
+            const why = res.data?.gatePassEmailSkippedReason ? ` (${res.data.gatePassEmailSkippedReason})` : '';
+            showToast(`${base}. Gate pass email was not sent${why}.`, 'error');
+          }
+        } else {
+          showToast(base, 'success');
+        }
       } else {
-        alert(`${res.data?.assignedCount || payload.assetIds.length} asset(s) assigned successfully`);
+        showToast(`${res.data?.assignedCount || payload.assetIds.length} asset(s) assigned successfully`, 'success');
       }
     } catch (error) {
       console.error('Error assigning asset:', error);
-      alert(error?.response?.data?.message || error?.message || 'Failed to assign asset');
+      showToast(error?.response?.data?.message || error?.message || 'Failed to assign asset', 'error');
     } finally {
       setAssignSubmitting(false);
     }
@@ -2584,6 +2634,24 @@ const Assets = () => {
 
   return (
     <div className="min-h-screen bg-app-page text-app-main">
+      {toasts.length > 0 ? (
+        <div className="fixed top-4 right-4 z-[260] flex w-[min(92vw,24rem)] flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`rounded-lg border px-3 py-2 text-sm shadow-lg ${
+                toast.tone === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                  : toast.tone === 'error'
+                    ? 'border-rose-200 bg-rose-50 text-rose-900'
+                    : 'border-slate-200 bg-white text-slate-800'
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">
           {productParam ? `${productParam} Management` : 'Assets Management'}
@@ -3911,7 +3979,7 @@ const Assets = () => {
                           type="radio"
                           name="needGatePass"
                           checked={assignForm.needGatePass === false}
-                          onChange={() => setAssignForm({ ...assignForm, needGatePass: false })}
+                          onChange={() => setAssignForm({ ...assignForm, needGatePass: false, sendGatePassEmail: false })}
                         />
                         No
                       </label>
@@ -3920,6 +3988,23 @@ const Assets = () => {
 
                   {assignForm.needGatePass && (
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={assignForm.sendGatePassEmail === true}
+                            onChange={(e) => setAssignForm({ ...assignForm, sendGatePassEmail: e.target.checked })}
+                          />
+                          Send gate pass by email to recipient
+                        </label>
+                        {assignForm.sendGatePassEmail ? (
+                          <p className="mt-1 text-xs text-emerald-700">
+                            Recipient: {recipientType === 'Technician'
+                              ? (assignForm.recipientEmail || 'No technician email set')
+                              : (otherRecipient.email || 'No recipient email set')}
+                          </p>
+                        ) : null}
+                      </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700">Moving From</label>
                         <input

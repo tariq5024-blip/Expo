@@ -496,7 +496,7 @@ router.get('/self-service-assets', protect, restrictViewer, async (req, res) => 
     const pageSize = hasPage ? Math.min(200, Math.max(1, parseInt(String(req.query.limit), 10) || 50)) : null;
 
     const assetSelect =
-      'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag ticket_number status condition product_name customFields store assigned_to ppm_enabled';
+      'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag ticket_number status condition product_name customFields store assigned_to ppm_enabled manufacturer maintenance_vendor';
 
     let assets;
     let pageMeta = null;
@@ -632,6 +632,42 @@ router.get('/self-service-assets', protect, restrictViewer, async (req, res) => 
   }
 });
 
+router.get('/assets/:assetId/last-ticket', protect, restrictViewer, async (req, res) => {
+  try {
+    if (!['Technician', 'Admin', 'Super Admin'].includes(req.user?.role)) {
+      return res.status(403).json({ message: 'Not allowed' });
+    }
+    const { assetId } = req.params || {};
+    if (!assetId || !mongoose.Types.ObjectId.isValid(assetId)) {
+      return res.status(400).json({ message: 'Valid asset ID is required' });
+    }
+    const asset = await Asset.findById(assetId).select('store');
+    if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (req.activeStore && String(asset.store || '') !== String(req.activeStore)) {
+      return res.status(403).json({ message: 'Asset is outside active store scope' });
+    }
+
+    const latestTaskWithTicket = await PpmTask.findOne({
+      asset: asset._id,
+      store: asset.store || null,
+      work_order_ticket: { $exists: true, $ne: '' }
+    })
+      .sort({ createdAt: -1 })
+      .select('work_order_ticket createdAt')
+      .lean();
+
+    const ticket = String(latestTaskWithTicket?.work_order_ticket || '').trim();
+    return res.json({
+      asset_id: String(asset._id),
+      work_order_ticket: ticket,
+      has_previous_ticket: Boolean(ticket),
+      last_ticket_at: latestTaskWithTicket?.createdAt || null
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to load previous PPM ticket', error: error.message });
+  }
+});
+
 const ppmListKeywordMatch = (row, keyword) => {
   if (!keyword) return true;
   if (assetMatchesPpmSearch(row.asset || {}, keyword)) return true;
@@ -646,7 +682,7 @@ const applyPpmTaskListPopulates = (q) =>
     .populate('incomplete_by', 'name email')
     .populate(
       'asset',
-      'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag product_name ticket_number status store'
+      'name model_number uniqueId abs_code ip_address serial_number mac_address expo_tag product_name ticket_number status store manufacturer maintenance_vendor'
     );
 
 router.get('/', protect, allowPpmRead, async (req, res) => {
@@ -756,7 +792,8 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       scheduled_for,
       due_at,
       checklist,
-      manager_notes
+      manager_notes,
+      work_order_ticket
     } = req.body || {};
 
     if (!asset_id || !mongoose.Types.ObjectId.isValid(asset_id)) {
@@ -770,6 +807,10 @@ router.post('/', protect, restrictViewer, async (req, res) => {
 
     const now = new Date();
     const dueDate = due_at ? new Date(due_at) : new Date(now.getTime() + PPM_CYCLE_MS);
+    const workOrderTicket = String(work_order_ticket || '').trim();
+    if (!workOrderTicket) {
+      return res.status(400).json({ message: 'Work order ticket number is required' });
+    }
 
     const task = await PpmTask.create({
       asset: asset._id,
@@ -779,6 +820,7 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       due_at: dueDate,
       checklist: normalizeChecklist(checklist),
       manager_notes: String(manager_notes || ''),
+      work_order_ticket: workOrderTicket,
       assigned_to: (assigned_to && mongoose.Types.ObjectId.isValid(assigned_to)) ? assigned_to : undefined,
       created_by: req.user?._id,
       history: [{
@@ -801,8 +843,19 @@ router.post('/', protect, restrictViewer, async (req, res) => {
 
     const out = await PpmTask.findById(task._id)
       .populate('assigned_to', 'name email role')
-      .populate('asset', 'name model_number uniqueId abs_code ip_address status store')
+      .populate('asset', 'name model_number uniqueId abs_code ip_address status store serial_number mac_address ticket_number manufacturer maintenance_vendor')
       .lean();
+    if (out) {
+      void notifyPpmStatusChange({
+        task: out,
+        req,
+        status: 'Scheduled',
+        actionLabel: 'PPM Scheduled',
+        details: String(manager_notes || 'PPM task scheduled by admin')
+      }).catch((err) => {
+        console.error('PPM status notification failed:', err?.message || err);
+      });
+    }
     return res.status(201).json(out);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to create PPM task', error: error.message });
@@ -857,6 +910,79 @@ router.post('/reset-program', protect, restrictViewer, async (req, res) => {
   }
 });
 
+// @route   POST /api/ppm/notify-bulk-program
+// @desc    Email technicians (store-assigned), store notification recipients, line managers, and admins that the PPM program was updated
+router.post('/notify-bulk-program', protect, restrictViewer, async (req, res) => {
+  try {
+    if (!isAdminRole(req.user?.role)) {
+      return res.status(403).json({ message: 'Only Admin can send bulk PPM notifications' });
+    }
+    if (!req.activeStore || !mongoose.Types.ObjectId.isValid(req.activeStore)) {
+      return res.status(400).json({ message: 'Active store is required' });
+    }
+    const storeId = req.activeStore;
+    const configuredRecipients = await getStoreNotificationRecipients(storeId);
+    const admins = await User.find({
+      role: { $in: ['Admin', 'Super Admin'] },
+      $or: [{ role: 'Super Admin' }, { assignedStore: storeId }]
+    })
+      .select('email')
+      .lean();
+    const technicians = await User.find({
+      role: 'Technician',
+      assignedStore: storeId
+    })
+      .select('email')
+      .lean();
+    const adminEmails = admins.map((u) => String(u.email || '').trim().toLowerCase()).filter(Boolean);
+    const techEmails = technicians.map((u) => String(u.email || '').trim().toLowerCase()).filter(Boolean);
+    const actor = String(req.user?.email || '').trim().toLowerCase();
+    const recipients = Array.from(new Set([
+      ...configuredRecipients,
+      ...adminEmails,
+      ...techEmails,
+      actor
+    ].filter(Boolean)));
+    if (recipients.length === 0) {
+      return res.status(400).json({
+        message:
+          'No email recipients found. Add addresses under Portal → store email (notification recipients), assign technicians to this store with valid emails, or ensure an admin email is available.'
+      });
+    }
+    const subjects = await getStoreNotificationSubjects(storeId);
+    const ppmPrefix = subjects.ppm || 'Expo City Dubai PPM Notification';
+    const subject = `${ppmPrefix}: PPM program updated — please review work orders`;
+    const by = `${String(req.user?.name || 'Unknown')} (${String(req.user?.role || '-')})`;
+    const lines = [
+      'The PPM program for your store was updated (assets added to PPM and/or new PPM tasks created).',
+      'Technicians: open PPM in Expo to run work orders and complete checklists.',
+      `Notification sent by: ${by}`,
+      'This message was sent to technicians assigned to this store, store notification recipients (including line managers), and in-store admins.'
+    ];
+    const text = lines.join('\n');
+    const html = `<div>${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div>`;
+    await sendStoreEmail({
+      storeId,
+      to: recipients.join(','),
+      subject,
+      text,
+      html,
+      context: 'expo-city-dubai-ppm-bulk-program'
+    });
+    await ActivityLog.create({
+      user: req.user?.name || 'Unknown',
+      email: req.user?.email || '',
+      role: req.user?.role || '',
+      action: 'PPM bulk notification sent',
+      details: `Recipient emails: ${recipients.length}`,
+      store: req.activeStore || null
+    });
+    return res.json({ ok: true, recipientCount: recipients.length });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to send bulk PPM notification', error: error.message });
+  }
+});
+
 // @route   PATCH /api/ppm/assets/bulk-ppm-enabled (must be before /assets/:assetId/...)
 router.patch('/assets/bulk-ppm-enabled', protect, restrictViewer, async (req, res) => {
   try {
@@ -888,6 +1014,46 @@ router.patch('/assets/bulk-ppm-enabled', protect, restrictViewer, async (req, re
     return res.json({ matched: result.matchedCount, modified: result.modifiedCount });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to bulk-update PPM inclusion', error: error.message });
+  }
+});
+
+// @route   PATCH /api/ppm/bulk-work-order-ticket
+router.patch('/bulk-work-order-ticket', protect, restrictViewer, async (req, res) => {
+  try {
+    if (!isAdminRole(req.user?.role)) {
+      return res.status(403).json({ message: 'Only Admin can update work order tickets' });
+    }
+    if (!req.activeStore || !mongoose.Types.ObjectId.isValid(req.activeStore)) {
+      return res.status(400).json({ message: 'Active store is required' });
+    }
+    const rawIds = Array.isArray(req.body?.task_ids) ? req.body.task_ids : [];
+    const ticket = String(req.body?.work_order_ticket || '').trim();
+    if (!ticket) {
+      return res.status(400).json({ message: 'Work order ticket number is required' });
+    }
+    if (rawIds.length === 0) {
+      return res.status(400).json({ message: 'task_ids array is required' });
+    }
+    const ids = rawIds
+      .map((id) => (mongoose.Types.ObjectId.isValid(String(id)) ? new mongoose.Types.ObjectId(id) : null))
+      .filter(Boolean);
+    if (ids.length === 0) {
+      return res.status(400).json({ message: 'No valid task ids' });
+    }
+    if (ids.length > 2000) {
+      return res.status(400).json({ message: 'Too many tasks in one request (max 2000)' });
+    }
+    const result = await PpmTask.updateMany(
+      {
+        _id: { $in: ids },
+        store: new mongoose.Types.ObjectId(req.activeStore),
+        status: { $in: ['Scheduled', 'In Progress', 'Not Completed'] }
+      },
+      { $set: { work_order_ticket: ticket } }
+    );
+    return res.json({ matched: result.matchedCount, modified: result.modifiedCount, work_order_ticket: ticket });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to bulk update work order ticket', error: error.message });
   }
 });
 

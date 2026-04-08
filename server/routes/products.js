@@ -12,7 +12,16 @@ const Asset = require('../models/Asset');
 // Ensure uploads are placed under server/uploads relative to this file
 const uploadRoot = path.join(__dirname, '../uploads');
 const productUploadDir = path.join(uploadRoot, 'products');
-if (!fs.existsSync(productUploadDir)) fs.mkdirSync(productUploadDir, { recursive: true });
+if (!fs.existsSync(productUploadDir)) {
+  try {
+    fs.mkdirSync(productUploadDir, { recursive: true });
+  } catch (error) {
+    // In hardened/read-only container modes, upload dir creation can be restricted.
+    // Keep API booting; upload endpoints will return clear errors if path is not writable.
+    // eslint-disable-next-line no-console
+    console.warn(`Product upload directory unavailable: ${error?.message || error}`);
+  }
+}
 
 const MAX_PRODUCT_IMAGE_BYTES = Number.parseInt(process.env.MAX_PRODUCT_IMAGE_MB || '10', 10) * 1024 * 1024;
 const allowedImageMimeTypes = new Set([

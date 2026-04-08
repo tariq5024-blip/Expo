@@ -396,12 +396,26 @@ Stack files:
 - `Dockerfile.web` — multi-stage Vite build + **nginx stable-alpine**
 - `nginx.docker.conf` — SPA + `/api/` proxy to app; **`/healthz`** and **`/readyz`** forwarded to the API
 
-Build expects **Docker BuildKit** (default in modern Docker) for `RUN --mount=type=cache` npm layers.
+Precheck this host first:
+
+```bash
+cd /opt/Expo
+chmod +x scripts/preflight.sh
+./scripts/preflight.sh
+```
+
+If containers are already up and you want live endpoint checks too:
+
+```bash
+./scripts/preflight.sh --with-verify
+```
 
 ```bash
 cd /opt/Expo
 cp .env.docker.example .env.docker
-# edit .env.docker and set real secrets
+# edit .env.docker and set real secrets (required):
+# COOKIE_SECRET, EMAIL_CONFIG_ENCRYPTION_KEY, EMERGENCY_RESET_SECRET
+make validate-prod
 ./deploy.sh safe-release
 ./deploy.sh ps
 ```

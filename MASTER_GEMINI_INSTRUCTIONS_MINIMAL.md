@@ -42,11 +42,11 @@ Now produce exact command blocks for:
 4) rollback
 ```
 
-## SINGLE SERVER FRESH INSTALL
+## SINGLE SERVER FRESH INSTALL (NON-DOCKER)
 
 ```bash
 sudo apt update
-sudo apt install -y git curl build-essential gnupg
+sudo apt install -y git curl build-essential gnupg make
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 curl -fsSL https://pgp.mongodb.com/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
@@ -72,6 +72,18 @@ npm ci
 ```bash
 cd /opt/Expo/server
 cp .env.example .env
+```
+
+Generate secure secrets (recommended on each new laptop/server):
+
+```bash
+COOKIE_SECRET="$(openssl rand -hex 32)"
+EMAIL_CONFIG_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+EMERGENCY_RESET_SECRET="$(openssl rand -hex 32)"
+printf '%s\n' \
+"COOKIE_SECRET=$COOKIE_SECRET" \
+"EMAIL_CONFIG_ENCRYPTION_KEY=$EMAIL_CONFIG_ENCRYPTION_KEY" \
+"EMERGENCY_RESET_SECRET=$EMERGENCY_RESET_SECRET"
 ```
 
 ```env
@@ -115,6 +127,43 @@ cd /opt/Expo
 npm run build:prod
 pkill -f "node.*server" || true
 npm run start:prod:3000
+```
+
+## SINGLE-COMMAND LAPTOP PRECHECK
+
+Run this on any new laptop/host clone before deploy:
+
+```bash
+cd /opt/Expo
+chmod +x scripts/preflight.sh
+./scripts/preflight.sh
+```
+
+If containers are already running and you want live endpoint checks too:
+
+```bash
+./scripts/preflight.sh --with-verify
+```
+
+## DOCKER SAFE-RELEASE (SINGLE HOST)
+
+```bash
+cd /opt/Expo
+cp .env.docker.example .env.docker
+```
+
+Set real secrets in `.env.docker` (do not keep placeholders):
+- `COOKIE_SECRET`
+- `EMAIL_CONFIG_ENCRYPTION_KEY`
+- `EMERGENCY_RESET_SECRET`
+
+Validate + deploy:
+
+```bash
+cd /opt/Expo
+make validate-prod
+./deploy.sh safe-release
+./deploy.sh verify
 ```
 
 ## VERIFY

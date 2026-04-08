@@ -57,6 +57,7 @@ services:
       - app_uploads:/app/server/uploads
       - app_backups:/app/server/backups
       - app_storage:/app/server/storage
+      - app_logs:/app/server/logs
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5000/api/healthz', (r)=>process.exit(r.statusCode===200?0:1)).on('error', ()=>process.exit(1));"]
       interval: 15s
@@ -96,3 +97,4 @@ volumes:
   app_uploads:
   app_backups:
   app_storage:
+  app_logs:

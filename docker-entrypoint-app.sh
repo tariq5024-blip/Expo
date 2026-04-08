@@ -4,8 +4,11 @@ set -e
 # Without this, logo uploads (and other writes under uploads/backups/storage) fail with EACCES.
 for d in /app/server/uploads /app/server/backups /app/server/storage; do
   mkdir -p "$d"
-  chown -R appuser:appuser "$d"
+  # Some environments disallow chown on mounted volumes; continue with a warning.
+  chown -R appuser:appuser "$d" 2>/dev/null || echo "warn: chown not permitted for $d; continuing"
 done
-mkdir -p /app/server/uploads/branding
-chown -R appuser:appuser /app/server/uploads/branding
-exec runuser -u appuser -- "$@"
+# Keep startup resilient even when volume permissions are managed externally.
+mkdir -p /app/server/uploads/branding 2>/dev/null || echo "warn: mkdir not permitted for /app/server/uploads/branding; continuing"
+chown -R appuser:appuser /app/server/uploads/branding 2>/dev/null || echo "warn: chown not permitted for /app/server/uploads/branding; continuing"
+# Some Docker environments block runuser/setgroups; run command directly for compatibility.
+exec "$@"

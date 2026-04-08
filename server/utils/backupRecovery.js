@@ -11,7 +11,7 @@ const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
 const BackupArtifact = require('../models/BackupArtifact');
 const BackupLog = require('../models/BackupLog');
 const Setting = require('../models/Setting');
-const appPackage = require('../../package.json');
+const appPackage = require('../package.json');
 
 const BACKUP_ROOT = path.join(__dirname, '../storage/backups');
 const CURRENT_BACKUP_FORMAT_VERSION = 3;

@@ -1,6 +1,25 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Session = require('../models/Session');
 const Store = require('../models/Store');
+
+function parseActiveStoreHeader(raw) {
+  if (!raw || raw === 'undefined' || raw === 'null' || raw === 'all') return null;
+  const s = String(raw).trim();
+  return mongoose.Types.ObjectId.isValid(s) ? s : null;
+}
+
+/** Safe string id from User.assignedStore (ObjectId, populated doc, or legacy string). */
+function resolveAssignedStoreId(user) {
+  const raw = user?.assignedStore;
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'object' && raw._id != null) {
+    const inner = String(raw._id);
+    return mongoose.Types.ObjectId.isValid(inner) ? inner : null;
+  }
+  const s = String(raw);
+  return mongoose.Types.ObjectId.isValid(s) ? s : null;
+}
 const { sidSetOptions } = require('../utils/sessionCookie');
 const sessionMaxAgeMs = parseInt(process.env.SESSION_MAX_AGE_MS || `${30 * 24 * 60 * 60 * 1000}`, 10);
 const renewThresholdMs = parseInt(process.env.SESSION_RENEW_THRESHOLD_MS || `${24 * 60 * 60 * 1000}`, 10);
@@ -42,12 +61,16 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'User not found' });
     }
     if (req.user.role === 'Super Admin' || req.user.role === 'Viewer') {
-      const activeStoreId = req.headers['x-active-store'];
-      if (activeStoreId && activeStoreId !== 'undefined' && activeStoreId !== 'null' && activeStoreId !== 'all') {
-        req.activeStore = activeStoreId;
+      const headerId = parseActiveStoreHeader(req.headers['x-active-store']);
+      if (headerId) req.activeStore = headerId;
+    } else {
+      const resolvedStore = resolveAssignedStoreId(req.user);
+      const headerId = parseActiveStoreHeader(req.headers['x-active-store']);
+      if (resolvedStore) {
+        req.activeStore = resolvedStore;
+      } else if (headerId) {
+        req.activeStore = headerId;
       }
-    } else if (req.user.assignedStore) {
-      req.activeStore = req.user.assignedStore.toString();
     }
 
     if (req.user.role === 'Viewer' && req.activeStore) {
@@ -78,8 +101,10 @@ const protect = async (req, res, next) => {
   }
 };
 
+const isManagerLikeRole = (role) => String(role || '').toLowerCase().includes('manager');
+
 const admin = (req, res, next) => {
-  if (req.user && (req.user.role === 'Admin' || req.user.role === 'Super Admin')) {
+  if (req.user && (req.user.role === 'Admin' || isManagerLikeRole(req.user.role) || req.user.role === 'Super Admin')) {
     next();
   } else {
     res.status(401).json({ message: 'Not authorized as an admin' });
@@ -87,7 +112,7 @@ const admin = (req, res, next) => {
 };
 
 const adminOrViewer = (req, res, next) => {
-  if (req.user && (req.user.role === 'Admin' || req.user.role === 'Super Admin' || req.user.role === 'Viewer')) {
+  if (req.user && (req.user.role === 'Admin' || isManagerLikeRole(req.user.role) || req.user.role === 'Super Admin' || req.user.role === 'Viewer')) {
     next();
   } else {
     res.status(401).json({ message: 'Not authorized' });

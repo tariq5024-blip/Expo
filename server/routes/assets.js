@@ -1223,6 +1223,23 @@ async function getStoreIds(storeId) {
   return all.map((id) => new mongoose.Types.ObjectId(id));
 }
 
+/**
+ * Main "Assets" inventory (All Assets, stats, search, export) stays separate from the PPM module:
+ * - ppm_import_only: rows created from PPM bulk import
+ * - ppm_enabled: any asset enrolled in the PPM program
+ * PPM UIs use /api/ppm/* (e.g. self-service-assets). Escape hatch for GET /api/assets only:
+ * ?include_ppm_program=true / ?include_ppm_import=true
+ */
+function applyMainInventoryScope(filter, req) {
+  const q = req && req.query ? req.query : {};
+  const includePpmImportOnly = String(q.include_ppm_import || '').trim().toLowerCase() === 'true';
+  const includePpmProgram = String(q.include_ppm_program || '').trim().toLowerCase() === 'true';
+  // Import stubs are both flags; one opt-in shows them in GET /assets again without needing two params.
+  if (includePpmImportOnly) return;
+  filter.ppm_import_only = { $ne: true };
+  if (!includePpmProgram) filter.ppm_enabled = { $ne: true };
+}
+
 async function findProductNameByModelNumber(modelNumber, activeStoreId) {
   if (!modelNumber) return null;
   const filter = {};
@@ -1417,6 +1434,7 @@ router.get('/', protect, async (req, res) => {
     } else {
       filter.disposed = false;
     }
+    applyMainInventoryScope(filter, req);
     if (q) {
       const qLowerForMode = q.toLowerCase();
       const reservedPrefixActive = qLowerForMode.length > 0 && 'reserved'.startsWith(qLowerForMode);
@@ -2061,6 +2079,8 @@ router.get('/search-serial', protect, async (req, res) => {
       query.store = { $in: storeIds };
     }
 
+    applyMainInventoryScope(query, null);
+
     // Optimization: If exactly 4 chars, try exact match on serial_last_4 first (extremely fast)
     const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = new RegExp(escapedQ, 'i');
@@ -2096,6 +2116,7 @@ router.get('/stats', protect, async (req, res) => {
   try {
     const LOW_STOCK_THRESHOLD = 5;
     const filter = { disposed: false };
+    applyMainInventoryScope(filter, null);
     const maintenanceVendor = String(req.query.maintenance_vendor || '').trim();
     let targetStoreId = null;
 
@@ -2563,6 +2584,8 @@ router.get('/search', protect, async (req, res) => {
       qObj.store = { $in: storeIds };
     }
 
+    applyMainInventoryScope(qObj, null);
+
     const assets = await Asset.find(qObj)
       .select('name model_number serial_number uniqueId store status condition location assigned_to reserved updatedAt')
       .populate('store', 'name')
@@ -2580,14 +2603,16 @@ router.get('/search', protect, async (req, res) => {
 // @access  Private
 router.get('/my', protect, async (req, res) => {
   try {
-    const assets = await Asset.find({
+    const myFilter = {
       $or: [
         { assigned_to: req.user._id },
         { history: { $elemMatch: { user: req.user.name, action: { $regex: /^Returned\//i } } } },
         { history: { $elemMatch: { user: req.user.name, action: 'Collected' } } },
         { history: { $elemMatch: { user: req.user.name, action: 'Reported Faulty' } } }
       ]
-    })
+    };
+    applyMainInventoryScope(myFilter, null);
+    const assets = await Asset.find(myFilter)
       .populate('store')
       .populate('assigned_to', 'name')
       .lean();
@@ -4044,7 +4069,9 @@ router.post('/import/revert-last', protect, admin, async (req, res) => {
 // @access  Private/Admin
 router.get('/export', protect, admin, async (req, res) => {
   try {
-    const assets = await Asset.find().populate('store').populate('assigned_to');
+    const exportFilter = {};
+    applyMainInventoryScope(exportFilter, null);
+    const assets = await Asset.find(exportFilter).populate('store').populate('assigned_to');
 
     // Export columns aligned with the bulk import Excel headers
     // so re-importing the exported file doesn't cause field mismatches.
@@ -4188,6 +4215,8 @@ router.get('/by-technician', protect, admin, async (req, res) => {
         ]
       };
     }
+
+    applyMainInventoryScope(query, null);
 
     const total = await Asset.countDocuments(query);
     const assets = await Asset.find(query)
@@ -5568,7 +5597,9 @@ router.post('/return-request', protect, restrictViewer, async (req, res) => {
 // @access  Private/Admin
 router.get('/return-pending', protect, admin, async (req, res) => {
   try {
-    const assets = await Asset.find({ return_pending: true })
+    const rpFilter = { return_pending: true };
+    applyMainInventoryScope(rpFilter, null);
+    const assets = await Asset.find(rpFilter)
       .populate('store')
       .populate('assigned_to', 'name email');
     res.json(assets);
@@ -5749,7 +5780,7 @@ router.post('/:id/comment', protect, restrictViewer, async (req, res) => {
 
 router.put('/:id', protect, admin, async (req, res) => {
   const {
-    name, model_number, serial_number, mac_address, manufacturer, store, location, status, condition,
+    name, model_number, serial_number, mac_address, manufacturer, maintenance_vendor, store, location, status, condition,
     ticket_number, po_number, product_name, rfid, qr_code, vendor_name, delivered_by_name, price, quantity, customFields,
     device_group, inbound_from, outbound_to, expo_tag, abs_code, product_number,
     operating_system, specification, service_tag, assign_to_department,
@@ -5786,6 +5817,9 @@ router.put('/:id', protect, admin, async (req, res) => {
       asset.serial_last_4 = asset.serial_number.slice(-4);
       asset.mac_address = mac_address || asset.mac_address;
       asset.manufacturer = manufacturer ? capitalizeWords(manufacturer) : (asset.manufacturer || '');
+      if (maintenance_vendor !== undefined) {
+        asset.maintenance_vendor = String(maintenance_vendor || '').trim();
+      }
       asset.ticket_number = ticket_number || asset.ticket_number || '';
       if (po_number !== undefined) asset.po_number = po_number || '';
       if (vendor_name !== undefined) asset.vendor_name = capitalizeWords(vendor_name || '');

@@ -1,11 +1,173 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, Link, useLocation, useSearchParams } from 'react-router-dom';
-import { Menu, ChevronDown, Settings } from 'lucide-react';
+import { Menu, ChevronDown, Settings, Bell } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import {
+  countUnreadActivePpmAlerts,
+  isPpmNotificationUnread,
+  isPpmWorkflowAlertActiveForUser,
+  markAllPpmNotificationsRead,
+  markPpmNotificationFpRead,
+  ppmNotificationFingerprint
+} from '../utils/ppmDashboardAlertsAck';
+
+const PPM_ALERTS_API = { headers: { 'X-Skip-Global-Loading': '1' } };
 
 const DEFAULT_DASHBOARD_VENDOR_OPTIONS = ['All', 'Siemens', 'G42'];
+
+const formatPpmNotifDateTime = (iso) => {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  } catch {
+    return '—';
+  }
+};
+
+const ppmStatusRowClass = (status) => {
+  const s = String(status || '');
+  if (s === 'Approved') return 'bg-emerald-50 text-emerald-900 ring-emerald-200';
+  if (s === 'Rejected') return 'bg-rose-50 text-rose-900 ring-rose-200';
+  if (s === 'Modified') return 'bg-amber-50 text-amber-950 ring-amber-200';
+  if (s === 'Pending') return 'bg-sky-50 text-sky-950 ring-sky-200';
+  return 'bg-slate-100 text-slate-800 ring-slate-200';
+};
+
+function PpmNotifPanel({
+  tone,
+  user,
+  history,
+  loading,
+  ppmAckUserId,
+  ppmAckStoreId,
+  ppmHeaderHref,
+  onClose
+}) {
+  const dark = tone === 'dark';
+  const shell = dark
+    ? 'rounded-xl border border-white/15 bg-slate-900 text-left text-white shadow-2xl'
+    : 'rounded-xl border border-app-card bg-white text-left text-slate-800 shadow-lg';
+  const sub = dark ? 'text-white/60' : 'text-slate-500';
+  const rowBase = dark
+    ? 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08]'
+    : 'border-slate-100 bg-slate-50/80 hover:bg-slate-100/90';
+  const meta = dark ? 'text-white/55' : 'text-slate-500';
+
+  return (
+    <div className={`flex max-h-[min(24rem,70vh)] flex-col overflow-hidden ${shell}`}>
+      <div className={`flex shrink-0 items-start justify-between gap-2 border-b px-3 py-2.5 ${dark ? 'border-white/10' : 'border-slate-100'}`}>
+        <div>
+          <p className="text-sm font-semibold">PPM notifications</p>
+          <p className={`text-[11px] ${sub}`}>
+            Last 365 days · {loading ? 'Loading…' : `${history.length} item${history.length !== 1 ? 's' : ''}`}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            markAllPpmNotificationsRead(history, ppmAckUserId, ppmAckStoreId);
+          }}
+          className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-semibold ${
+            dark ? 'bg-white/10 text-white hover:bg-white/15' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          Mark all read
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">
+        {loading && history.length === 0 ? (
+          <p className={`px-2 py-6 text-center text-sm ${sub}`}>Loading notifications…</p>
+        ) : null}
+        {!loading && history.length === 0 ? (
+          <p className={`px-2 py-6 text-center text-sm ${sub}`}>No PPM notifications in the last year.</p>
+        ) : null}
+        <ul className="space-y-2">
+          {history.map((row) => {
+            const unread = isPpmNotificationUnread(row, ppmAckUserId, ppmAckStoreId);
+            const active = isPpmWorkflowAlertActiveForUser(user, row);
+            const fp = ppmNotificationFingerprint(row);
+            return (
+              <li key={fp || row.task_id}>
+                <Link
+                  to={ppmHeaderHref}
+                  onClick={() => {
+                    if (fp) markPpmNotificationFpRead(fp, ppmAckUserId, ppmAckStoreId);
+                    onClose();
+                  }}
+                  className={`block rounded-lg border px-2.5 py-2 transition-colors ${rowBase} ${
+                    active ? 'ring-1 ring-[rgb(var(--accent-color))]/50' : ''
+                  } ${unread ? (dark ? 'ring-1 ring-sky-400/40' : 'ring-1 ring-sky-300') : ''}`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="relative mt-1.5 flex h-2 w-2 shrink-0 justify-center">
+                      {unread ? (
+                        <span
+                          className={`absolute inline-flex h-2 w-2 rounded-full ${
+                            dark ? 'bg-sky-400 shadow-[0_0_0_3px_rgba(56,189,248,0.25)]' : 'bg-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.2)]'
+                          }`}
+                          title="Unread"
+                        />
+                      ) : (
+                        <span className={`h-1.5 w-1.5 rounded-full ${dark ? 'bg-white/25' : 'bg-slate-300'}`} title="Read" />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ${ppmStatusRowClass(row.status)}`}>
+                          {String(row.status || '—')}
+                        </span>
+                        {row.assets_included > 0 ? (
+                          <span className={`text-[11px] font-medium ${meta}`}>{row.assets_included} assets</span>
+                        ) : null}
+                        {active ? (
+                          <span className="text-[10px] font-bold uppercase text-[rgb(var(--accent-color))]">Needs attention</span>
+                        ) : null}
+                      </div>
+                      <p className={`mt-1 font-mono text-[10px] tabular-nums ${meta}`}>
+                        Updated {formatPpmNotifDateTime(row.updated_at)}
+                        {row.created_at && String(row.created_at) !== String(row.updated_at) ? (
+                          <span> · Created {formatPpmNotifDateTime(row.created_at)}</span>
+                        ) : null}
+                      </p>
+                      {row.approved_broadcast_at ? (
+                        <p className={`mt-0.5 text-[10px] ${meta}`}>
+                          Approved notice {formatPpmNotifDateTime(row.approved_broadcast_at)}
+                        </p>
+                      ) : null}
+                      {String(row.manager_comment || '').trim() ? (
+                        <p className={`mt-1 line-clamp-2 text-xs ${dark ? 'text-white/80' : 'text-slate-600'}`}>
+                          {String(row.manager_comment).trim()}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <div className={`shrink-0 border-t px-2 py-2 ${dark ? 'border-white/10' : 'border-slate-100'}`}>
+        <Link
+          to={ppmHeaderHref}
+          onClick={() => {
+            markAllPpmNotificationsRead(history, ppmAckUserId, ppmAckStoreId);
+            onClose();
+          }}
+          className={`block rounded-lg px-3 py-2 text-center text-sm font-semibold ${
+            dark ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-[rgb(var(--accent-color))] text-[rgb(var(--accent-contrast))] hover:brightness-105'
+          }`}
+        >
+          Open PPM
+        </Link>
+      </div>
+    </div>
+  );
+}
 
 const Layout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -33,6 +195,143 @@ const Layout = () => {
   const showMaintenanceVendorScope =
     hasScyHint || (!hasItHint && !hasNocHint && user?.role !== 'Super Admin');
   const isDashboardHome = location.pathname === '/';
+
+  const isManagerLike = useMemo(
+    () => String(user?.role || '').toLowerCase().includes('manager'),
+    [user?.role]
+  );
+
+  const showPpmProfileAlerts = useMemo(() => {
+    if (!user?.role) return false;
+    const ppmRoles = ['Admin', 'Viewer', 'Technician', 'Manager'];
+    const r = user.role;
+    const hasRole = ppmRoles.includes(r);
+    const isSuperAdminAccessingAdmin = r === 'Super Admin' && ppmRoles.includes('Admin');
+    const isManagerAccessingAdmin = isManagerLike && ppmRoles.includes('Admin');
+    return hasRole || isSuperAdminAccessingAdmin || isManagerAccessingAdmin;
+  }, [user?.role, isManagerLike]);
+
+  const [ppmHeaderAlerts, setPpmHeaderAlerts] = useState([]);
+  const [ppmNotifHistory, setPpmNotifHistory] = useState([]);
+  const [ppmNotifHistoryLoading, setPpmNotifHistoryLoading] = useState(false);
+  const [ppmNotifOpen, setPpmNotifOpen] = useState(false);
+  const ppmNotifBtnMobileRef = useRef(null);
+  const ppmNotifBtnDesktopRef = useRef(null);
+  const ppmNotifPanelMobileRef = useRef(null);
+  const ppmNotifPanelDesktopRef = useRef(null);
+  const [ppmAckTick, setPpmAckTick] = useState(0);
+  const ppmAckUserId = String(user?._id || user?.id || user?.email || 'anon').trim() || 'anon';
+  const ppmAckStoreId = activeStore?._id != null ? String(activeStore._id) : 'no-store';
+
+  const headerUnreadActiveCount = useMemo(() => {
+    void ppmAckTick;
+    return countUnreadActivePpmAlerts(ppmHeaderAlerts, user, ppmAckUserId, ppmAckStoreId);
+  }, [ppmHeaderAlerts, user, ppmAckUserId, ppmAckStoreId, ppmAckTick]);
+
+  const ppmHeaderHref = isManagerLike ? '/ppm/manager-section' : '/ppm';
+
+  useEffect(() => {
+    const bump = () => setPpmAckTick((t) => t + 1);
+    window.addEventListener('ppm-dash-alerts-ack', bump);
+    const onStorage = (e) => {
+      if (
+        e.key &&
+        (e.key.startsWith('ppm_dash_alerts_ack_v1_') || e.key.startsWith('ppm_notif_read_fps_v1_'))
+      ) {
+        bump();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('ppm-dash-alerts-ack', bump);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showPpmProfileAlerts) {
+      setPpmHeaderAlerts([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { data } = await api.get('/ppm/dashboard-alerts', PPM_ALERTS_API);
+        if (cancelled) return;
+        setPpmHeaderAlerts(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setPpmHeaderAlerts([]);
+      }
+    };
+    void load();
+    const timer = setInterval(load, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [showPpmProfileAlerts, user?.role, activeStore?._id]);
+
+  useEffect(() => {
+    if (!showPpmProfileAlerts) {
+      setPpmNotifHistory([]);
+      return;
+    }
+    let cancelled = false;
+    const loadHistory = async () => {
+      try {
+        setPpmNotifHistoryLoading(true);
+        const { data } = await api.get('/ppm/notification-history', {
+          ...PPM_ALERTS_API,
+          params: { days: 365, limit: 500 }
+        });
+        if (cancelled) return;
+        setPpmNotifHistory(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setPpmNotifHistory([]);
+      } finally {
+        if (!cancelled) setPpmNotifHistoryLoading(false);
+      }
+    };
+    void loadHistory();
+    const timer = setInterval(loadHistory, 120000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [showPpmProfileAlerts, user?.role, activeStore?._id]);
+
+  useEffect(() => {
+    if (!ppmNotifOpen || !showPpmProfileAlerts) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get('/ppm/notification-history', {
+          ...PPM_ALERTS_API,
+          params: { days: 365, limit: 500 }
+        });
+        if (!cancelled) setPpmNotifHistory(Array.isArray(data) ? data : []);
+      } catch {
+        /* keep existing list */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ppmNotifOpen, showPpmProfileAlerts, activeStore?._id]);
+
+  useEffect(() => {
+    if (!ppmNotifOpen) return;
+    const onDocMouseDown = (e) => {
+      const t = e.target;
+      if (ppmNotifBtnMobileRef.current?.contains(t)) return;
+      if (ppmNotifBtnDesktopRef.current?.contains(t)) return;
+      if (ppmNotifPanelMobileRef.current?.contains(t)) return;
+      if (ppmNotifPanelDesktopRef.current?.contains(t)) return;
+      setPpmNotifOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [ppmNotifOpen]);
 
   useEffect(() => {
     const storeId = activeStore?._id || activeStore;
@@ -146,13 +445,31 @@ const Layout = () => {
                   DB: {dbMode === 'in-memory' ? 'In-Memory' : dbMode === 'persistent' ? 'Persistent' : 'Unknown'}
                 </span>
               </div>
-              {user?.role === 'Admin' ? (
-                <Link to="/setup" className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
-                  <Settings size={20} strokeWidth={1.5} />
-                </Link>
-              ) : (
-                <div className="w-8" />
-              )}
+              <div className="flex items-center gap-1">
+                {showPpmProfileAlerts ? (
+                  <button
+                    ref={ppmNotifBtnMobileRef}
+                    type="button"
+                    onClick={() => setPpmNotifOpen((o) => !o)}
+                    className="relative rounded-lg p-2 text-white/90 hover:bg-white/10 md:hidden"
+                    aria-label={`PPM notifications${headerUnreadActiveCount > 0 ? `, ${headerUnreadActiveCount} unread` : ''}`}
+                  >
+                    <Bell size={20} strokeWidth={1.5} />
+                    {headerUnreadActiveCount > 0 ? (
+                      <span className="absolute right-0.5 top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-rose-500 px-0.5 text-[9px] font-bold text-white ring-2 ring-app-sidebar">
+                        {headerUnreadActiveCount > 99 ? '99+' : headerUnreadActiveCount}
+                      </span>
+                    ) : null}
+                  </button>
+                ) : null}
+                {user?.role === 'Admin' ? (
+                  <Link to="/setup" className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                    <Settings size={20} strokeWidth={1.5} />
+                  </Link>
+                ) : (
+                  <div className="w-8" />
+                )}
+              </div>
             </div>
             {showMaintenanceVendorScope && isDashboardHome && (
               <div className="w-full pt-1 border-t border-white/10">
@@ -254,6 +571,43 @@ const Layout = () => {
                 </Link>
               )}
 
+              {showPpmProfileAlerts ? (
+                <div className="relative hidden md:block">
+                  <button
+                    ref={ppmNotifBtnDesktopRef}
+                    type="button"
+                    onClick={() => setPpmNotifOpen((o) => !o)}
+                    className="relative rounded-xl border border-app-card bg-white p-2.5 text-slate-600 hover:bg-slate-50"
+                    title="PPM notifications"
+                    aria-label={`PPM notifications${headerUnreadActiveCount > 0 ? `, ${headerUnreadActiveCount} unread` : ''}`}
+                  >
+                    <Bell size={18} strokeWidth={1.75} />
+                    {headerUnreadActiveCount > 0 ? (
+                      <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-rose-600 px-0.5 text-[8px] font-bold text-white ring-2 ring-white">
+                        {headerUnreadActiveCount > 99 ? '99+' : headerUnreadActiveCount}
+                      </span>
+                    ) : null}
+                  </button>
+                  {ppmNotifOpen ? (
+                    <div
+                      ref={ppmNotifPanelDesktopRef}
+                      className="absolute right-0 top-full z-[100] mt-2 w-[min(22rem,calc(100vw-4rem))]"
+                    >
+                      <PpmNotifPanel
+                        tone="light"
+                        user={user}
+                        history={ppmNotifHistory}
+                        loading={ppmNotifHistoryLoading}
+                        ppmAckUserId={ppmAckUserId}
+                        ppmAckStoreId={ppmAckStoreId}
+                        ppmHeaderHref={ppmHeaderHref}
+                        onClose={() => setPpmNotifOpen(false)}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="relative">
                 <button
                   onClick={() => setProfileOpen((prev) => !prev)}
@@ -270,7 +624,7 @@ const Layout = () => {
                 </button>
 
                 {profileOpen && (
-                  <div className="absolute right-0 mt-2 w-56 rounded-xl border border-app-card bg-white p-2 shadow-md">
+                  <div className="absolute right-0 mt-2 w-60 rounded-xl border border-app-card bg-white p-2 shadow-md">
                     <Link
                       to="/portal"
                       onClick={() => setProfileOpen(false)}
@@ -289,6 +643,31 @@ const Layout = () => {
               </div>
             </div>
         </header>
+
+        {ppmNotifOpen && showPpmProfileAlerts ? (
+          <>
+            <div
+              className="fixed inset-0 z-[90] bg-black/40 md:hidden"
+              aria-hidden
+              onClick={() => setPpmNotifOpen(false)}
+            />
+            <div
+              ref={ppmNotifPanelMobileRef}
+              className="fixed left-3 right-3 top-[4.25rem] z-[100] max-h-[min(70vh,28rem)] md:hidden"
+            >
+              <PpmNotifPanel
+                tone="dark"
+                user={user}
+                history={ppmNotifHistory}
+                loading={ppmNotifHistoryLoading}
+                ppmAckUserId={ppmAckUserId}
+                ppmAckStoreId={ppmAckStoreId}
+                ppmHeaderHref={ppmHeaderHref}
+                onClose={() => setPpmNotifOpen(false)}
+              />
+            </div>
+          </>
+        ) : null}
 
         {/* Main Content */}
         <div className="flex-1 overflow-auto p-4 md:p-8 bg-app-page">

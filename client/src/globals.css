@@ -21,7 +21,8 @@
     --text-muted: 100 116 139;
     --border-color: 226 232 240;
     --accent-color: 255 165 0;
-    --accent-contrast: 0 0 0;
+    /* White label on orange CTAs reads more clearly than black on bright orange */
+    --accent-contrast: 255 255 255;
     --ring-color: 255 165 0;
     --shadow-color: 15 23 42;
     --page-grad-start: 248 250 252;
@@ -330,5 +331,171 @@
 
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background-color: rgb(var(--accent-color) / 0.65);
+  }
+
+  /**
+   * Primary actions use portal/sidebar accent (--accent-color).
+   * Use variants instead of ad-hoc green/red so PPM and admin flows stay on-brand.
+   */
+  .btn-app-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.25;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+    background-color: rgb(var(--accent-color));
+    color: rgb(var(--accent-contrast));
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+    -webkit-font-smoothing: antialiased;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.22);
+  }
+
+  .btn-app-primary:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  .btn-app-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-app-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.25;
+    border: 2px solid rgb(var(--accent-color));
+    background-color: rgb(var(--bg-secondary));
+    color: rgb(var(--text-main));
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .btn-app-outline:hover:not(:disabled) {
+    background-color: rgb(var(--accent-color) / 0.1);
+  }
+
+  .btn-app-outline:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-app-soft {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.25;
+    border: 1px solid rgb(var(--accent-color) / 0.35);
+    background-color: rgb(var(--accent-color) / 0.14);
+    color: rgb(var(--text-main));
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+  }
+
+  .btn-app-soft:hover:not(:disabled) {
+    background-color: rgb(var(--accent-color) / 0.22);
+  }
+
+  .btn-app-soft:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Larger touch targets (PPM drawers, etc.) */
+  .btn-app-primary-md {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.75rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 800;
+    line-height: 1.3;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+    background-color: rgb(var(--accent-color));
+    color: rgb(var(--accent-contrast));
+    -webkit-font-smoothing: antialiased;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.22);
+  }
+
+  .btn-app-primary-md:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  .btn-app-primary-md:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-app-outline-md {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.75rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 800;
+    line-height: 1.3;
+    border: 2px solid rgb(var(--accent-color));
+    background-color: rgb(var(--bg-secondary));
+    color: rgb(var(--text-main));
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .btn-app-outline-md:hover:not(:disabled) {
+    background-color: rgb(var(--accent-color) / 0.1);
+  }
+
+  .btn-app-outline-md:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /** Prominent primary CTA (e.g. Create PPM task) */
+  .btn-app-primary-lg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.875rem;
+    padding: 1rem 2.5rem;
+    font-size: 1.0625rem;
+    font-weight: 800;
+    line-height: 1.25;
+    letter-spacing: 0.03em;
+    transition: filter 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
+    background-color: rgb(var(--accent-color));
+    color: rgb(var(--accent-contrast));
+    box-shadow: 0 4px 14px rgb(var(--accent-color) / 0.35), 0 1px 2px rgb(0 0 0 / 0.08);
+    -webkit-font-smoothing: antialiased;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 0.28);
+  }
+
+  .btn-app-primary-lg:hover:not(:disabled) {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+  }
+
+  .btn-app-primary-lg:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
   }
 }

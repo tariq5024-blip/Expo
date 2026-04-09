@@ -1468,6 +1468,10 @@ router.get('/email-config', protect, admin, async (req, res) => {
         ppmNotificationSubject: cfg.ppmNotificationSubject || 'Expo City Dubai PPM Notification',
         assetNotificationSubject: cfg.assetNotificationSubject || 'Expo City Dubai Asset Notification',
         notificationRecipients: Array.isArray(cfg.notificationRecipients) ? cfg.notificationRecipients : [],
+        technicianRecipients: Array.isArray(cfg.technicianRecipients) ? cfg.technicianRecipients : [],
+        adminRecipients: Array.isArray(cfg.adminRecipients) ? cfg.adminRecipients : [],
+        viewerRecipients: Array.isArray(cfg.viewerRecipients) ? cfg.viewerRecipients : [],
+        managerRecipients: Array.isArray(cfg.managerRecipients) ? cfg.managerRecipients : [],
         lineManagerRecipients: Array.isArray(cfg.lineManagerRecipients) ? cfg.lineManagerRecipients : [],
         requireLineManagerApprovalForCollection: Boolean(cfg.requireLineManagerApprovalForCollection),
         collectionApprovalRecipients: Array.isArray(cfg.collectionApprovalRecipients) ? cfg.collectionApprovalRecipients : [],
@@ -1499,6 +1503,10 @@ router.put('/email-config', protect, admin, async (req, res) => {
       ppmNotificationSubject,
       assetNotificationSubject,
       notificationRecipients,
+      technicianRecipients,
+      adminRecipients,
+      viewerRecipients,
+      managerRecipients,
       lineManagerRecipients,
       requireLineManagerApprovalForCollection,
       collectionApprovalRecipients,
@@ -1528,6 +1536,18 @@ router.put('/email-config', protect, admin, async (req, res) => {
     const mergedLineManagerRecipients = lineManagerRecipients === undefined
       ? (Array.isArray(existingStore?.emailConfig?.lineManagerRecipients) ? existingStore.emailConfig.lineManagerRecipients : [])
       : normalizeRecipientList(lineManagerRecipients);
+    const mergedTechnicianRecipients = technicianRecipients === undefined
+      ? (Array.isArray(existingStore?.emailConfig?.technicianRecipients) ? existingStore.emailConfig.technicianRecipients : [])
+      : normalizeRecipientList(technicianRecipients);
+    const mergedAdminRecipients = adminRecipients === undefined
+      ? (Array.isArray(existingStore?.emailConfig?.adminRecipients) ? existingStore.emailConfig.adminRecipients : [])
+      : normalizeRecipientList(adminRecipients);
+    const mergedViewerRecipients = viewerRecipients === undefined
+      ? (Array.isArray(existingStore?.emailConfig?.viewerRecipients) ? existingStore.emailConfig.viewerRecipients : [])
+      : normalizeRecipientList(viewerRecipients);
+    const mergedManagerRecipients = managerRecipients === undefined
+      ? (Array.isArray(existingStore?.emailConfig?.managerRecipients) ? existingStore.emailConfig.managerRecipients : [])
+      : normalizeRecipientList(managerRecipients);
     const mergedCollectionApprovalRecipients = collectionApprovalRecipients === undefined
       ? (Array.isArray(existingStore?.emailConfig?.collectionApprovalRecipients) ? existingStore.emailConfig.collectionApprovalRecipients : [])
       : normalizeRecipientList(collectionApprovalRecipients);
@@ -1552,6 +1572,10 @@ router.put('/email-config', protect, admin, async (req, res) => {
             : assetNotificationSubject
         ).trim() || 'Expo City Dubai Asset Notification',
         notificationRecipients: mergedRecipients,
+        technicianRecipients: mergedTechnicianRecipients,
+        adminRecipients: mergedAdminRecipients,
+        viewerRecipients: mergedViewerRecipients,
+        managerRecipients: mergedManagerRecipients,
         lineManagerRecipients: mergedLineManagerRecipients,
         requireLineManagerApprovalForCollection: requireLineManagerApprovalForCollection === undefined
           ? Boolean(existingStore?.emailConfig?.requireLineManagerApprovalForCollection)

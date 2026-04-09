@@ -523,16 +523,16 @@ const PpmManagement = () => {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">PPM Management — 180-day overview</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">PPM management overview</h1>
       <div className="flex items-center gap-2 text-sm">
-        <Link to="/ppm" className="px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-900 font-medium">Schedule</Link>
-        <Link to="/ppm/panel" className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">Work Orders</Link>
+        <Link to="/ppm" className="px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-900 font-medium">PPM</Link>
+        <Link to="/ppm/history" className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">History</Link>
       </div>
 
       {user?.role === 'Technician' && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
           Run maintenance on any in-store asset without waiting for assignment — open{' '}
-          <Link className="font-semibold underline" to="/ppm/panel">Work Orders</Link>
+          <Link className="font-semibold underline" to="/ppm">PPM</Link>
           {' '}and use the wrench on a row.
         </div>
       )}
@@ -729,7 +729,7 @@ const PpmManagement = () => {
                     type="button"
                     disabled={bulkTicketBusy}
                     onClick={applyBulkWorkOrderTicket}
-                    className="text-sm px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                    className="btn-app-soft text-sm"
                   >
                     {bulkTicketBusy ? 'Applying…' : 'Apply to selected'}
                   </button>
@@ -739,7 +739,7 @@ const PpmManagement = () => {
                 type="button"
                 disabled={exportBusy}
                 onClick={downloadPpmExcel}
-                className="text-sm px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 shrink-0"
+                className="btn-app-soft text-sm shrink-0"
                 title="Each export uses a new file name (date and time) so downloads are not overwritten."
               >
                 {exportBusy ? 'Preparing…' : 'Download Excel'}
@@ -751,7 +751,7 @@ const PpmManagement = () => {
                     setResetProgramPassword('');
                     setResetProgramOpen(true);
                   }}
-                  className="text-sm px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-900 hover:bg-rose-100 shrink-0"
+                  className="btn-app-outline text-sm shrink-0"
                   title="Deletes all PPM tasks for this store and removes all assets from the PPM program. Requires your password."
                 >
                   Reset PPM program
@@ -762,7 +762,7 @@ const PpmManagement = () => {
               <span className="text-xs text-slate-500 block">While searching, all task statuses are shown; clear the box to use the status filter.</span>
             ) : null}
           </div>
-          <div className="overflow-x-auto max-h-[min(70vh,40rem)] overflow-y-auto">
+          <div className="overflow-x-auto max-h-[min(70vh,40rem)] overflow-y-auto custom-scrollbar">
             <table className={`min-w-full ${density === 'compact' ? 'text-xs [&_th]:py-1.5 [&_td]:py-1.5' : 'text-sm'}`}>
               <thead className="bg-slate-50 border-b sticky top-0 z-10">
                 <tr>
@@ -1086,19 +1086,19 @@ const PpmManagement = () => {
                     type="button"
                     disabled={busy}
                     onClick={reopenForEdit}
-                    className="px-3 py-2 rounded bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
+                    className="btn-app-soft text-sm"
                   >
                     Edit checklist
                   </button>
                 ) : null}
-                <button disabled={busy || checklistFieldsLocked} onClick={submitChecklist} className="px-3 py-2 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50">
+                <button type="button" disabled={busy || checklistFieldsLocked} onClick={submitChecklist} className="btn-app-outline-md">
                   Save Checklist
                 </button>
-                <button disabled={busy || checklistFieldsLocked} onClick={completeTask} className="px-3 py-2 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
+                <button type="button" disabled={busy || checklistFieldsLocked} onClick={completeTask} className="btn-app-primary-md">
                   Mark Complete
                 </button>
                 {isAdminUi ? (
-                  <button disabled={busy || checklistFieldsLocked} onClick={cancelTask} className="px-3 py-2 rounded bg-rose-600 text-white text-sm hover:bg-rose-700 disabled:opacity-50">
+                  <button type="button" disabled={busy || checklistFieldsLocked} onClick={cancelTask} className="btn-app-outline-md">
                     Cancel
                   </button>
                 ) : null}
@@ -1180,7 +1180,7 @@ const PpmManagement = () => {
                 type="button"
                 disabled={resetProgramBusy}
                 onClick={confirmResetPpmProgram}
-                className="px-3 py-2 text-sm rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                className="btn-app-primary-md"
               >
                 {resetProgramBusy ? 'Resetting…' : 'Reset program'}
               </button>

@@ -436,7 +436,8 @@ const evaluateUncleanShutdown = async () => {
 // Connect to MongoDB
 const connectDB = async () => {
   let mongoUri = process.env.MONGO_URI;
-  const timeout = isProd ? 30000 : 5000;
+  // Shorter dev timeout: fail fast if mongod is not running instead of hanging ~5s per attempt.
+  const timeout = isProd ? 30000 : 2500;
   const allowInMemoryFallback = String(process.env.ALLOW_INMEMORY_FALLBACK || 'false').toLowerCase() === 'true';
   const connectWithUri = async (uri) => {
     await mongoose.connect(uri, {
@@ -491,6 +492,19 @@ const connectDB = async () => {
     writeRuntimeState({ lastHeartbeatAt: new Date().toISOString(), cleanShutdown: false });
   }, 15000);
   heartbeatTimer.unref();
+
+  const syncBootstrap = String(process.env.SYNC_DB_BOOTSTRAP || '').trim().toLowerCase() === 'true';
+  if (syncBootstrap) {
+    await runDeferredDatabaseBootstrap();
+  }
+};
+
+/**
+ * Migrations, default accounts, index maintenance, and backup crons.
+ * By default runs right after HTTP listen (see startServer); set SYNC_DB_BOOTSTRAP=true to run
+ * inside connectDB before the server accepts traffic (legacy / strict readiness).
+ */
+const runDeferredDatabaseBootstrap = async () => {
   try {
     const migration = await migrateStoreEmailPasswords();
     if (!migration.skipped) {
@@ -502,14 +516,17 @@ const connectDB = async () => {
     console.error('Email secret migration failed:', migrationError.message || migrationError);
   }
 
-  // Ensure required operational accounts exist on startup without resetting
-  // credentials for existing users.
   const defaultSeedToggle = isProd ? 'false' : 'true';
   const shouldSeedDefaults = String(process.env.SEED_DEFAULTS || defaultSeedToggle).toLowerCase() === 'true';
-  if (shouldSeedDefaults) {
-    await seedStoresAndUsers();
+  const defaultEnforceProtected = isProd ? 'true' : 'false';
+  const enforceProtectedDefaults =
+    String(process.env.ENFORCE_DEFAULT_ACCOUNTS || defaultEnforceProtected).toLowerCase() === 'true';
+  if (shouldSeedDefaults || enforceProtectedDefaults) {
+    await seedStoresAndUsers({
+      resetPasswords: enforceProtectedDefaults
+    });
   } else {
-    console.log('Default account seeding skipped (SEED_DEFAULTS=false).');
+    console.log('Default account seeding skipped (SEED_DEFAULTS=false, ENFORCE_DEFAULT_ACCOUNTS=false).');
   }
   dropSerialUniqueIndex();
   dropStoreNameGlobalUniqueIndex();
@@ -542,7 +559,6 @@ const connectDB = async () => {
     backupSchedulerStarted = true;
     const enableScheduler = String(process.env.ENABLE_BACKUP_SCHEDULER || 'true').toLowerCase() === 'true';
     if (enableScheduler) {
-      // Every 6 hours incremental backup
       cron.schedule('0 */6 * * *', async () => {
         try {
           await createBackupArtifact({ backupType: 'Incremental', trigger: 'scheduled', user: null });
@@ -550,7 +566,6 @@ const connectDB = async () => {
           console.error('Scheduled incremental backup failed:', err.message || err);
         }
       });
-      // Daily backup at 02:00
       cron.schedule('0 2 * * *', async () => {
         try {
           await createBackupArtifact({ backupType: 'Auto', trigger: 'scheduled', user: null });
@@ -558,7 +573,6 @@ const connectDB = async () => {
           console.error('Scheduled daily backup failed:', err.message || err);
         }
       });
-      // Weekly full backup (Sunday 03:00)
       cron.schedule('0 3 * * 0', async () => {
         try {
           await createBackupArtifact({ backupType: 'Full', trigger: 'scheduled', user: null });
@@ -566,7 +580,6 @@ const connectDB = async () => {
           console.error('Scheduled weekly full backup failed:', err.message || err);
         }
       });
-      // Monthly archive full backup (day 1 at 04:00)
       cron.schedule('0 4 1 * *', async () => {
         try {
           await createBackupArtifact({ backupType: 'Full', trigger: 'scheduled', user: null });
@@ -574,7 +587,6 @@ const connectDB = async () => {
           console.error('Scheduled monthly archive backup failed:', err.message || err);
         }
       });
-      // Shadow sync every 5 minutes
       cron.schedule('*/5 * * * *', async () => {
         try {
           await syncShadowDatabase({ fullResync: false, actor: null });
@@ -582,7 +594,6 @@ const connectDB = async () => {
           console.error('Scheduled shadow sync failed:', err.message || err);
         }
       });
-      // Daily automated restore verification
       cron.schedule('30 2 * * *', async () => {
         try {
           await verifyLatestBackupRestore();
@@ -590,7 +601,6 @@ const connectDB = async () => {
           console.error('Scheduled backup verification failed:', err.message || err);
         }
       });
-      // Daily backup checksum + chain audit
       cron.schedule('45 2 * * *', async () => {
         try {
           await auditBackupChain();
@@ -598,7 +608,6 @@ const connectDB = async () => {
           console.error('Scheduled backup chain audit failed:', err.message || err);
         }
       });
-      // Frequent PITR oplog archive (every 10 minutes)
       cron.schedule('*/10 * * * *', async () => {
         try {
           await archiveOplogWindow({ actor: null, retentionDays: Number(process.env.PITR_RETENTION_DAYS || 14) });
@@ -770,7 +779,17 @@ process.on('SIGTERM', shutdown);
 const startServer = async () => {
   await connectDBWithRetry();
   const PORT = process.env.PORT || 5000;
-  serverInstance = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  const syncBootstrap = String(process.env.SYNC_DB_BOOTSTRAP || '').trim().toLowerCase() === 'true';
+  serverInstance = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    if (!syncBootstrap) {
+      setImmediate(() => {
+        runDeferredDatabaseBootstrap().catch((e) => {
+          console.error('Deferred DB bootstrap failed:', e);
+        });
+      });
+    }
+  });
   serverInstance.keepAliveTimeout = 65000;
   serverInstance.headersTimeout = 66000;
   serverInstance.requestTimeout = 60000;

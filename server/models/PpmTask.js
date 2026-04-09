@@ -87,7 +87,24 @@ const ppmTaskSchema = new mongoose.Schema(
     history: {
       type: [ppmHistorySchema],
       default: []
-    }
+    },
+    manager_review: {
+      status: {
+        type: String,
+        enum: ['Pending', 'Approved', 'Rejected', 'Modified'],
+        default: 'Pending',
+        index: true
+      },
+      comment: { type: String, default: '' },
+      reviewed_at: { type: Date, default: null },
+      reviewed_by: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: false
+      }
+    },
+    manager_notification_pending: { type: Boolean, default: false, index: true },
+    manager_notification_sent_at: { type: Date, default: null }
   },
   { timestamps: true }
 );

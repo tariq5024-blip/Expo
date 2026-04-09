@@ -41,10 +41,12 @@ const Consumables = lazy(() => import('./pages/Consumables'));
 // Eager-load PPM routes: soft refresh can abort lazy chunk loads and leave the page stuck on “Loading…”.
 import TechPpmPanel from './pages/TechPpmPanel';
 import PpmHistory from './pages/PpmHistory';
+const PpmManagerSection = lazy(() => import('./pages/PpmManagerSection'));
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading, activeStore, globalLoading } = useAuth();
   const location = useLocation();
+  const isManagerLike = String(user?.role || '').toLowerCase().includes('manager');
 
   if (loading || globalLoading) {
     return (
@@ -79,7 +81,9 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     // const effectiveRole = user.role === 'Super Admin' ? 'Admin' : user.role;
     
     // Check if user.role is in allowedRoles OR if user is Super Admin and 'Admin' is in allowedRoles
-    const isAllowed = allowedRoles.includes(user.role) || (user.role === 'Super Admin' && allowedRoles.includes('Admin'));
+    const isAllowed = allowedRoles.includes(user.role)
+      || (user.role === 'Super Admin' && allowedRoles.includes('Admin'))
+      || (isManagerLike && allowedRoles.includes('Admin'));
     
     if (!isAllowed) {
       // Allow Super Admin to access everything? User said "SUPER ADMIN HAVE ALL PERMISSIONS".
@@ -202,20 +206,25 @@ function App() {
           } />
 
           <Route path="/ppm" element={
-            <ProtectedRoute allowedRoles={['Admin', 'Viewer', 'Technician']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer', 'Technician', 'Manager']}>
               <TechPpmPanel />
             </ProtectedRoute>
           } />
 
           <Route path="/ppm/panel" element={
-            <ProtectedRoute allowedRoles={['Admin', 'Viewer', 'Technician']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer', 'Technician', 'Manager']}>
               <Navigate to="/ppm" replace />
             </ProtectedRoute>
           } />
 
           <Route path="/ppm/history" element={
-            <ProtectedRoute allowedRoles={['Admin', 'Viewer', 'Technician']}>
+            <ProtectedRoute allowedRoles={['Admin', 'Viewer', 'Technician', 'Manager']}>
               <PpmHistory />
+            </ProtectedRoute>
+          } />
+          <Route path="/ppm/manager-section" element={
+            <ProtectedRoute allowedRoles={['Manager']}>
+              <PpmManagerSection />
             </ProtectedRoute>
           } />
 

@@ -24,8 +24,9 @@ const archiveDuplicateEmail = async (userDoc) => {
   await userDoc.save();
 };
 
-const seedStoresAndUsers = async () => {
+const seedStoresAndUsers = async (options = {}) => {
   try {
+    const resetPasswords = options.resetPasswords !== false;
     // 1. Create Stores
     const storesData = [
       { name: 'SCY ASSET' },
@@ -85,6 +86,9 @@ const seedStoresAndUsers = async () => {
       superAdmin.email = superAdminEmail;
       superAdmin.role = 'Super Admin';
       superAdmin.assignedStore = null;
+      if (resetPasswords) {
+        superAdmin.password = superAdminHashedPassword;
+      }
       await superAdmin.save();
       console.log(`Updated Super Admin profile: ${superAdminEmail}`);
     }
@@ -125,6 +129,9 @@ const seedStoresAndUsers = async () => {
           adminUser.email = String(adminData.email).toLowerCase();
           adminUser.role = 'Admin';
           adminUser.assignedStore = store._id;
+          if (resetPasswords) {
+            adminUser.password = hashedPassword;
+          }
           await adminUser.save();
           console.log(`Updated profile for ${adminData.email}`);
         }
@@ -133,7 +140,7 @@ const seedStoresAndUsers = async () => {
       }
     }
 
-    console.log('Seeding Stores, Super Admin, and Default Admins completed.');
+    console.log(`Seeding Stores, Super Admin, and Default Admins completed (resetPasswords=${resetPasswords}).`);
 
   } catch (error) {
     console.error('Seeding error:', error);

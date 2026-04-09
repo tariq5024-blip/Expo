@@ -3,15 +3,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const FALLBACK_LOGO = '/logo.svg';
-
 const Login = () => {
   const [identifier, setIdentifier] = useState(''); // Email or Username
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [logoSrc, setLogoSrc] = useState(FALLBACK_LOGO);
   const { login, user, loading: authLoading, branding } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -35,10 +32,6 @@ const Login = () => {
       redirectAfterLogin(user);
     }
   }, [user, authLoading, redirectAfterLogin]);
-
-  useEffect(() => {
-    setLogoSrc(branding?.logoUrl || FALLBACK_LOGO);
-  }, [branding?.logoUrl]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -66,23 +59,15 @@ const Login = () => {
       </div>
 
       <div className="w-full max-w-md px-6 relative z-10">
-        {/* Logo Section */}
-        <div className="flex flex-col items-center mb-8">
-           <img
-             src={logoSrc}
-             alt="Expo City Dubai"
-             className="h-24 w-auto mb-4 drop-shadow-sm"
-             onError={() => setLogoSrc((prev) => (prev === FALLBACK_LOGO ? prev : FALLBACK_LOGO))}
-           />
-           <div className="text-center">
-             <h1 className="text-2xl font-bold tracking-tight text-app-main uppercase">Expo City Dubai</h1>
-             <div className="flex items-center justify-center gap-2 mt-2">
-               <div className="h-0.5 w-8 bg-app-accent rounded-full"></div>
-               <p className="text-xs text-slate-500 tracking-[0.2em] uppercase font-bold">Asset Management</p>
-               <div className="h-0.5 w-8 bg-app-accent rounded-full"></div>
-             </div>
-           </div>
-        </div>
+        {branding?.logoUrl ? (
+          <div className="flex justify-center mb-7">
+            <img
+              src={branding.logoUrl}
+              alt="Application logo"
+              className="h-28 md:h-32 w-auto object-contain drop-shadow-sm"
+            />
+          </div>
+        ) : null}
 
         {/* Login Card */}
         <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">

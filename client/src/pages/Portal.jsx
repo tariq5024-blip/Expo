@@ -68,6 +68,10 @@ const Portal = () => {
     ppmNotificationSubject: 'Expo City Dubai PPM Notification',
     assetNotificationSubject: 'Expo City Dubai Asset Notification',
     notificationRecipients: '',
+    technicianRecipients: '',
+    adminRecipients: '',
+    viewerRecipients: '',
+    managerRecipients: '',
     lineManagerRecipients: '',
     requireLineManagerApprovalForCollection: false,
     collectionApprovalRecipients: '',
@@ -164,6 +168,10 @@ const Portal = () => {
           ppmNotificationSubject: cfg.ppmNotificationSubject || 'Expo City Dubai PPM Notification',
           assetNotificationSubject: cfg.assetNotificationSubject || 'Expo City Dubai Asset Notification',
           notificationRecipients: Array.isArray(cfg.notificationRecipients) ? cfg.notificationRecipients.join(', ') : '',
+          technicianRecipients: Array.isArray(cfg.technicianRecipients) ? cfg.technicianRecipients.join(', ') : '',
+          adminRecipients: Array.isArray(cfg.adminRecipients) ? cfg.adminRecipients.join(', ') : '',
+          viewerRecipients: Array.isArray(cfg.viewerRecipients) ? cfg.viewerRecipients.join(', ') : '',
+          managerRecipients: Array.isArray(cfg.managerRecipients) ? cfg.managerRecipients.join(', ') : '',
           lineManagerRecipients: Array.isArray(cfg.lineManagerRecipients) ? cfg.lineManagerRecipients.join(', ') : '',
           requireLineManagerApprovalForCollection: Boolean(cfg.requireLineManagerApprovalForCollection),
           collectionApprovalRecipients: Array.isArray(cfg.collectionApprovalRecipients) ? cfg.collectionApprovalRecipients.join(', ') : '',
@@ -565,7 +573,21 @@ const Portal = () => {
     if (!emailStoreId) return alert('Please select a store first.');
     try {
       setEmailSaving(true);
-      await api.put('/system/email-config', { storeId: emailStoreId, ...emailConfig });
+      const split = (raw) => String(raw || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const mergedLegacy = Array.from(new Set([
+        ...split(emailConfig.technicianRecipients),
+        ...split(emailConfig.adminRecipients),
+        ...split(emailConfig.viewerRecipients),
+        ...split(emailConfig.managerRecipients)
+      ])).join(', ');
+      await api.put('/system/email-config', {
+        storeId: emailStoreId,
+        ...emailConfig,
+        notificationRecipients: mergedLegacy
+      });
       alert('Email configuration saved successfully.');
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to save email configuration');
@@ -1033,17 +1055,31 @@ const Portal = () => {
                     />
                     <input
                       type="text"
-                      value={emailConfig.notificationRecipients}
-                      onChange={(e) => handleEmailField('notificationRecipients', e.target.value)}
+                      value={emailConfig.technicianRecipients}
+                      onChange={(e) => handleEmailField('technicianRecipients', e.target.value)}
                       className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
-                      placeholder="Notification recipients (comma-separated emails)"
+                      placeholder="Technician notification emails (comma-separated)"
                     />
                     <input
                       type="text"
-                      value={emailConfig.lineManagerRecipients}
-                      onChange={(e) => handleEmailField('lineManagerRecipients', e.target.value)}
+                      value={emailConfig.adminRecipients}
+                      onChange={(e) => handleEmailField('adminRecipients', e.target.value)}
                       className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
-                      placeholder="Line manager emails (comma-separated)"
+                      placeholder="Admin notification emails (comma-separated)"
+                    />
+                    <input
+                      type="text"
+                      value={emailConfig.viewerRecipients}
+                      onChange={(e) => handleEmailField('viewerRecipients', e.target.value)}
+                      className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
+                      placeholder="Viewer notification emails (comma-separated)"
+                    />
+                    <input
+                      type="text"
+                      value={emailConfig.managerRecipients}
+                      onChange={(e) => handleEmailField('managerRecipients', e.target.value)}
+                      className="border border-slate-300 rounded-lg p-2.5 text-sm md:col-span-2"
+                      placeholder="Manager notification emails (comma-separated)"
                     />
                     <label className="md:col-span-2 inline-flex items-center gap-2 text-sm text-slate-700">
                       <input

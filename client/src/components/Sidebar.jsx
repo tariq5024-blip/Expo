@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -19,6 +19,10 @@ import { useAuth } from '../context/AuthContext';
 import ChangePasswordModal from './ChangePasswordModal';
 import api from '../api/axios';
 import PropTypes from 'prop-types';
+import {
+  acknowledgePpmDashboardAlerts,
+  countUnreadActivePpmAlerts
+} from '../utils/ppmDashboardAlertsAck';
 
 const SidebarItem = ({
   item,
@@ -45,12 +49,16 @@ const SidebarItem = ({
 
   const activeClass = tone.activeClass;
   const inactiveClass = depth > 0 ? tone.inactiveSubClass : tone.inactiveRootClass;
+  const badgeCount = Number(item?.badgeCount || 0);
 
   if (hasSubItems) {
     return (
       <div>
         <button
-          onClick={() => toggleSubMenu(item.name)}
+          onClick={() => {
+            if (typeof item.beforeToggle === 'function') item.beforeToggle();
+            toggleSubMenu(item.name);
+          }}
           className={`${baseClass} ${isHighlighted ? activeClass : inactiveClass}`}
           style={isHighlighted ? tone.activeStyle : undefined}
           title={isCollapsed ? item.name : ''}
@@ -60,6 +68,11 @@ const SidebarItem = ({
             {item.icon}
             {!isCollapsed && <span className={`truncate ${depth > 0 ? 'text-sm' : 'text-[15px] font-medium'}`}>{item.name}</span>}
           </div>
+          {!isCollapsed && badgeCount > 0 && (
+            <span className="ml-2 inline-flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold text-white">
+              {badgeCount > 99 ? '99+' : badgeCount}
+            </span>
+          )}
           {!isCollapsed && (isSubMenuOpen ? <ChevronDown size={14} strokeWidth={1.5} /> : <ChevronRight size={14} strokeWidth={1.5} />)}
         </button>
 
@@ -89,7 +102,10 @@ const SidebarItem = ({
   return (
     <Link
       to={item.path}
-      onClick={() => onClose && onClose()}
+      onClick={() => {
+        if (typeof item.onNavigate === 'function') item.onNavigate();
+        onClose && onClose();
+      }}
       className={`${baseClass} ${active ? activeClass : inactiveClass}`}
       style={active ? tone.activeStyle : undefined}
       title={isCollapsed ? item.name : ''}
@@ -97,6 +113,11 @@ const SidebarItem = ({
       {active && <span className={`absolute left-0 top-2 bottom-2 w-1 rounded-r-full ${tone.indicatorClass}`} />}
       {item.icon}
       {!isCollapsed && <span className={`truncate ${depth > 0 ? 'text-sm' : 'text-[15px] font-medium'}`}>{item.name}</span>}
+      {!isCollapsed && badgeCount > 0 && (
+        <span className="ml-auto inline-flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold text-white">
+          {badgeCount > 99 ? '99+' : badgeCount}
+        </span>
+      )}
     </Link>
   );
 };
@@ -107,7 +128,10 @@ SidebarItem.propTypes = {
     path: PropTypes.string,
     icon: PropTypes.element,
     subItems: PropTypes.array,
-    uniqueKey: PropTypes.string
+    uniqueKey: PropTypes.string,
+    badgeCount: PropTypes.number,
+    beforeToggle: PropTypes.func,
+    onNavigate: PropTypes.func
   }).isRequired,
   depth: PropTypes.number,
   openSubMenu: PropTypes.object.isRequired,
@@ -127,12 +151,44 @@ SidebarItem.propTypes = {
 
 const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
   const { user, logout, activeStore, branding } = useAuth();
+  const isManagerLike = String(user?.role || '').toLowerCase().includes('manager');
   const location = useLocation();
   const navigate = useNavigate();
   const [openSubMenu, setOpenSubMenu] = useState({});
   const [productsTree, setProductsTree] = useState([]);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [showRadialMenu, setShowRadialMenu] = useState(false);
+  const [ppmDashboardAlerts, setPpmDashboardAlerts] = useState([]);
+  const [ppmAckTick, setPpmAckTick] = useState(0);
+  const ppmAckUserId = String(user?._id || user?.id || user?.email || 'anon').trim() || 'anon';
+  const ppmAckStoreId = activeStore?._id != null ? String(activeStore._id) : 'no-store';
+
+  const effectivePpmBadge = useMemo(
+    () => countUnreadActivePpmAlerts(ppmDashboardAlerts, user, ppmAckUserId, ppmAckStoreId),
+    [ppmDashboardAlerts, user, ppmAckUserId, ppmAckStoreId, ppmAckTick]
+  );
+
+  const ackPpmAlerts = useCallback(() => {
+    acknowledgePpmDashboardAlerts(ppmDashboardAlerts, ppmAckUserId, ppmAckStoreId);
+  }, [ppmDashboardAlerts, ppmAckUserId, ppmAckStoreId]);
+
+  useEffect(() => {
+    const bump = () => setPpmAckTick((t) => t + 1);
+    window.addEventListener('ppm-dash-alerts-ack', bump);
+    const onStorage = (e) => {
+      if (
+        e.key &&
+        (e.key.startsWith('ppm_dash_alerts_ack_v1_') || e.key.startsWith('ppm_notif_read_fps_v1_'))
+      ) {
+        bump();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('ppm-dash-alerts-ack', bump);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   useEffect(() => {
     const fetchProducts = async () => {
@@ -144,17 +200,37 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
       }
     };
 
-    if (['Admin', 'Viewer', 'Super Admin'].includes(user?.role)) {
+    if (['Admin', 'Viewer', 'Super Admin'].includes(user?.role) || isManagerLike) {
       fetchProducts();
     }
+  }, [user?.role, activeStore?._id, isManagerLike]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPpmNotifications = async () => {
+      try {
+        const { data } = await api.get('/ppm/dashboard-alerts');
+        if (cancelled) return;
+        setPpmDashboardAlerts(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setPpmDashboardAlerts([]);
+      }
+    };
+    void loadPpmNotifications();
+    const timer = setInterval(loadPpmNotifications, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [user?.role, activeStore?._id]);
 
   const toggleSubMenu = (name) => {
     setOpenSubMenu((prev) => ({ ...prev, [name]: !prev[name] }));
   };
 
-  const navItems = [
-    { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={18} strokeWidth={1.5} />, roles: ['Admin', 'Viewer'] },
+  const navItems = useMemo(
+    () => [
+    { name: 'Dashboard', path: '/', icon: <LayoutDashboard size={18} strokeWidth={1.5} />, roles: ['Admin', 'Viewer', 'Manager'] },
     {
       name: 'Events',
       icon: <Calendar size={18} strokeWidth={1.5} />,
@@ -206,24 +282,46 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
     {
       name: 'PPM Management',
       icon: <ClipboardCheck size={18} strokeWidth={1.5} />,
-      roles: ['Admin', 'Viewer', 'Technician'],
+      roles: ['Admin', 'Viewer', 'Technician', 'Manager'],
+      badgeCount: effectivePpmBadge,
+      beforeToggle: ackPpmAlerts,
       subItems: [
-        { name: 'PPM', path: '/ppm', uniqueKey: 'ppm-main', roles: ['Admin', 'Viewer', 'Technician'] },
-        { name: 'History', path: '/ppm/history', uniqueKey: 'ppm-history', roles: ['Admin', 'Viewer', 'Technician'] }
+        {
+          name: 'PPM',
+          path: '/ppm',
+          uniqueKey: 'ppm-main',
+          roles: ['Admin', 'Viewer', 'Technician', 'Manager'],
+          onNavigate: ackPpmAlerts
+        },
+        {
+          name: 'History',
+          path: '/ppm/history',
+          uniqueKey: 'ppm-history',
+          roles: ['Admin', 'Viewer', 'Technician', 'Manager'],
+          onNavigate: ackPpmAlerts
+        },
+        {
+          name: 'Manager Section',
+          path: '/ppm/manager-section',
+          uniqueKey: 'ppm-manager-section',
+          roles: ['Manager'],
+          onNavigate: ackPpmAlerts
+        }
       ]
     },
     { name: 'Scanner', path: '/scanner', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Technician'] },
-    { name: 'My Assets', path: '/my-assets', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Technician'] },
-    
-    
-  ];
+    { name: 'My Assets', path: '/my-assets', icon: <Box size={18} strokeWidth={1.5} />, roles: ['Technician'] }
+    ],
+    [productsTree, effectivePpmBadge, ackPpmAlerts]
+  );
 
   const filterItems = (items) => {
     return items.reduce((acc, item) => {
       if (item.roles) {
         const hasRole = item.roles.includes(user?.role);
         const isSuperAdminAccessingAdmin = user?.role === 'Super Admin' && item.roles.includes('Admin');
-        if (!hasRole && !isSuperAdminAccessingAdmin) return acc;
+        const isManagerAccessingAdmin = isManagerLike && item.roles.includes('Admin');
+        if (!hasRole && !isSuperAdminAccessingAdmin && !isManagerAccessingAdmin) return acc;
       }
 
       const newItem = { ...item };

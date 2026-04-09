@@ -129,8 +129,23 @@ export const AuthProvider = ({ children }) => {
               setActiveStore(null);
             }
           } else {
-            setActiveStore(null);
-            localStorage.removeItem('activeStore');
+            const storedActiveStore = localStorage.getItem('activeStore');
+            if (storedActiveStore) {
+              try {
+                const normalized = normalizeStoreSelection(JSON.parse(storedActiveStore));
+                if (normalized) {
+                  setActiveStore(normalized);
+                } else {
+                  setActiveStore(null);
+                  localStorage.removeItem('activeStore');
+                }
+              } catch {
+                setActiveStore(null);
+                localStorage.removeItem('activeStore');
+              }
+            } else {
+              setActiveStore(null);
+            }
           }
           refreshedFromServer = true;
           break;
@@ -190,6 +205,24 @@ export const AuthProvider = ({ children }) => {
         // Super Admin: Clear active store initially (force selection).
         setActiveStore(null);
         localStorage.removeItem('activeStore');
+      } else {
+        const storedActiveStore = localStorage.getItem('activeStore');
+        if (storedActiveStore) {
+          try {
+            const normalized = normalizeStoreSelection(JSON.parse(storedActiveStore));
+            if (normalized) {
+              setActiveStore(normalized);
+            } else {
+              setActiveStore(null);
+              localStorage.removeItem('activeStore');
+            }
+          } catch {
+            setActiveStore(null);
+            localStorage.removeItem('activeStore');
+          }
+        } else {
+          setActiveStore(null);
+        }
       }
 
       return userData;

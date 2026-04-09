@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Eye, Pencil, Wrench } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import api from '../api/axios';
+import PpmInlineAssetEditModal from '../components/PpmInlineAssetEditModal';
 import { useAuth } from '../context/AuthContext';
 
 const EQUIPMENT_OPTIONS = ['Ladder', 'Scaffold', 'Manlift', 'Rope', 'Safety Harness'];
@@ -70,6 +71,27 @@ const nextBadgeClass = (tone) => {
   return 'bg-slate-100 text-slate-600 border-slate-200';
 };
 
+/** Admin manager notes + optional manager review comment from open PpmTask. */
+const openTaskManagerCommentParts = (openTask) => {
+  if (!openTask) return { admin: '', review: '' };
+  return {
+    admin: String(openTask.manager_notes || '').trim(),
+    review: String(openTask.manager_review?.comment || '').trim()
+  };
+};
+
+/** Server merges open task + latest task with feedback (e.g. after Cancelled following rejection). */
+const rowManagerCommentParts = (row) => {
+  const d = row?.manager_comment_display;
+  if (d && typeof d === 'object') {
+    return {
+      admin: String(d.admin || '').trim(),
+      review: String(d.review || '').trim()
+    };
+  }
+  return openTaskManagerCommentParts(row?.open_task);
+};
+
 const UNHEALTHY_CONDITIONS = new Set(['faulty', 'workshop', 'under repair/workshop']);
 
 const isAssetUnhealthy = (condition) => UNHEALTHY_CONDITIONS.has(String(condition || '').trim().toLowerCase());
@@ -86,13 +108,34 @@ const WORKORDER_PAGE_SIZE = 50;
 const PPM_BULK_NOTIFY_SESSION_PREFIX = 'ppm_pending_bulk_notify_';
 const PPM_CREATE_DRAFT_SESSION_PREFIX = 'ppm_create_draft_';
 const PPM_REMOVE_UNDO_MS = 6000;
+const ppmSearchFields = (asset, row) => ([
+  asset?.uniqueId,
+  asset?.abs_code,
+  asset?.name,
+  asset?.model_number,
+  asset?.serial_number,
+  asset?.qr_code,
+  asset?.rfid,
+  asset?.mac_address,
+  asset?.location,
+  row?.open_task?.work_order_ticket || asset?.ticket_number,
+  asset?.manufacturer,
+  asset?.status,
+  asset?.maintenance_vendor,
+  row?.manager_comment_display?.admin,
+  row?.manager_comment_display?.review,
+  row?.open_task?.manager_notes,
+  row?.open_task?.manager_review?.comment
+]);
 
 const TechPpmPanel = () => {
   const { user, activeStore } = useAuth();
   const [searchParams] = useSearchParams();
+  const roleLower = String(user?.role || '').toLowerCase();
+  const managerLikeRole = roleLower.includes('manager');
+  const adminLikeRole = roleLower.includes('admin');
   const canOpenAssetHistory = user?.role === 'Admin' || user?.role === 'Super Admin' || user?.role === 'Viewer';
-  const canManagePpmInclusion = user?.role === 'Admin' || user?.role === 'Super Admin';
-
+  const canManagePpmInclusion = adminLikeRole || managerLikeRole || user?.role === 'Super Admin';
   const [rows, setRows] = useState([]);
   const [overview, setOverview] = useState({
     total: 0,
@@ -117,7 +160,8 @@ const TechPpmPanel = () => {
   const [incompleteTasks, setIncompleteTasks] = useState([]);
   const [incompleteLoading, setIncompleteLoading] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
-  const [ppmSavingId, setPpmSavingId] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [selectedAssetIds, setSelectedAssetIds] = useState([]);
   const [techs, setTechs] = useState([]);
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({
@@ -139,6 +183,7 @@ const TechPpmPanel = () => {
   const [resetProgramBusy, setResetProgramBusy] = useState(false);
   const [pendingBulkPpmNotify, setPendingBulkPpmNotify] = useState(false);
   const [bulkNotifyBusy, setBulkNotifyBusy] = useState(false);
+  const [managerNotifyEmails, setManagerNotifyEmails] = useState([]);
   const [pendingRemove, setPendingRemove] = useState(null);
   const [pendingDrawerCancel, setPendingDrawerCancel] = useState(null);
   const [pendingResetProgram, setPendingResetProgram] = useState(null);
@@ -146,9 +191,11 @@ const TechPpmPanel = () => {
   const pendingRemoveTimerRef = useRef(null);
   const pendingDrawerCancelTimerRef = useRef(null);
   const pendingResetTimerRef = useRef(null);
+  const importFileInputRef = useRef(null);
+  const [ppmInlineEditAssetId, setPpmInlineEditAssetId] = useState(null);
   const assetsLoadGen = useRef(0);
   const incompleteLoadGen = useRef(0);
-  const workOrderColSpan = canManagePpmInclusion ? 15 : 14;
+  const workOrderColSpan = canManagePpmInclusion ? 19 : 18;
 
   const bulkNotifySessionKey = useMemo(() => {
     const id = activeStore?._id != null ? String(activeStore._id) : '';
@@ -186,6 +233,29 @@ const TechPpmPanel = () => {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [canManagePpmInclusion, pendingBulkPpmNotify]);
+
+  useEffect(() => {
+    if (!canManagePpmInclusion || !activeStore?._id) {
+      setManagerNotifyEmails([]);
+      return;
+    }
+    let cancelled = false;
+    const loadManagerRecipients = async () => {
+      try {
+        const { data } = await api.get('/system/email-config', { params: { storeId: activeStore._id } });
+        if (cancelled) return;
+        const cfg = data?.emailConfig || {};
+        const emails = Array.isArray(cfg?.managerRecipients)
+          ? cfg.managerRecipients.map((v) => String(v || '').trim().toLowerCase()).filter(Boolean)
+          : [];
+        setManagerNotifyEmails(Array.from(new Set(emails)));
+      } catch {
+        if (!cancelled) setManagerNotifyEmails([]);
+      }
+    };
+    void loadManagerRecipients();
+    return () => { cancelled = true; };
+  }, [canManagePpmInclusion, activeStore?._id]);
 
   useEffect(() => {
     if (!canManagePpmInclusion || !createDraftSessionKey) return;
@@ -261,7 +331,7 @@ const TechPpmPanel = () => {
       const params = { page: assetPage, limit: WORKORDER_PAGE_SIZE };
       if (q) {
         params.q = q;
-      } else if (canManagePpmInclusion) {
+      } else if (canManagePpmInclusion || user?.role === 'Viewer') {
         params.program_only = true;
       }
       const [assetsRes, ovRes] = await Promise.all([
@@ -269,7 +339,7 @@ const TechPpmPanel = () => {
         api.get('/ppm/overview')
       ]);
       if (gen !== assetsLoadGen.current) return;
-      if (canManagePpmInclusion) {
+      if (user?.role === 'Admin' || user?.role === 'Super Admin') {
         try {
           const u = await api.get('/users');
           if (gen !== assetsLoadGen.current) return;
@@ -298,11 +368,18 @@ const TechPpmPanel = () => {
       );
     } catch (error) {
       if (gen !== assetsLoadGen.current) return;
-      alert(error.response?.data?.message || 'Failed to load PPM data');
+      const msg = String(error?.response?.data?.message || '');
+      if (managerLikeRole && /not allowed/i.test(msg)) {
+        // Manager gets redirected to /ppm/manager-section above.
+        setRows([]);
+        setOverview({ total: 0, overdue: 0, completed: 0, notCompleted: 0, open: 0, health: 100 });
+      } else {
+        alert(msg || 'Failed to load PPM data');
+      }
     } finally {
       if (gen === assetsLoadGen.current) setLoading(false);
     }
-  }, [query, canManagePpmInclusion, assetPage]);
+  }, [query, canManagePpmInclusion, assetPage, user?.role, managerLikeRole]);
 
   useEffect(() => {
     const t = setTimeout(() => { load(); }, 300);
@@ -432,6 +509,90 @@ const TechPpmPanel = () => {
     }
   };
 
+  const downloadPpmBulkExportSheet = async () => {
+    try {
+      setExportBusy(true);
+      const res = await api.get('/ppm/export-bulk-sheet', { responseType: 'blob' });
+      const blob = res.data;
+      if (blob?.type?.includes('application/json')) {
+        const text = await blob.text();
+        const j = JSON.parse(text);
+        alert(j.message || 'Bulk export failed');
+        return;
+      }
+      const dispo = res.headers['content-disposition'];
+      const match = dispo && /filename="([^"]+)"|filename=([^;\s]+)/i.exec(dispo);
+      const name = (match && (match[1] || match[2])?.trim()) || `PPM_Bulk_Export_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.xlsx`;
+      const url = window.URL.createObjectURL(blob instanceof Blob ? blob : new Blob([blob]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', name);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error.response?.data?.message || 'Could not download PPM bulk export sheet');
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const openPpmBulkImportPicker = () => {
+    if (importBusy) return;
+    importFileInputRef.current?.click();
+  };
+
+  const handlePpmBulkImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      setImportBusy(true);
+      const form = new FormData();
+      form.append('file', file);
+      form.append('schedule_date', createForm.scheduled_for || new Date().toISOString());
+      form.append('comments', 'PPM bulk import from PPM section');
+      const res = await api.post('/ppm/upload', form);
+      const count = Number(res.data?.assets_included || 0);
+      const taskId = String(res.data?.task_id || '');
+      const hasTaskStats = Object.prototype.hasOwnProperty.call(res.data || {}, 'created_ppm_tasks')
+        || Object.prototype.hasOwnProperty.call(res.data || {}, 'matched_assets');
+      const createdTasks = Number(res.data?.created_ppm_tasks || 0);
+      const matchedAssets = Number(res.data?.matched_assets || 0);
+      const matchedExistingAssets = Number(res.data?.matched_existing_assets || 0);
+      const createdFromImport = Number(res.data?.created_assets_from_import || 0);
+      const skippedOpen = Number(res.data?.skipped_open_task || 0);
+      const unmatchedRows = Number(res.data?.unmatched_rows || 0);
+      const dbg = res.data?.debug || {};
+      const dbgLine = dbg.active_store
+        ? ` Store: ${dbg.active_store}. File: ${dbg.file_received ? `${dbg.file_size_bytes || 0} bytes` : 'not received'}. Excel rows parsed: ${dbg.excel_rows_parsed ?? '—'}.`
+        : '';
+      const taskPart = hasTaskStats
+        ? ` Created ${createdTasks} visible PPM task(s) for ${matchedAssets} asset(s).`
+        : '';
+      const sourcePart = hasTaskStats
+        ? ` Existing matched: ${matchedExistingAssets}. Auto-created from import: ${createdFromImport}.`
+        : '';
+      alert(
+        count > 0
+          ? `PPM bulk import completed. ${count} row(s) saved${taskId ? ` (Task: ${taskId})` : ''}.${taskPart}${sourcePart}${skippedOpen > 0 ? ` ${skippedOpen} skipped because an open task already exists.` : ''}${unmatchedRows > 0 ? ` ${unmatchedRows} row(s) could not be processed.` : ''}${dbgLine}`
+          : `PPM bulk import completed.${dbgLine}`
+      );
+      setAssetPage(1);
+      await load();
+    } catch (error) {
+      const d = error.response?.data;
+      const hint = d?.hint ? `\n\n${d.hint}` : '';
+      const extra = d?.file_received === false && d?.message
+        ? '\n\nThe server did not receive the file bytes. Try again or use Download Sample Excel as a template.'
+        : '';
+      alert(`${d?.message || error.message || 'Failed to import Excel file into PPM section'}${hint}${extra}`);
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (showIncompleteList) loadIncomplete();
   }, [showIncompleteList, loadIncomplete]);
@@ -482,6 +643,37 @@ const TechPpmPanel = () => {
     }
     return out;
   }, [rows]);
+
+  useEffect(() => {
+    const valid = new Set(displayRows.map((r) => String(r?.asset?._id || '')).filter(Boolean));
+    setSelectedAssetIds((prev) => prev.filter((id) => valid.has(id)));
+  }, [displayRows]);
+
+  const hasActiveSearch = String(query || '').trim().length > 0;
+  const visibleAssetIds = useMemo(
+    () => displayRows.map((r) => String(r?.asset?._id || '')).filter(Boolean),
+    [displayRows]
+  );
+  const allVisibleSelected = useMemo(
+    () => visibleAssetIds.length > 0 && visibleAssetIds.every((id) => selectedAssetIds.includes(id)),
+    [visibleAssetIds, selectedAssetIds]
+  );
+  const selectedVisibleCount = useMemo(
+    () => visibleAssetIds.filter((id) => selectedAssetIds.includes(id)).length,
+    [visibleAssetIds, selectedAssetIds]
+  );
+  const rowMatchesSearch = useCallback((row) => {
+    if (!hasActiveSearch) return false;
+    const q = String(query || '').trim().toLowerCase();
+    const compact = q.replace(/\s+/g, '');
+    const a = row?.asset || {};
+    return ppmSearchFields(a, row).some((v) => {
+      const s = String(v || '').trim().toLowerCase();
+      if (!s) return false;
+      const squashed = s.replace(/\s+/g, '');
+      return s.includes(q) || squashed.includes(compact);
+    });
+  }, [hasActiveSearch, query]);
 
   const systemHealthPct = useMemo(() => {
     if (!displayRows.length) return overview.health ?? 100;
@@ -539,18 +731,27 @@ const TechPpmPanel = () => {
     }
   };
 
-  const togglePpmEnabled = async (assetId, enabled) => {
-    if (!assetId) return;
-    try {
-      setPpmSavingId(String(assetId));
-      await api.patch(`/ppm/assets/${assetId}/ppm-enabled`, { enabled });
-      if (enabled && canManagePpmInclusion) updatePendingBulkNotify(true);
-      await load();
-    } catch (error) {
-      alert(error.response?.data?.message || 'Could not update PPM marking');
-    } finally {
-      setPpmSavingId(null);
-    }
+  const toggleAssetSelection = (assetId, checked) => {
+    const id = String(assetId || '').trim();
+    if (!id) return;
+    setSelectedAssetIds((prev) => {
+      const set = new Set(prev);
+      if (checked) set.add(id);
+      else set.delete(id);
+      return Array.from(set);
+    });
+  };
+
+  const toggleSelectAllVisible = (checked) => {
+    setSelectedAssetIds((prev) => {
+      const set = new Set(prev);
+      if (checked) {
+        visibleAssetIds.forEach((id) => set.add(id));
+      } else {
+        visibleAssetIds.forEach((id) => set.delete(id));
+      }
+      return Array.from(set);
+    });
   };
 
   const closeDrawer = () => {
@@ -758,26 +959,125 @@ const TechPpmPanel = () => {
   };
 
   const createTask = async () => {
-    if (!createForm.asset_id) {
-      alert('Please select an asset.');
+    const selectedIds = Array.from(new Set(selectedAssetIds.map((id) => String(id || '').trim()).filter(Boolean)));
+    const createForSelection = selectedIds.length > 0;
+    if (!createForSelection && !createForm.asset_id) {
+      alert('Select asset(s) using PPM checkbox, or pick one asset from the search picker.');
       return;
     }
     if (!String(createForm.work_order_ticket || '').trim()) {
       alert('PPM work order ticket is required for this asset.');
       return;
     }
+    if (createForSelection && !String(createForm.scheduled_for || '').trim()) {
+      alert('Scheduled date is required when creating tasks from selected assets.');
+      return;
+    }
+    if (createForSelection && !String(createForm.due_at || '').trim()) {
+      alert('Due date is required when creating tasks from selected assets.');
+      return;
+    }
     try {
       setCreating(true);
-      await api.post('/ppm', {
-        ...createForm,
-        scheduled_for: createForm.scheduled_for || new Date().toISOString()
-      });
+      const idsToCreate = createForSelection ? selectedIds : [String(createForm.asset_id)];
+      const sharedBody = {
+        work_order_ticket: createForm.work_order_ticket,
+        scheduled_for: createForm.scheduled_for || new Date().toISOString(),
+        due_at: createForm.due_at,
+        checklist: createForm.checklist,
+        manager_notes: createForm.manager_notes,
+        assigned_to: createForm.assigned_to || undefined
+      };
+
+      let data;
+      let legacyMultiCreateFallback = false;
+      if (idsToCreate.length === 1) {
+        const { data: one } = await api.post('/ppm', {
+          ...sharedBody,
+          asset_id: idsToCreate[0]
+        });
+        data = { created: one ? [one] : [], failed: [], created_count: one ? 1 : 0 };
+      } else {
+        try {
+          const res = await api.post('/ppm/batch', {
+            asset_ids: idsToCreate,
+            ...sharedBody
+          });
+          data = res.data;
+        } catch (batchErr) {
+          if (batchErr.response?.status !== 404) throw batchErr;
+          legacyMultiCreateFallback = true;
+          const created = [];
+          const failed = [];
+          for (const asset_id of idsToCreate) {
+            try {
+              const { data: row } = await api.post('/ppm', { ...sharedBody, asset_id });
+              if (row) created.push(row);
+            } catch (e) {
+              const msg =
+                e.response?.data?.message ||
+                e.response?.data?.error ||
+                e.message ||
+                'failed';
+              failed.push({ asset_id, message: msg });
+            }
+          }
+          data = {
+            created,
+            failed,
+            created_count: created.length
+          };
+        }
+      }
+
+      const success = Number(data?.created_count ?? data?.created?.length ?? 0);
+      const failedCount = Array.isArray(data?.failed) ? data.failed.length : 0;
+      if (success === 0) {
+        alert(
+          failedCount > 0
+            ? 'Could not create PPM task(s). Each selected asset may already have an open task or be outside this store.'
+            : 'Could not create PPM task(s). Some assets may already have an open task.'
+        );
+        return;
+      }
+      if (canManagePpmInclusion) updatePendingBulkNotify(true);
+      const emailHint = legacyMultiCreateFallback
+        ? 'Managers may receive one notification per task (this API is running without the batch endpoint; restart or update the server for a single combined email).'
+        : 'One manager notification email was sent listing the new tasks (if Manager emails are configured in Portal).';
+      const emailHintAllOk = legacyMultiCreateFallback
+        ? 'Managers may receive one email per task (update/restart the server to use batch notifications).'
+        : 'Managers were emailed once with the full asset list (if Manager notification emails are set in Portal). You can still use "Send notification to managers" for a daily summary of tasks created today.';
+      if (failedCount > 0) {
+        alert(
+          `Created ${success} task(s). ${failedCount} asset(s) were skipped (for example, already has an open PPM or invalid for this store). ${emailHint}`
+        );
+      } else if (canManagePpmInclusion) {
+        alert(`Created ${success} task(s). ${emailHintAllOk}`);
+      } else {
+        alert(`Created ${success} task(s).`);
+      }
+      setSelectedAssetIds([]);
       setCreateForm((f) => ({ ...f, asset_id: '' }));
       resetCreateAssetPickerUi();
-      if (canManagePpmInclusion) updatePendingBulkNotify(true);
       await load();
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to create PPM task');
+      const d = error.response?.data;
+      const status = error.response?.status;
+      const base =
+        (d && typeof d === 'object' && d.message) ||
+        (d && typeof d === 'object' && d.error) ||
+        (status === 404
+          ? 'PPM API path was not found. Check that the backend is running the latest version and the dev proxy points at the correct port.'
+          : null) ||
+        error.message ||
+        'Failed to create PPM task';
+      const failed = d && typeof d === 'object' && Array.isArray(d.failed) ? d.failed : [];
+      if (failed.length > 0) {
+        const lines = failed.map((f) => `${String(f.asset_id || '').slice(-8) || 'asset'}: ${f.message || 'failed'}`);
+        alert(`${base}\n\n${lines.join('\n')}`);
+      } else {
+        alert(base);
+      }
     } finally {
       setCreating(false);
     }
@@ -872,10 +1172,17 @@ const TechPpmPanel = () => {
       setBulkNotifyBusy(true);
       const { data } = await api.post('/ppm/notify-bulk-program');
       const n = Number(data?.recipientCount);
-      alert(Number.isFinite(n) && n > 0 ? `Bulk notification sent to ${n} recipient(s).` : 'Bulk notification sent.');
+      const emails = Array.isArray(data?.recipientEmails) ? data.recipientEmails : [];
+      if (emails.length > 0 && data?.emailSent) {
+        alert(`Notification sent to manager email(s): ${emails.join(', ')}`);
+      } else if (data?.taskCount > 0) {
+        alert(`Sent to manager dashboard queue (${data.taskCount} task(s)). Email skipped because manager emails are not configured.`);
+      } else {
+        alert(Number.isFinite(n) && n > 0 ? `Notification sent to ${n} manager email(s).` : 'Notification sent to manager.');
+      }
       updatePendingBulkNotify(false);
     } catch (error) {
-      alert(error.response?.data?.message || 'Could not send bulk notification');
+      alert(error.response?.data?.message || 'Could not send manager notification');
     } finally {
       setBulkNotifyBusy(false);
     }
@@ -884,7 +1191,7 @@ const TechPpmPanel = () => {
   const dismissBulkPpmNotifyReminder = () => {
     if (
       !window.confirm(
-        'Dismiss this reminder without sending? It will stay cleared until you change the PPM program again (turn PPM on for an asset or create a PPM task).'
+        'Dismiss this reminder without sending? It will stay cleared until you change the PPM program again (create new PPM tasks).'
       )
     ) {
       return;
@@ -895,12 +1202,12 @@ const TechPpmPanel = () => {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">PPM — 180-day overview</h1>
-        <p className="text-sm text-slate-600 mt-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">PPM program overview</h1>
+        <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
           {canManagePpmInclusion ? (
             <>
               <span className="font-semibold">Type in the search box</span> to find assets in the store; use the{' '}
-              <span className="font-semibold">PPM</span> column to include or remove assets from the program. With an empty search, this table lists the same{' '}
+              <span className="font-semibold">PPM</span> column checkboxes to select assets. Then set date/ticket and click create task. With an empty search, this table lists the same{' '}
               <span className="font-semibold">PPM scope as the overview</span> (flagged for PPM or with a non-cancelled PPM task). Open the wrench to run the checklist.
             </>
           ) : (
@@ -912,25 +1219,40 @@ const TechPpmPanel = () => {
       {canManagePpmInclusion && pendingBulkPpmNotify ? (
         <div
           role="status"
-          className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
+          className="rounded-xl border border-[rgb(var(--accent-color)/0.35)] bg-app-accent-soft px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
         >
-          <p className="text-sm text-amber-950">
-            You changed the PPM program for this store. Send a bulk notification to technicians and all store email recipients so everyone is aligned.
+          <p className="text-sm text-app-main">
+            You changed the PPM program for this store. Send a notification to manager account(s) so they can review.
           </p>
           <div className="flex flex-wrap gap-2 shrink-0">
+            {managerNotifyEmails.length === 0 ? (
+              <span className="inline-flex items-center justify-center rounded-lg border border-[rgb(var(--accent-color)/0.35)] bg-[rgb(var(--bg-primary))] px-3 py-2 text-sm font-semibold text-app-accent">
+                No manager notification emails configured in Portal
+              </span>
+            ) : null}
+            {managerNotifyEmails.length === 1 ? (
+              <span className="inline-flex items-center justify-center rounded-lg border border-[rgb(var(--accent-color)/0.35)] bg-[rgb(var(--bg-primary))] px-3 py-2 text-sm font-semibold text-app-main">
+                Will send to: {managerNotifyEmails[0]}
+              </span>
+            ) : null}
+            {managerNotifyEmails.length > 1 ? (
+              <span className="inline-flex items-center justify-center rounded-lg border border-[rgb(var(--accent-color)/0.35)] bg-[rgb(var(--bg-primary))] px-3 py-2 text-sm font-semibold text-app-main">
+                Will send to {managerNotifyEmails.length} emails: {managerNotifyEmails.join(', ')}
+              </span>
+            ) : null}
             <button
               type="button"
               disabled={bulkNotifyBusy}
               onClick={sendBulkPpmNotification}
-              className="inline-flex items-center justify-center rounded-lg bg-amber-700 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-60"
+              className="btn-app-primary-md disabled:opacity-60"
             >
-              {bulkNotifyBusy ? 'Sending…' : 'Send bulk notification'}
+              {bulkNotifyBusy ? 'Sending…' : 'Send notification to managers'}
             </button>
             <button
               type="button"
               disabled={bulkNotifyBusy}
               onClick={dismissBulkPpmNotifyReminder}
-              className="inline-flex items-center justify-center rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-60"
+              className="btn-app-outline-md disabled:opacity-60"
             >
               Dismiss
             </button>
@@ -941,16 +1263,12 @@ const TechPpmPanel = () => {
       {canManagePpmInclusion && pendingRemove ? (
         <div
           role="status"
-          className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
         >
-          <p className="text-sm text-rose-950">
+          <p className="text-sm text-slate-800">
             Removing from PPM list in a few seconds.
           </p>
-          <button
-            type="button"
-            onClick={undoPendingRemove}
-            className="inline-flex items-center justify-center rounded-lg border border-rose-400 bg-white px-3 py-2 text-sm font-semibold text-rose-900 hover:bg-rose-100"
-          >
+          <button type="button" onClick={undoPendingRemove} className="btn-app-outline-md">
             Undo
           </button>
         </div>
@@ -959,16 +1277,12 @@ const TechPpmPanel = () => {
       {canManagePpmInclusion && pendingDrawerCancel ? (
         <div
           role="status"
-          className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
         >
-          <p className="text-sm text-rose-950">
+          <p className="text-sm text-slate-800">
             Cancelling this drawer task in a few seconds.
           </p>
-          <button
-            type="button"
-            onClick={undoPendingDrawerCancel}
-            className="inline-flex items-center justify-center rounded-lg border border-rose-400 bg-white px-3 py-2 text-sm font-semibold text-rose-900 hover:bg-rose-100"
-          >
+          <button type="button" onClick={undoPendingDrawerCancel} className="btn-app-outline-md">
             Undo
           </button>
         </div>
@@ -977,16 +1291,12 @@ const TechPpmPanel = () => {
       {canManagePpmInclusion && pendingResetProgram ? (
         <div
           role="status"
-          className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
         >
-          <p className="text-sm text-rose-950">
+          <p className="text-sm text-slate-800">
             Reset PPM program queued. It will run in a few seconds.
           </p>
-          <button
-            type="button"
-            onClick={undoPendingResetProgram}
-            className="inline-flex items-center justify-center rounded-lg border border-rose-400 bg-white px-3 py-2 text-sm font-semibold text-rose-900 hover:bg-rose-100"
-          >
+          <button type="button" onClick={undoPendingResetProgram} className="btn-app-outline-md">
             Undo
           </button>
         </div>
@@ -1101,150 +1411,186 @@ const TechPpmPanel = () => {
       </div>
 
       {canManagePpmInclusion && ppmPickHint && createForm.asset_id ? (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950 flex flex-wrap items-start justify-between gap-2">
+        <div className="rounded-xl border border-[rgb(var(--accent-color)/0.35)] bg-app-accent-soft px-4 py-3 text-sm text-app-main flex flex-wrap items-start justify-between gap-2">
           <div>
             <div className="font-semibold">Asset pre-selected for new PPM task</div>
             <div className="text-xs mt-1 font-mono">
               UID {ppmPickHint.uniqueId || '—'} · ABS {ppmPickHint.abs_code || '—'} · IP {ppmPickHint.ip_address || '—'}
             </div>
-            <p className="text-xs mt-1 text-indigo-900/90">
+            <p className="text-xs mt-1 text-app-muted">
               PPM work order ticket is separate from asset ticket. It auto-fills from the last PPM ticket for this asset and remains editable.
             </p>
           </div>
-          <button
-            type="button"
-            className="shrink-0 text-xs rounded-md border border-indigo-300 px-2 py-1 text-indigo-900 hover:bg-indigo-100"
-            onClick={clearCreateAssetSelection}
-          >
+          <button type="button" className="btn-app-outline shrink-0 px-2 py-1 text-xs" onClick={clearCreateAssetSelection}>
             Clear
           </button>
         </div>
       ) : null}
 
       {canManagePpmInclusion ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-            <div
-              className="w-full sm:w-[15rem] lg:w-[17rem] min-w-[11rem] relative flex flex-col gap-0.5"
-              ref={createPickerRef}
-            >
-              <div className="flex gap-1">
-                <input
-                  value={createAssetSearch}
-                  onChange={(e) => {
-                    setCreateAssetSearch(e.target.value);
-                    setCreateForm((f) => ({ ...f, asset_id: '' }));
-                    setCreateAssetMenuOpen(true);
-                  }}
-                  onFocus={() => setCreateAssetMenuOpen(true)}
-                  className="h-8 border border-slate-300 rounded-lg px-2 text-xs w-full min-w-0 bg-slate-50/40 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                  placeholder="UID, ABS, serial, IP, MAC, model…"
-                  autoComplete="off"
-                  aria-label="Search asset for new PPM task"
-                  title="Search assets — pick a row to assign this PPM."
-                />
+        <div className="overflow-visible rounded-xl border border-slate-200/90 bg-white shadow-sm">
+          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50/90 to-white px-4 py-3 sm:px-5">
+            <h2 className="text-sm font-semibold tracking-tight text-slate-800 sm:text-base">New PPM work order</h2>
+            <p className="mt-0.5 max-w-3xl text-xs leading-snug text-slate-500">
+              Pick an asset below or select rows in the table for batch create. Work order ticket is required; dates apply to batch operations.
+            </p>
+          </div>
+          <div className="space-y-3 p-4 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
+              <div
+                className="relative min-w-0 w-full flex-1 lg:max-w-md xl:max-w-lg"
+                ref={createPickerRef}
+              >
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Asset
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    value={createAssetSearch}
+                    onChange={(e) => {
+                      setCreateAssetSearch(e.target.value);
+                      setCreateForm((f) => ({ ...f, asset_id: '' }));
+                      setCreateAssetMenuOpen(true);
+                    }}
+                    onFocus={() => setCreateAssetMenuOpen(true)}
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2.5 text-sm shadow-sm focus:border-[rgb(var(--accent-color))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent-color)/0.2)]"
+                    placeholder="UID, ABS, serial, IP, MAC, model…"
+                    autoComplete="off"
+                    aria-label="Search asset for new PPM task"
+                    title="Search assets — pick a row to assign this PPM."
+                  />
+                  {createForm.asset_id ? (
+                    <button
+                      type="button"
+                      className="h-9 shrink-0 rounded-lg border border-slate-300 px-2.5 text-sm text-slate-600 hover:bg-slate-50"
+                      title="Remove selected asset"
+                      onClick={clearCreateAssetSelection}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
                 {createForm.asset_id ? (
-                  <button
-                    type="button"
-                    className="shrink-0 h-8 px-2 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
-                    title="Remove selected asset"
-                    onClick={clearCreateAssetSelection}
-                  >
-                    ×
-                  </button>
+                  <span className="mt-1.5 inline-flex w-fit max-w-full items-center gap-1 rounded-md border border-[rgb(var(--accent-color)/0.35)] bg-app-accent-soft px-2 py-0.5 text-[10px] font-medium text-app-accent">
+                    <span className="truncate min-w-0">
+                      {createSelectedPreview ? formatCreateAssetShortLabel(createSelectedPreview) : 'Selected'}
+                    </span>
+                  </span>
+                ) : (
+                  <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
+                    Or use <span className="font-medium text-slate-700">Create task</span> on a table row when no open PPM exists.
+                  </p>
+                )}
+                {createAssetMenuOpen && createAssetSearch.trim() ? (
+                  <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-slate-200 bg-white shadow-lg max-h-64 overflow-y-auto">
+                    {createAssetPickLoading ? (
+                      <div className="px-3 py-3 text-sm text-slate-500">Searching assets…</div>
+                    ) : createAssetResults.length === 0 ? (
+                      <div className="px-3 py-3 text-sm text-slate-500">No assets match. Try another UID, ABS, serial, IP, or MAC.</div>
+                    ) : (
+                      createAssetResults.map((a) => (
+                        <button
+                          key={a._id}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-[rgb(var(--accent-color)/0.08)]"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setCreateForm((f) => ({ ...f, asset_id: String(a._id), work_order_ticket: '' }));
+                            setCreateAssetSearch(formatCreateAssetLabel(a));
+                            setCreateAssetMenuOpen(false);
+                            setPpmPickHint(null);
+                            setPpmTicketAutofillHint('Loading previous PPM ticket...');
+                          }}
+                        >
+                          <div className="font-medium text-slate-800 truncate">{formatCreateAssetLabel(a)}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
                 ) : null}
               </div>
-              {createForm.asset_id ? (
-                <span className="inline-flex w-fit max-w-full items-center gap-1 rounded border border-emerald-200 bg-emerald-50/90 px-1.5 py-0.5 text-[10px] text-emerald-900">
-                  <span className="truncate min-w-0">
-                    {createSelectedPreview ? formatCreateAssetShortLabel(createSelectedPreview) : 'Selected'}
-                  </span>
-                </span>
-              ) : (
-                <p className="text-[10px] text-slate-500 leading-tight">
-                  Or tap <span className="font-medium">Create task</span> on a row without an open PPM.
-                </p>
-              )}
-              {createAssetMenuOpen && createAssetSearch.trim() ? (
-                <div className="absolute left-0 right-0 top-full z-30 mt-0.5 rounded-lg border border-slate-200 bg-white shadow-lg max-h-64 overflow-y-auto">
-                  {createAssetPickLoading ? (
-                    <div className="px-3 py-3 text-sm text-slate-500">Searching assets…</div>
-                  ) : createAssetResults.length === 0 ? (
-                    <div className="px-3 py-3 text-sm text-slate-500">No assets match. Try another UID, ABS, serial, IP, or MAC.</div>
-                  ) : (
-                    createAssetResults.map((a) => (
-                      <button
-                        key={a._id}
-                        type="button"
-                        className="w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-indigo-50"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          setCreateForm((f) => ({ ...f, asset_id: String(a._id), work_order_ticket: '' }));
-                          setCreateAssetSearch(formatCreateAssetLabel(a));
-                          setCreateAssetMenuOpen(false);
-                          setPpmPickHint(null);
-                          setPpmTicketAutofillHint('Loading previous PPM ticket...');
-                        }}
-                      >
-                        <div className="font-medium text-slate-800 truncate">{formatCreateAssetLabel(a)}</div>
-                      </button>
-                    ))
-                  )}
+
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 hidden text-[11px] font-semibold uppercase tracking-wide text-slate-500 lg:block">
+                  Schedule & ticket
                 </div>
-              ) : null}
+                <div className="flex flex-wrap items-end gap-2 sm:gap-2.5">
+                  <div className="w-full min-w-[10rem] sm:w-auto sm:min-w-[9.5rem]">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500 lg:hidden">Technician</label>
+                    <select
+                      value={createForm.assigned_to}
+                      onChange={(e) => setCreateForm({ ...createForm, assigned_to: e.target.value })}
+                      className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm shadow-sm focus:border-[rgb(var(--accent-color))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent-color)/0.2)]"
+                      title="Assign technician (optional)"
+                    >
+                      <option value="">Technician (optional)</option>
+                      {techs.map((t) => (
+                        <option key={t._id} value={t._id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500 lg:sr-only">Start</label>
+                    <input
+                      type="date"
+                      value={createForm.scheduled_for}
+                      onChange={(e) => setCreateForm({ ...createForm, scheduled_for: e.target.value })}
+                      className="h-9 w-full min-w-[9.5rem] rounded-lg border border-slate-300 bg-white px-2 text-sm shadow-sm focus:border-[rgb(var(--accent-color))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent-color)/0.2)] sm:w-[9.75rem]"
+                      title="Scheduled for"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500 lg:sr-only">Due</label>
+                    <input
+                      type="date"
+                      value={createForm.due_at}
+                      onChange={(e) => setCreateForm({ ...createForm, due_at: e.target.value })}
+                      className="h-9 w-full min-w-[9.5rem] rounded-lg border border-slate-300 bg-white px-2 text-sm shadow-sm focus:border-[rgb(var(--accent-color))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent-color)/0.2)] sm:w-[9.75rem]"
+                      title="Due date (defaults to ~180 days if empty for batch)"
+                    />
+                  </div>
+                  {createDateMeta ? (
+                    <span className="hidden pb-1 text-[10px] leading-tight text-slate-500 xl:block xl:max-w-[5.5rem]">
+                      {createDateMeta}
+                    </span>
+                  ) : null}
+                  <div className="min-w-0 flex-1 sm:flex-initial sm:basis-[11rem]">
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500 lg:sr-only">PPM WO ticket</label>
+                    <input
+                      value={createForm.work_order_ticket}
+                      onChange={(e) => setCreateForm({ ...createForm, work_order_ticket: e.target.value })}
+                      className="h-9 w-full min-w-[8rem] rounded-lg border border-slate-300 bg-white px-2.5 text-sm shadow-sm focus:border-[rgb(var(--accent-color))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent-color)/0.2)] sm:w-[11rem]"
+                      placeholder="PPM WO ticket *"
+                      title="PPM work order ticket (auto-filled from last ticket, editable)"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={creating}
+                    onClick={createTask}
+                    className="inline-flex h-9 w-full shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent-color))] px-4 text-sm font-semibold text-[rgb(var(--accent-contrast))] shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                  >
+                    {creating ? 'Creating…' : 'Create PPM task'}
+                  </button>
+                </div>
+                {createDateMeta ? (
+                  <p className="mt-1.5 text-[10px] text-slate-500 xl:hidden">{createDateMeta}</p>
+                ) : null}
+              </div>
             </div>
-            <div className="flex flex-wrap items-end justify-end gap-x-2 gap-y-1.5">
-              <select
-                value={createForm.assigned_to}
-                onChange={(e) => setCreateForm({ ...createForm, assigned_to: e.target.value })}
-                className="h-8 w-full min-w-[9.5rem] max-w-[11rem] border border-slate-300 rounded-lg px-2 text-xs bg-slate-50/40 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                title="Assign technician (optional)"
-              >
-                <option value="">Technician (optional)</option>
-                {techs.map((t) => (
-                  <option key={t._id} value={t._id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="date"
-                value={createForm.scheduled_for}
-                onChange={(e) => setCreateForm({ ...createForm, scheduled_for: e.target.value })}
-                className="h-8 w-[9.25rem] shrink-0 border border-blue-300 rounded-lg px-2 text-xs bg-blue-50 text-blue-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                title="Scheduled for (optional)"
-              />
-              <input
-                type="date"
-                value={createForm.due_at}
-                onChange={(e) => setCreateForm({ ...createForm, due_at: e.target.value })}
-                className="h-8 w-[9.25rem] shrink-0 border border-blue-300 rounded-lg px-2 text-xs bg-blue-50 text-blue-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                title="Due date (optional — defaults to ~180 days)"
-              />
-              {createDateMeta ? (
-                <span className="text-[9px] text-slate-500 shrink-0">
-                  {createDateMeta}
-                </span>
+
+            <div className="border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-500">
+              {selectedAssetIds.length > 0 ? (
+                <p className="font-semibold text-[rgb(var(--accent-color))]">
+                  {selectedAssetIds.length} row(s) selected for batch create
+                </p>
               ) : null}
-              <input
-                value={createForm.work_order_ticket}
-                onChange={(e) => setCreateForm({ ...createForm, work_order_ticket: e.target.value })}
-                className="h-8 min-w-[6.5rem] w-[9.5rem] shrink-0 border border-slate-300 rounded-lg px-2 text-xs bg-slate-50/40 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300"
-                placeholder="PPM WO ticket *"
-                title="PPM work order ticket (auto-filled from last ticket, editable)"
-              />
-              <button
-                type="button"
-                disabled={creating}
-                onClick={createTask}
-                className="h-8 shrink-0 whitespace-nowrap rounded-lg bg-indigo-600 text-white px-2.5 text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 shadow-sm"
-              >
-                {creating ? 'Creating…' : 'Create PPM task'}
-              </button>
               {createForm.asset_id ? (
-                <span className="text-[10px] text-slate-600 min-w-[16rem] text-right">
+                <p className={selectedAssetIds.length > 0 ? 'mt-1' : ''}>
                   {ppmTicketAutofillHint || 'PPM work order ticket will auto-fill from the last PPM task for this asset.'}
-                </span>
+                </p>
               ) : null}
             </div>
           </div>
@@ -1252,77 +1598,193 @@ const TechPpmPanel = () => {
       ) : null}
 
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b flex flex-wrap gap-2 items-center">
-          {!showIncompleteList ? (
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={
-                canManagePpmInclusion
-                  ? 'Type to search UID, ABS, IP, or model — then tick PPM on rows to add to the program…'
-                  : 'Search Unique ID, ABS code, IP, or model…'
-              }
-              className="border border-slate-300 rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]"
-            />
-          ) : (
-            <p className="text-sm text-slate-600 flex-1 min-w-[200px]">
-              PPMs marked <span className="font-semibold text-orange-800">Not completed</span> — read technician comments below. Use “Back to work orders” to return to the asset list.
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowIncompleteList((v) => !v)}
-            className={`text-sm px-3 py-2 rounded-lg border ${showIncompleteList ? 'border-slate-300 bg-white hover:bg-slate-50' : 'border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100'}`}
-          >
-            {showIncompleteList ? 'Back to work orders' : 'Not completed PPMs'}
-          </button>
-          <button
-            type="button"
-            onClick={() => (showIncompleteList ? loadIncomplete() : load())}
-            className="text-sm px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-50"
-          >
-            Refresh
-          </button>
-          <select value={density} onChange={(e) => setDensity(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            <option value="comfortable">Comfortable</option>
-            <option value="compact">Compact</option>
-          </select>
-          <select value={columnPreset} onChange={(e) => setColumnPreset(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            <option value="full">Full columns</option>
-            <option value="core">Core columns</option>
-          </select>
-          <button
-            type="button"
-            disabled={exportBusy}
-            onClick={downloadPpmExcel}
-            className="text-sm px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
-            title="Each export uses a new file name (date and time) so downloads are not overwritten."
-          >
-            {exportBusy ? 'Preparing…' : 'Download Excel'}
-          </button>
-          {canManagePpmInclusion ? (
-            <button
-              type="button"
-              onClick={() => {
-                setResetProgramPassword('');
-                setResetProgramOpen(true);
-              }}
-              className="text-sm px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-900 hover:bg-rose-100 shrink-0"
-              title="Deletes all PPM tasks for this store and removes all assets from the PPM program. Requires your password."
+        <div className="px-4 py-4 border-b border-slate-200 space-y-4">
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handlePpmBulkImportFile}
+            className="hidden"
+          />
+          {/* Row 1: search + grouped list/table controls */}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
+            <div className="min-w-0 flex-1 flex items-center">
+              {!showIncompleteList ? (
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={
+                    canManagePpmInclusion
+                      ? 'Search Unique ID, ABS, name, model, serial, QR, RF ID, MAC, location, ticket, manufacturer, status, vendor…'
+                      : 'Search Unique ID, ABS, name, model, serial, QR, RF ID, MAC, location, ticket, manufacturer, status, vendor…'
+                  }
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm shadow-sm focus:ring-2 focus:ring-[rgb(var(--accent-color)/0.25)] focus:border-[rgb(var(--accent-color))]"
+                />
+              ) : (
+                <p className="text-sm text-slate-700 py-1 leading-relaxed">
+                  PPMs marked <span className="font-semibold text-app-accent">Not completed</span> — read technician comments below. Use “Back to work orders” to return to the asset list.
+                </p>
+              )}
+            </div>
+            <div
+              className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 lg:shrink-0 rounded-xl border border-slate-200 bg-slate-50 p-2.5"
+              role="group"
+              aria-label="List and table options"
             >
-              Reset PPM program
-            </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 px-1 w-full sm:w-auto sm:mr-0">
+                  List
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowIncompleteList((v) => !v)}
+                  className={`h-10 text-sm px-3.5 rounded-lg font-semibold transition-colors ${showIncompleteList ? 'btn-app-outline' : 'btn-app-primary'}`}
+                >
+                  {showIncompleteList ? 'Back to work orders' : 'Not completed PPMs'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => (showIncompleteList ? loadIncomplete() : load())}
+                  className="btn-app-outline h-10 text-sm px-3.5 rounded-lg font-semibold"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div className="hidden sm:block w-px h-9 bg-slate-300 self-center mx-1" aria-hidden />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 px-1 w-full sm:w-auto">
+                  Table
+                </span>
+                <select
+                  value={density}
+                  onChange={(e) => setDensity(e.target.value)}
+                  className="h-10 border border-slate-300 rounded-lg px-2.5 text-sm font-medium text-slate-800 bg-white min-w-[10.5rem]"
+                >
+                  <option value="comfortable">Comfortable rows</option>
+                  <option value="compact">Compact rows</option>
+                </select>
+                <select
+                  value={columnPreset}
+                  onChange={(e) => setColumnPreset(e.target.value)}
+                  className="h-10 border border-slate-300 rounded-lg px-2.5 text-sm font-medium text-slate-800 bg-white min-w-[10.5rem]"
+                >
+                  <option value="full">All columns</option>
+                  <option value="core">Core columns only</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: single strip — export | import | maintenance (equal columns, high-contrast actions) */}
+          {canManagePpmInclusion && !showIncompleteList ? (
+            <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                <h3 className="text-sm font-semibold text-slate-800 tracking-tight">Exports, imports &amp; program reset</h3>
+                <p className="text-xs text-slate-600 mt-0.5 max-w-3xl">
+                  Work left to right: download data → use the sample file → upload import. Reset is only when you need to clear this store&apos;s whole PPM program.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 lg:divide-x lg:divide-slate-200">
+                <section className="p-3 sm:p-4 flex flex-col gap-2.5 bg-white">
+                  <div>
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-[rgb(var(--accent-color))] text-[rgb(var(--accent-contrast))] text-[10px] font-bold">
+                      1
+                    </span>
+                    <h4 className="mt-1.5 text-sm font-semibold text-slate-900">Export</h4>
+                    <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">Task history report, or a sheet in bulk-import layout.</p>
+                  </div>
+                  <div className="mt-auto flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      disabled={exportBusy}
+                      onClick={downloadPpmExcel}
+                      className="btn-app-primary-md w-full justify-center text-center whitespace-normal leading-snug py-2 px-3 text-[13px] font-semibold"
+                      title="Each export uses a new file name (date and time) so downloads are not overwritten."
+                    >
+                      {exportBusy ? 'Preparing…' : 'Download PPM task report (.xlsx)'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={exportBusy}
+                      onClick={downloadPpmBulkExportSheet}
+                      className="btn-app-outline-md w-full justify-center text-center whitespace-normal leading-snug py-2 px-3 text-[13px] font-semibold"
+                      title="Export current PPM program assets in the same columns used by Bulk Import."
+                    >
+                      {exportBusy ? 'Preparing…' : 'Export program list (import format)'}
+                    </button>
+                  </div>
+                </section>
+                <section className="p-3 sm:p-4 flex flex-col gap-2.5 bg-slate-50/40">
+                  <div>
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-[rgb(var(--accent-color))] text-[rgb(var(--accent-contrast))] text-[10px] font-bold">
+                      2
+                    </span>
+                    <h4 className="mt-1.5 text-sm font-semibold text-slate-900">Import</h4>
+                    <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">Download the template, fill it, then upload.</p>
+                  </div>
+                  <div className="mt-auto flex flex-col gap-1.5">
+                    <a
+                      href="/ppm_bulk_import_sample.xlsx"
+                      download="ppm_bulk_import_sample.xlsx"
+                      className="btn-app-outline-md w-full justify-center no-underline whitespace-normal text-center py-2 px-3 text-[13px] font-semibold"
+                      title="Download sample Excel with correct import columns and example rows."
+                    >
+                      Download import template (.xlsx)
+                    </a>
+                    <button
+                      type="button"
+                      onClick={openPpmBulkImportPicker}
+                      disabled={importBusy}
+                      className="btn-app-primary-md w-full justify-center text-center whitespace-normal leading-snug py-2 px-3 text-[13px] font-semibold"
+                      title="Upload Excel into isolated PPM section (does not add to inventory assets)."
+                    >
+                      {importBusy ? 'Importing…' : 'Upload bulk import file'}
+                    </button>
+                  </div>
+                </section>
+                <section className="p-3 sm:p-4 flex flex-col gap-2.5 bg-white lg:bg-amber-50/20">
+                  <div>
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-md bg-slate-700 text-white text-[10px] font-bold">
+                      3
+                    </span>
+                    <h4 className="mt-1.5 text-sm font-semibold text-slate-900">Program reset</h4>
+                    <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">Deletes all PPM tasks for this store and clears PPM flags. Password required.</p>
+                  </div>
+                  <div className="mt-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetProgramPassword('');
+                        setResetProgramOpen(true);
+                      }}
+                      className="btn-app-outline-md w-full justify-center !border-slate-600 text-slate-800 hover:bg-slate-100 font-semibold py-2 px-3 text-[13px]"
+                      title="Deletes all PPM tasks for this store and removes all assets from the PPM program. Requires your password."
+                    >
+                      Reset entire PPM program…
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </div>
           ) : null}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[min(70vh,40rem)] overflow-y-auto custom-scrollbar">
           {!showIncompleteList ? (
             <>
               <table className={`min-w-full ${density === 'compact' ? 'text-xs [&_th]:py-1.5 [&_td]:py-1.5' : 'text-sm'}`}>
-                <thead className="bg-slate-50 border-b sticky top-0 z-10">
+                <thead className="bg-slate-50 border-b sticky top-0 z-10 shadow-[0_1px_0_rgb(226_232_240)]">
                   <tr>
                   {canManagePpmInclusion ? (
-                    <th className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-500 w-[4.5rem]" title="Include asset in PPM program">
-                      PPM
+                    <th className="px-2 py-2 text-center text-xs font-semibold uppercase text-slate-500 w-[6.5rem]" title="Select asset(s) for batch PPM task creation">
+                      <label className="inline-flex items-center gap-1.5 normal-case text-[10px] font-semibold text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 [accent-color:rgb(var(--accent-color))]"
+                          checked={allVisibleSelected}
+                          onChange={(e) => toggleSelectAllVisible(e.target.checked)}
+                        />
+                        <span>PPM ({selectedVisibleCount}/{visibleAssetIds.length})</span>
+                      </label>
                     </th>
                   ) : null}
                   <th className="px-3 py-2 text-left">Unique ID</th>
@@ -1330,7 +1792,10 @@ const TechPpmPanel = () => {
                   <th className="px-3 py-2 text-left">Name</th>
                   <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>Model Number</th>
                   <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>Serial Number</th>
+                  <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>QR Code</th>
+                  <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>RF ID</th>
                   <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>MAC Address</th>
+                  <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>Location</th>
                   <th className="px-3 py-2 text-left">Ticket</th>
                   <th className={`px-3 py-2 text-left ${columnPreset === 'core' ? 'hidden' : ''}`}>Manufacturer</th>
                   <th className="px-3 py-2 text-left">Status</th>
@@ -1338,6 +1803,12 @@ const TechPpmPanel = () => {
                   <th className="px-3 py-2 text-left">VMS</th>
                   <th className="px-3 py-2 text-left">Assigned To</th>
                   <th className="px-3 py-2 text-left">Next service</th>
+                  <th
+                    className="px-3 py-2 text-left min-w-[11rem] max-w-[18rem]"
+                    title="Admin manager notes and manager review comment on the open PPM task"
+                  >
+                    Manager comment
+                  </th>
                   <th className="px-3 py-2 text-left">Actions</th>
                   </tr>
                 </thead>
@@ -1348,7 +1819,7 @@ const TechPpmPanel = () => {
                     <tr>
                       <td colSpan={workOrderColSpan} className="px-3 py-6 text-slate-500">
                         {canManagePpmInclusion && !query.trim()
-                          ? 'No assets in the PPM program yet. Use the search box to find assets, then turn PPM on in the PPM column for each row you want to include.'
+                          ? 'No assets in the PPM program yet. Use search to find assets, tick checkboxes in the PPM column, then create tasks.'
                           : 'No assets match your search (or this store has no assets yet).'}
                       </td>
                     </tr>
@@ -1357,22 +1828,19 @@ const TechPpmPanel = () => {
                     const ns = nextServiceMeta(row.open_task, row.last_completed_at);
                     const rid = String(a._id || '');
                     return (
-                      <tr key={a._id} className="border-t hover:bg-slate-50/80">
+                      <tr
+                        key={a._id}
+                        className={`border-t hover:bg-slate-50/80 ${rowMatchesSearch(row) ? 'bg-amber-50/60' : ''}`}
+                      >
                       {canManagePpmInclusion ? (
                         <td className="px-2 py-2 text-center">
-                          <button
-                            type="button"
-                            disabled={ppmSavingId === rid}
-                            onClick={() => togglePpmEnabled(a._id, !Boolean(a.ppm_enabled))}
-                            className={`min-w-[3.25rem] rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50 ${
-                              a.ppm_enabled
-                                ? 'border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
-                                : 'border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                            }`}
-                            title={a.ppm_enabled ? 'Remove from PPM program' : 'Add to PPM program'}
-                          >
-                            {a.ppm_enabled ? 'On' : 'Off'}
-                          </button>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 [accent-color:rgb(var(--accent-color))]"
+                            checked={selectedAssetIds.includes(rid)}
+                            onChange={(e) => toggleAssetSelection(rid, e.target.checked)}
+                            title="Select this asset for Create PPM task"
+                          />
                         </td>
                       ) : null}
                       <td className="px-3 py-2 font-mono text-xs">
@@ -1392,7 +1860,10 @@ const TechPpmPanel = () => {
                       <td className="px-3 py-2">{a.name || a.product_name || '—'}</td>
                       <td className={`px-3 py-2 ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.model_number || '—'}</td>
                       <td className={`px-3 py-2 font-mono text-xs ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.serial_number || '—'}</td>
+                      <td className={`px-3 py-2 font-mono text-xs ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.qr_code || '—'}</td>
+                      <td className={`px-3 py-2 font-mono text-xs ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.rfid || '—'}</td>
                       <td className={`px-3 py-2 font-mono text-xs ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.mac_address || '—'}</td>
+                      <td className={`px-3 py-2 ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.location || '—'}</td>
                       <td className="px-3 py-2">{row.open_task?.work_order_ticket || a.ticket_number || '—'}</td>
                       <td className={`px-3 py-2 ${columnPreset === 'core' ? 'hidden' : ''}`}>{a.manufacturer || '—'}</td>
                       <td className="px-3 py-2">{a.status || '—'}</td>
@@ -1408,6 +1879,28 @@ const TechPpmPanel = () => {
                           {ns.label}
                         </span>
                       </td>
+                      <td className="px-3 py-2 align-top text-xs min-w-[10rem] max-w-[16rem]">
+                        {(() => {
+                          const { admin, review } = rowManagerCommentParts(row);
+                          const tip = [admin && `Notes: ${admin}`, review && `Review: ${review}`].filter(Boolean).join('\n\n');
+                          if (!admin && !review) {
+                            return <span className="text-slate-400">—</span>;
+                          }
+                          return (
+                            <div className="space-y-1" title={tip || undefined}>
+                              {admin ? (
+                                <p className="text-slate-800 line-clamp-3 whitespace-pre-wrap break-words">{admin}</p>
+                              ) : null}
+                              {review ? (
+                                <p className="text-slate-600 line-clamp-2 whitespace-pre-wrap break-words border-l-2 border-[rgb(var(--accent-color)/0.5)] pl-2">
+                                  <span className="font-semibold text-app-accent">Review: </span>
+                                  {review}
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
                           {canOpenAssetHistory && a._id ? (
@@ -1420,19 +1913,20 @@ const TechPpmPanel = () => {
                             </Link>
                           ) : null}
                           {canManagePpmInclusion && a._id ? (
-                            <Link
-                              to={`/assets?edit=${encodeURIComponent(String(a._id))}`}
+                            <button
+                              type="button"
+                              onClick={() => setPpmInlineEditAssetId(String(a._id))}
                               className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 inline-flex"
-                              title="Edit asset (name, model, serial, status, vendor, etc.)"
+                              title="Edit asset on this page (name, model, serial, status, vendor, etc.)"
                             >
                               <Pencil size={16} />
-                            </Link>
+                            </button>
                           ) : null}
                           <button
                             type="button"
                             disabled={busy}
                             onClick={() => openChecklist(a._id)}
-                            className="p-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                            className="p-1.5 rounded-lg border border-[rgb(var(--accent-color)/0.35)] bg-[rgb(var(--accent-color)/0.14)] text-app-accent hover:bg-[rgb(var(--accent-color)/0.22)] disabled:opacity-50"
                             title="PPM checklist"
                           >
                             <Wrench size={16} />
@@ -1441,7 +1935,7 @@ const TechPpmPanel = () => {
                             <button
                               type="button"
                               onClick={() => prefillCreateFromAsset(a)}
-                              className="text-[11px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-900 hover:bg-indigo-100"
+                              className="text-[11px] px-2 py-1 rounded-lg border border-[rgb(var(--accent-color)/0.35)] bg-[rgb(var(--accent-color)/0.14)] text-app-accent hover:bg-[rgb(var(--accent-color)/0.22)]"
                               title="Pre-fill Create PPM task for this asset"
                             >
                               Create task
@@ -1452,11 +1946,11 @@ const TechPpmPanel = () => {
                               type="button"
                               disabled={busy}
                               onClick={() => cancelOpenPpmTask(row.open_task._id, a._id)}
-                              className="ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+                              className="ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-app-accent hover:bg-[rgb(var(--accent-color)/0.12)] disabled:opacity-40"
                               title="Delete from PPM list"
                               aria-label="Delete from PPM list"
                             >
-                              <span className="h-2.5 w-2.5 rounded-full bg-current shadow-sm ring-1 ring-rose-400/60" aria-hidden />
+                              <span className="h-2.5 w-2.5 rounded-full bg-current shadow-sm ring-1 ring-[rgb(var(--accent-color)/0.45)]" aria-hidden />
                             </button>
                           ) : null}
                         </div>
@@ -1667,7 +2161,7 @@ const TechPpmPanel = () => {
                     type="button"
                     disabled={spareSubmitting || busy}
                     onClick={submitSpareRequest}
-                    className="px-3 py-2 rounded bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-50"
+                    className="btn-app-primary-md"
                   >
                     {spareSubmitting ? 'Sending…' : 'Send to admin'}
                   </button>
@@ -1688,7 +2182,7 @@ const TechPpmPanel = () => {
                     type="button"
                     disabled={busy}
                     onClick={save}
-                    className="px-3 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                    className="btn-app-outline-md"
                   >
                     Save draft
                   </button>
@@ -1696,7 +2190,7 @@ const TechPpmPanel = () => {
                     type="button"
                     disabled={busy}
                     onClick={complete}
-                    className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                    className="btn-app-primary-md"
                   >
                     Complete PPM
                   </button>
@@ -1704,7 +2198,7 @@ const TechPpmPanel = () => {
                     type="button"
                     disabled={busy}
                     onClick={markNotCompleted}
-                    className="px-3 py-2 text-sm rounded-lg border-2 border-orange-500 text-orange-900 bg-orange-50 hover:bg-orange-100 disabled:opacity-50"
+                    className="btn-app-soft text-sm"
                   >
                     Not completed
                   </button>
@@ -1713,7 +2207,7 @@ const TechPpmPanel = () => {
                       type="button"
                       disabled={busy}
                       onClick={cancelTaskDrawer}
-                      className="px-3 py-2 text-sm rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                      className="btn-app-outline-md"
                     >
                       Cancel task
                     </button>
@@ -1726,7 +2220,7 @@ const TechPpmPanel = () => {
                       type="button"
                       disabled={busy}
                       onClick={reopenForEditDrawer}
-                      className="px-3 py-2 text-sm rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                      className="btn-app-soft text-sm"
                     >
                       Edit checklist
                     </button>
@@ -1804,7 +2298,7 @@ const TechPpmPanel = () => {
                 type="button"
                 disabled={resetProgramBusy}
                 onClick={confirmResetPpmProgram}
-                className="px-3 py-2 text-sm rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                className="btn-app-primary-md"
               >
                 {resetProgramBusy ? 'Resetting…' : 'Reset program'}
               </button>
@@ -1812,6 +2306,13 @@ const TechPpmPanel = () => {
           </div>
         </div>
       ) : null}
+
+      <PpmInlineAssetEditModal
+        open={Boolean(ppmInlineEditAssetId)}
+        assetId={ppmInlineEditAssetId}
+        onClose={() => setPpmInlineEditAssetId(null)}
+        onSaved={() => load()}
+      />
     </div>
   );
 };

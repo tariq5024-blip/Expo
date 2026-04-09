@@ -104,6 +104,11 @@ const assetSchema = new mongoose.Schema({
     default: '',
     index: true
   },
+  maintenance_vendor: {
+    type: String,
+    default: '',
+    index: true
+  },
   source: {
     type: String,
     default: 'Initial Setup',
@@ -273,6 +278,12 @@ const assetSchema = new mongoose.Schema({
   },
   /** When true, asset appears on technician PPM Work Orders and can open a PPM session. */
   ppm_enabled: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  /** True when auto-created via PPM bulk import; keep it scoped to PPM screen by default. */
+  ppm_import_only: {
     type: Boolean,
     default: false,
     index: true

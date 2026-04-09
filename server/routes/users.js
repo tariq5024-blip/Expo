@@ -167,7 +167,7 @@ router.delete('/:id', protect, admin, async (req, res) => {
 
     // RBAC: Check if admin has permission to delete this user
     if (req.user.role !== 'Super Admin') {
-      if (user.role === 'Admin' || user.role === 'Super Admin') {
+      if (user.role === 'Admin' || user.role === 'Super Admin' || user.role === 'Manager') {
          return res.status(403).json({ message: 'Cannot delete admin users' });
       }
       if (req.user.assignedStore && user.assignedStore && 
@@ -200,7 +200,7 @@ router.put('/:id', protect, admin, async (req, res) => {
       const isSelf = req.user._id.toString() === user._id.toString();
 
       if (!isSelf) {
-        if (user.role === 'Admin' || user.role === 'Super Admin') {
+        if (user.role === 'Admin' || user.role === 'Super Admin' || user.role === 'Manager') {
           return res.status(403).json({ message: 'Cannot edit other admin users' });
         }
         if (req.user.assignedStore && user.assignedStore && 
@@ -280,6 +280,60 @@ router.post('/admins', protect, superAdmin, async (req, res) => {
       password: hashedPassword,
       role: 'Admin',
       assignedStore // Super Admin assigns the store
+    });
+
+    if (user) {
+      await sendWelcomeEmail(user);
+      res.status(201).json({
+        _id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        assignedStore: user.assignedStore
+      });
+    } else {
+      res.status(400).json({ message: 'Invalid user data' });
+    }
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// ---------------- MANAGER MANAGEMENT (Super Admin Only) ----------------
+
+// @desc    Get all managers
+// @route   GET /api/users/managers
+// @access  Private/SuperAdmin
+router.get('/managers', protect, superAdmin, async (req, res) => {
+  try {
+    const users = await User.find({ role: 'Manager' }).populate('assignedStore').lean();
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Create a manager
+// @route   POST /api/users/managers
+// @access  Private/SuperAdmin
+router.post('/managers', protect, superAdmin, async (req, res) => {
+  const { name, username, email, phone, password, assignedStore } = req.body;
+  try {
+    const userExists = await User.findOne({ $or: [{ email }, { username }] });
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const user = await User.create({
+      name,
+      username,
+      email,
+      phone,
+      password: hashedPassword,
+      role: 'Manager',
+      assignedStore
     });
 
     if (user) {

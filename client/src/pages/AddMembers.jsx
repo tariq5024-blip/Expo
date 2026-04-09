@@ -18,12 +18,20 @@ const AddMembers = () => {
     phone: '',
     password: '',
     assignedStore: '',
-    accessScope: 'All'
+    accessScope: 'All',
+    role: 'Technician'
   });
 
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+
+  const roleFromTab = useCallback((tab) => {
+    if (tab === 'admin') return 'Admin';
+    if (tab === 'viewer') return 'Viewer';
+    if (tab === 'manager') return 'Manager';
+    return 'Technician';
+  }, []);
 
   const fetchMembers = useCallback(async () => {
     setFetching(true);
@@ -31,6 +39,7 @@ const AddMembers = () => {
       let endpoint = '/users';
       if (activeTab === 'admin') endpoint = '/users/admins';
       if (activeTab === 'viewer') endpoint = '/users/viewers';
+      if (activeTab === 'manager') endpoint = '/users/managers';
       
       const res = await api.get(endpoint);
       setMembers(Array.isArray(res.data) ? res.data : []);
@@ -73,13 +82,31 @@ const AddMembers = () => {
       phone: member.phone,
       password: '', // Leave empty to keep unchanged
       assignedStore: member.assignedStore?._id || member.assignedStore || '',
-      accessScope: member.accessScope || 'All'
+      accessScope: member.accessScope || 'All',
+      role: member.role || roleFromTab(activeTab)
     });
     setMessage({ type: '', text: '' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
+    setEditingId(null);
+    const nextRole = roleFromTab(activeTab);
+    setFormData({
+      name: '',
+      username: '',
+      email: '',
+      phone: '',
+      password: '',
+      assignedStore: '',
+      accessScope: 'All',
+      role: nextRole
+    });
+    setMessage({ type: '', text: '' });
+  };
+
+  const switchTab = (tab) => {
+    setActiveTab(tab);
     setEditingId(null);
     setFormData({
       name: '',
@@ -88,7 +115,8 @@ const AddMembers = () => {
       phone: '',
       password: '',
       assignedStore: '',
-      accessScope: 'All'
+      accessScope: 'All',
+      role: roleFromTab(tab)
     });
     setMessage({ type: '', text: '' });
   };
@@ -116,8 +144,10 @@ const AddMembers = () => {
     try {
       const payload = { ...formData };
       
+      const selectedRole = user?.role === 'Super Admin' ? (payload.role || roleFromTab(activeTab)) : 'Technician';
+
       // Clean payload based on role
-      if (activeTab === 'viewer') {
+      if (selectedRole === 'Viewer') {
         delete payload.assignedStore;
         // ensure accessScope is present (default All)
         if (!payload.accessScope) payload.accessScope = 'All';
@@ -128,6 +158,7 @@ const AddMembers = () => {
           delete payload.assignedStore;
         }
       }
+      delete payload.role;
 
       // Remove password if empty during edit
       if (editingId && !payload.password) {
@@ -139,8 +170,9 @@ const AddMembers = () => {
         setMessage({ type: 'success', text: 'User updated successfully!' });
       } else {
         let endpoint = '/users';
-        if (activeTab === 'admin') endpoint = '/users/admins';
-        if (activeTab === 'viewer') endpoint = '/users/viewers';
+        if (selectedRole === 'Admin') endpoint = '/users/admins';
+        if (selectedRole === 'Viewer') endpoint = '/users/viewers';
+        if (selectedRole === 'Manager') endpoint = '/users/managers';
         
         await api.post(endpoint, payload);
         setMessage({ type: 'success', text: 'User created successfully!' });
@@ -158,6 +190,10 @@ const AddMembers = () => {
     }
   };
 
+  const roleForForm = user?.role === 'Super Admin'
+    ? (formData.role || roleFromTab(activeTab))
+    : 'Technician';
+
   return (
     <div className="max-w-6xl mx-auto p-4">
       <h1 className="text-2xl font-bold mb-6">Member Management</h1>
@@ -171,8 +207,7 @@ const AddMembers = () => {
               : 'text-gray-500 hover:text-gray-700'
           }`}
           onClick={() => {
-            setActiveTab('technician');
-            handleCancelEdit();
+            switchTab('technician');
           }}
         >
           Technicians
@@ -186,8 +221,7 @@ const AddMembers = () => {
                   : 'text-gray-500 hover:text-gray-700'
               }`}
               onClick={() => {
-                setActiveTab('admin');
-                handleCancelEdit();
+                switchTab('admin');
               }}
             >
               Admins
@@ -199,11 +233,22 @@ const AddMembers = () => {
                   : 'text-gray-500 hover:text-gray-700'
               }`}
               onClick={() => {
-                setActiveTab('viewer');
-                handleCancelEdit();
+                switchTab('viewer');
               }}
             >
               Viewers
+            </button>
+            <button
+              className={`px-4 py-2 font-medium ${
+                activeTab === 'manager'
+                  ? 'border-b-2 border-amber-600 text-amber-600'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => {
+                switchTab('manager');
+              }}
+            >
+              Managers
             </button>
           </>
         )}
@@ -247,6 +292,23 @@ const AddMembers = () => {
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                 />
               </div>
+
+              {user?.role === 'Super Admin' && !editingId && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Role</label>
+                  <select
+                    name="role"
+                    value={formData.role}
+                    onChange={handleChange}
+                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                  >
+                    <option value="Technician">Technician</option>
+                    <option value="Manager">Manager</option>
+                    <option value="Viewer">Viewer</option>
+                    <option value="Admin">Admin</option>
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">Username</label>
@@ -298,13 +360,13 @@ const AddMembers = () => {
                 />
               </div>
 
-              {(activeTab === 'technician' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
+              {(roleForForm === 'Technician' || roleForForm === 'Manager' || roleForForm === 'Viewer' || roleForForm === 'Admin') && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    {activeTab === 'viewer' ? 'Access Scope' : `Assigned Store ${activeTab === 'admin' ? '(Required)' : '(Optional)'}`}
+                    {roleForForm === 'Viewer' ? 'Access Scope' : `Assigned Store ${roleForForm === 'Admin' || roleForForm === 'Manager' ? '(Required)' : '(Optional)'}`}
                   </label>
                   
-                  {activeTab === 'viewer' ? (
+                  {roleForForm === 'Viewer' ? (
                     <select
                       name="accessScope"
                       value={formData.accessScope}
@@ -321,6 +383,7 @@ const AddMembers = () => {
                       name="assignedStore"
                       value={formData.assignedStore}
                       onChange={handleChange}
+                      required={roleForForm === 'Admin' || roleForForm === 'Manager'}
                       className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
                     >
                       <option value="">Select Store</option>
@@ -364,7 +427,8 @@ const AddMembers = () => {
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-800">
                 {activeTab === 'technician' ? 'Technicians List' : 
-                 activeTab === 'admin' ? 'Admins List' : 'Viewers List'}
+                 activeTab === 'admin' ? 'Admins List' :
+                 activeTab === 'manager' ? 'Managers List' : 'Viewers List'}
               </h2>
             </div>
             
@@ -374,7 +438,7 @@ const AddMembers = () => {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
-                    {(activeTab === 'technician' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
+                    {(activeTab === 'technician' || activeTab === 'manager' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         {activeTab === 'viewer' ? 'Access Scope' : 'Store'}
                       </th>
@@ -402,7 +466,7 @@ const AddMembers = () => {
                           <div className="text-sm text-gray-900">{member.email}</div>
                           <div className="text-sm text-gray-500">{member.phone}</div>
                         </td>
-                        {(activeTab === 'technician' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
+                        {(activeTab === 'technician' || activeTab === 'manager' || activeTab === 'viewer' || (activeTab === 'admin' && user?.role === 'Super Admin')) && (
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {activeTab === 'viewer' 
                               ? (member.accessScope === 'All' ? 'All Stores' : `${member.accessScope} Stores`)

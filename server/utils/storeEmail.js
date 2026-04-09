@@ -34,14 +34,28 @@ const getStoreEmailConfig = async (storeId) => {
 const getStoreNotificationRecipients = async (storeId) => {
   const id = resolveStoreId(storeId);
   if (!id) return [];
-  const store = await Store.findById(id).select('emailConfig.notificationRecipients emailConfig.lineManagerRecipients').lean();
+  const store = await Store.findById(id).select(
+    'emailConfig.notificationRecipients emailConfig.technicianRecipients emailConfig.adminRecipients emailConfig.viewerRecipients emailConfig.managerRecipients emailConfig.lineManagerRecipients'
+  ).lean();
   const recipients = Array.isArray(store?.emailConfig?.notificationRecipients)
     ? store.emailConfig.notificationRecipients
+    : [];
+  const technicians = Array.isArray(store?.emailConfig?.technicianRecipients)
+    ? store.emailConfig.technicianRecipients
+    : [];
+  const admins = Array.isArray(store?.emailConfig?.adminRecipients)
+    ? store.emailConfig.adminRecipients
+    : [];
+  const viewers = Array.isArray(store?.emailConfig?.viewerRecipients)
+    ? store.emailConfig.viewerRecipients
+    : [];
+  const managers = Array.isArray(store?.emailConfig?.managerRecipients)
+    ? store.emailConfig.managerRecipients
     : [];
   const lineManagers = Array.isArray(store?.emailConfig?.lineManagerRecipients)
     ? store.emailConfig.lineManagerRecipients
     : [];
-  return Array.from(new Set([...recipients, ...lineManagers]
+  return Array.from(new Set([...recipients, ...technicians, ...admins, ...viewers, ...managers, ...lineManagers]
     .map((v) => String(v || '').trim().toLowerCase())
     .filter(Boolean)));
 };

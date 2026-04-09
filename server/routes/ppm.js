@@ -390,20 +390,17 @@ const latestManagerCommentByAsset = async (storeScope, assetObjectIds) => {
   return m;
 };
 
-const resolveAssetIdsFromPpmTempRows = async (storeOid, tempRows) => {
-  const storeScope = matchPpmStoreScope(storeOid);
+/** In-memory match from PpmAssetTemp-shaped rows to store assets (same rules as bulk import). */
+const buildPpmTempRowMatcher = (assets) => {
   const norm = (v) => String(v || '').trim().toLowerCase();
   const alnum = (v) => norm(v).replace(/[^a-z0-9]/g, '');
-  const assets = await Asset.find({ store: storeScope, disposed: { $ne: true } })
-    .select('_id uniqueId abs_code serial_number mac_address qr_code rfid')
-    .lean();
   const byUniqueId = new Map();
   const byAbs = new Map();
   const bySerial = new Map();
   const byMac = new Map();
   const byQr = new Map();
   const byRf = new Map();
-  for (const a of assets) {
+  for (const a of assets || []) {
     const uid = alnum(a.uniqueId);
     const abs = alnum(a.abs_code);
     const sn = alnum(a.serial_number);
@@ -417,7 +414,7 @@ const resolveAssetIdsFromPpmTempRows = async (storeOid, tempRows) => {
     if (qr && !byQr.has(qr)) byQr.set(qr, a);
     if (rf && !byRf.has(rf)) byRf.set(rf, a);
   }
-  const matchByRow = (row) => {
+  const matchRow = (row) => {
     const uid = alnum(row?.unique_id);
     if (uid && byUniqueId.has(uid)) return byUniqueId.get(uid);
     const abs = alnum(row?.abs_code);
@@ -432,13 +429,159 @@ const resolveAssetIdsFromPpmTempRows = async (storeOid, tempRows) => {
     if (mac && byMac.has(mac)) return byMac.get(mac);
     return null;
   };
+  return { matchRow };
+};
+
+const assetIdStringsFromTempRows = (tempRows, matchRow) => {
   const out = new Set();
   for (const row of tempRows || []) {
-    const m = matchByRow(row);
+    const m = matchRow(row);
     if (m?._id) out.add(String(m._id));
   }
-  return [...out].map((id) => new mongoose.Types.ObjectId(id));
+  return out;
 };
+
+const resolveAssetIdsFromPpmTempRows = async (storeOid, tempRows) => {
+  const storeScope = matchPpmStoreScope(storeOid);
+  const assets = await Asset.find({ store: storeScope, disposed: { $ne: true } })
+    .select('_id uniqueId abs_code serial_number mac_address qr_code rfid')
+    .lean();
+  const { matchRow } = buildPpmTempRowMatcher(assets);
+  const ids = assetIdStringsFromTempRows(tempRows, matchRow);
+  return [...ids].map((id) => new mongoose.Types.ObjectId(id));
+};
+
+/**
+ * Manager actions on PpmWorkflowTask set manager_comment on the workflow and try to copy to PpmTask.
+ * If temp-row → asset resolution failed at that moment, tasks never get manager_review.comment.
+ * This map surfaces the workflow comment for program assets so the work-order table still shows it.
+ */
+const latestWorkflowManagerCommentByAsset = async (storeScope, programAssetIdSet) => {
+  if (!programAssetIdSet || programAssetIdSet.size === 0) return new Map();
+  const workflows = await PpmWorkflowTask.find({
+    store: storeScope,
+    manager_comment: { $exists: true, $nin: [null, ''] },
+    status: { $in: ['Approved', 'Rejected', 'Modified'] }
+  })
+    .sort({ updatedAt: -1 })
+    .limit(400)
+    .lean();
+  if (!workflows.length) return new Map();
+  const wfIds = workflows.map((w) => w._id);
+  const allTemps = await PpmAssetTemp.find({ ppm_task_id: { $in: wfIds } }).lean();
+  const tempsByWf = new Map();
+  for (const t of allTemps) {
+    const k = String(t.ppm_task_id);
+    if (!tempsByWf.has(k)) tempsByWf.set(k, []);
+    tempsByWf.get(k).push(t);
+  }
+  const assets = await Asset.find({ store: storeScope, disposed: { $ne: true } })
+    .select('_id uniqueId abs_code serial_number mac_address qr_code rfid')
+    .lean();
+  const { matchRow } = buildPpmTempRowMatcher(assets);
+  const out = new Map();
+  for (const w of workflows) {
+    const comment = String(w.manager_comment || '').trim();
+    if (!comment) continue;
+    const temps = tempsByWf.get(String(w._id)) || [];
+    const matched = assetIdStringsFromTempRows(temps, matchRow);
+    for (const sid of matched) {
+      if (!programAssetIdSet.has(sid)) continue;
+      if (!out.has(sid)) {
+        out.set(sid, { comment, status: w.status, at: w.updatedAt || w.createdAt || null });
+      }
+    }
+  }
+  return out;
+};
+
+/** Assets already tied to a Pending/Modified isolated workflow (avoid duplicate bell rows). */
+const assetIdsCoveredByPendingWorkflowQueues = async (storeOid) => {
+  const storeScope = matchPpmStoreScope(storeOid);
+  const wfs = await PpmWorkflowTask.find({
+    store: storeScope,
+    status: { $in: ['Pending', 'Modified'] }
+  })
+    .select('_id')
+    .lean();
+  if (!wfs.length) return new Set();
+  const wfIds = wfs.map((w) => w._id);
+  const allTemps = await PpmAssetTemp.find({ ppm_task_id: { $in: wfIds } }).lean();
+  const tempsByWf = new Map();
+  for (const row of allTemps) {
+    const k = String(row.ppm_task_id);
+    if (!tempsByWf.has(k)) tempsByWf.set(k, []);
+    tempsByWf.get(k).push(row);
+  }
+  const assets = await Asset.find({ store: storeScope, disposed: { $ne: true } })
+    .select('_id uniqueId abs_code serial_number mac_address qr_code rfid')
+    .lean();
+  const { matchRow } = buildPpmTempRowMatcher(assets);
+  const out = new Set();
+  for (const w of wfs) {
+    const temps = tempsByWf.get(String(w._id)) || [];
+    for (const sid of assetIdStringsFromTempRows(temps, matchRow)) {
+      out.add(sid);
+    }
+  }
+  return out;
+};
+
+const ppmTaskDocToBellRow = (t) => ({
+  task_id: String(t._id),
+  kind: 'work_order',
+  status: String(t.manager_review?.status || 'Pending'),
+  manager_comment: String(t.manager_review?.comment || t.manager_notes || '').trim(),
+  assets_included: 1,
+  created_at: t.createdAt,
+  updated_at: t.updatedAt,
+  approved_broadcast_at: null
+});
+
+const fetchOpenPpmTasksForManagerBell = async (storeOid, coveredAssetIds, limit, { sinceDate } = {}) => {
+  if (limit <= 0) return [];
+  const storeScope = matchPpmStoreScope(storeOid);
+  const q = {
+    store: storeScope,
+    status: { $in: ['Scheduled', 'In Progress'] },
+    'manager_review.status': 'Pending'
+  };
+  if (sinceDate) {
+    q.$or = [{ updatedAt: { $gte: sinceDate } }, { createdAt: { $gte: sinceDate } }];
+  }
+  const nin = [...coveredAssetIds].filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (nin.length) {
+    q.asset = { $nin: nin.map((id) => new mongoose.Types.ObjectId(id)) };
+  }
+  const rows = await PpmTask.find(q)
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .select('_id manager_review manager_notes createdAt updatedAt')
+    .lean();
+  return rows.map(ppmTaskDocToBellRow);
+};
+
+const fetchPpmTasksWithManagerDecisionSince = async (storeOid, since, limit) => {
+  if (limit <= 0) return [];
+  const storeScope = matchPpmStoreScope(storeOid);
+  const rows = await PpmTask.find({
+    store: storeScope,
+    'manager_review.reviewed_at': { $gte: since },
+    'manager_review.status': { $in: ['Approved', 'Rejected', 'Modified'] }
+  })
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .select('_id manager_review manager_notes createdAt updatedAt')
+    .lean();
+  return rows.map(ppmTaskDocToBellRow);
+};
+
+const sortBellRowsDesc = (rows) =>
+  [...rows].sort((a, b) => {
+    const tb = new Date(b.updated_at || b.created_at || 0).getTime();
+    const ta = new Date(a.updated_at || a.created_at || 0).getTime();
+    return tb - ta;
+  });
 
 router.get('/overview', protect, allowPpmRead, async (req, res) => {
   try {
@@ -831,7 +974,9 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
       return res.json([]);
     }
 
-    const [openTasks, lastCompleted] = await Promise.all([
+    const programAssetIdSet = new Set(assetIds.map((id) => String(id)));
+
+    const [openTasks, lastCompleted, managerCommentByAsset, workflowCommentByAsset] = await Promise.all([
       PpmTask.find({
         asset: { $in: assetIds },
         store: storeScope,
@@ -843,7 +988,9 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
         { $match: { asset: { $in: assetIds }, store: storeScope, status: 'Completed' } },
         { $sort: { completed_at: -1 } },
         { $group: { _id: '$asset', completed_at: { $first: '$completed_at' } } }
-      ])
+      ]),
+      latestManagerCommentByAsset(storeScope, assetIds),
+      latestWorkflowManagerCommentByAsset(storeScope, programAssetIdSet)
     ]);
 
     const openByAsset = new Map();
@@ -858,14 +1005,23 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
     }
     const lastMap = new Map(lastCompleted.map((x) => [String(x._id), x.completed_at]));
 
-    const managerCommentByAsset = await latestManagerCommentByAsset(storeScope, assetIds);
-
     const rows = assets.map((a) => {
       const cf = a.customFields && typeof a.customFields === 'object' ? a.customFields : {};
       const open = openByAsset.get(String(a._id)) || null;
       const fb = managerCommentByAsset.get(String(a._id)) || null;
+      const wfFb = workflowCommentByAsset.get(String(a._id)) || null;
       const adminNotes = String(open?.manager_notes || fb?.manager_notes || '').trim();
-      const reviewComment = String(open?.manager_review?.comment || fb?.manager_review?.comment || '').trim();
+      let wfReviewFallback = '';
+      if (open && wfFb && String(wfFb.comment || '').trim()) {
+        const wfMs = wfFb.at ? new Date(wfFb.at).getTime() : 0;
+        const openMs = open.createdAt ? new Date(open.createdAt).getTime() : 0;
+        if (wfMs >= openMs || !openMs) {
+          wfReviewFallback = String(wfFb.comment).trim();
+        }
+      }
+      const reviewComment = String(
+        open?.manager_review?.comment || fb?.manager_review?.comment || wfReviewFallback || ''
+      ).trim();
       const fromTask = vmsLabelFromChecklist(open?.checklist);
       const fromCf = vmsLabelFromCustomFields(cf);
       const vmsLabel = fromTask || fromCf || '—';
@@ -2974,9 +3130,15 @@ router.patch('/manager-action', protect, restrictViewer, async (req, res) => {
 // @desc Same shape as dashboard-alerts, but up to `days` lookback (default 365) for header history panel
 router.get('/notification-history', protect, restrictViewer, async (req, res) => {
   try {
-    const storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
+    let storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
       ? req.activeStore
       : (req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)) ? String(req.user.assignedStore) : null);
+    if (!storeId) {
+      const hs = req.headers['x-active-store'] && String(req.headers['x-active-store']).trim();
+      if (hs && hs !== 'undefined' && hs !== 'all' && mongoose.Types.ObjectId.isValid(hs)) {
+        storeId = hs;
+      }
+    }
     if (!storeId) return res.json([]);
     const storeOid = new mongoose.Types.ObjectId(storeId);
     const role = String(req.user?.role || '');
@@ -2984,13 +3146,54 @@ router.get('/notification-history', protect, restrictViewer, async (req, res) =>
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 500));
     const since = new Date(Date.now() - days * 86400000);
 
+    const workflowRowsWithCounts = async (wfFilter, rowLimit) => {
+      const tasks = await PpmWorkflowTask.find(wfFilter)
+        .sort({ updatedAt: -1 })
+        .limit(rowLimit)
+        .select('_id status manager_comment createdAt updatedAt approved_broadcast_at')
+        .lean();
+      const taskIds = tasks.map((t) => t._id);
+      const assetCounts = taskIds.length
+        ? await PpmAssetTemp.aggregate([
+          { $match: { ppm_task_id: { $in: taskIds } } },
+          { $group: { _id: '$ppm_task_id', count: { $sum: 1 } } }
+        ])
+        : [];
+      const countMap = new Map(assetCounts.map((x) => [String(x._id), Number(x.count || 0)]));
+      return tasks.map((t) => ({
+        task_id: String(t._id),
+        kind: 'workflow',
+        status: String(t.status || ''),
+        manager_comment: String(t.manager_comment || ''),
+        assets_included: countMap.get(String(t._id)) || 0,
+        created_at: t.createdAt,
+        updated_at: t.updatedAt,
+        approved_broadcast_at: t.approved_broadcast_at || null
+      }));
+    };
+
+    if (isManagerLikeRole(role)) {
+      const wfFilter = {
+        store: matchPpmStoreScope(storeOid),
+        $or: [{ createdAt: { $gte: since } }, { updatedAt: { $gte: since } }]
+      };
+      const [wfRows, covered] = await Promise.all([
+        workflowRowsWithCounts(wfFilter, limit),
+        assetIdsCoveredByPendingWorkflowQueues(storeOid)
+      ]);
+      const [openRows, histRows] = await Promise.all([
+        fetchOpenPpmTasksForManagerBell(storeOid, covered, limit, {}),
+        fetchPpmTasksWithManagerDecisionSince(storeOid, since, limit)
+      ]);
+      const out = sortBellRowsDesc([...wfRows, ...openRows, ...histRows]).slice(0, limit);
+      return res.json(out);
+    }
+
     let filter = {
       store: matchPpmStoreScope(storeOid),
       $or: [{ createdAt: { $gte: since } }, { updatedAt: { $gte: since } }]
     };
-    if (isManagerLikeRole(role)) {
-      // all statuses in range
-    } else if (isAdminRole(role)) {
+    if (isAdminRole(role)) {
       // all statuses in range
     } else if (role === 'Technician' || role === 'Viewer') {
       filter = { ...filter, status: 'Approved' };
@@ -2998,28 +3201,7 @@ router.get('/notification-history', protect, restrictViewer, async (req, res) =>
       return res.json([]);
     }
 
-    const tasks = await PpmWorkflowTask.find(filter)
-      .sort({ updatedAt: -1 })
-      .limit(limit)
-      .select('_id status manager_comment createdAt updatedAt approved_broadcast_at')
-      .lean();
-    const taskIds = tasks.map((t) => t._id);
-    const assetCounts = taskIds.length
-      ? await PpmAssetTemp.aggregate([
-        { $match: { ppm_task_id: { $in: taskIds } } },
-        { $group: { _id: '$ppm_task_id', count: { $sum: 1 } } }
-      ])
-      : [];
-    const countMap = new Map(assetCounts.map((x) => [String(x._id), Number(x.count || 0)]));
-    const out = tasks.map((t) => ({
-      task_id: String(t._id),
-      status: String(t.status || ''),
-      manager_comment: String(t.manager_comment || ''),
-      assets_included: countMap.get(String(t._id)) || 0,
-      created_at: t.createdAt,
-      updated_at: t.updatedAt,
-      approved_broadcast_at: t.approved_broadcast_at || null
-    }));
+    const out = await workflowRowsWithCounts(filter, limit);
     return res.json(out);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to load PPM notification history', error: error.message });
@@ -3030,16 +3212,57 @@ router.get('/notification-history', protect, restrictViewer, async (req, res) =>
 // @desc Role-targeted PPM workflow alerts to show on dashboard
 router.get('/dashboard-alerts', protect, restrictViewer, async (req, res) => {
   try {
-    const storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
+    let storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
       ? req.activeStore
       : (req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)) ? String(req.user.assignedStore) : null);
+    if (!storeId) {
+      const hs = req.headers['x-active-store'] && String(req.headers['x-active-store']).trim();
+      if (hs && hs !== 'undefined' && hs !== 'all' && mongoose.Types.ObjectId.isValid(hs)) {
+        storeId = hs;
+      }
+    }
     if (!storeId) return res.json([]);
     const storeOid = new mongoose.Types.ObjectId(storeId);
     const role = String(req.user?.role || '');
-    let filter = { store: matchPpmStoreScope(storeOid) };
+
+    const mapWorkflowTasksToBellRows = async (tasks) => {
+      const taskIds = tasks.map((t) => t._id);
+      const assetCounts = taskIds.length
+        ? await PpmAssetTemp.aggregate([
+          { $match: { ppm_task_id: { $in: taskIds } } },
+          { $group: { _id: '$ppm_task_id', count: { $sum: 1 } } }
+        ])
+        : [];
+      const countMap = new Map(assetCounts.map((x) => [String(x._id), Number(x.count || 0)]));
+      return tasks.map((t) => ({
+        task_id: String(t._id),
+        kind: 'workflow',
+        status: String(t.status || ''),
+        manager_comment: String(t.manager_comment || ''),
+        assets_included: countMap.get(String(t._id)) || 0,
+        created_at: t.createdAt,
+        updated_at: t.updatedAt,
+        approved_broadcast_at: t.approved_broadcast_at || null
+      }));
+    };
+
     if (isManagerLikeRole(role)) {
-      filter = { ...filter, status: { $in: ['Pending', 'Modified'] } };
-    } else if (isAdminRole(role)) {
+      const wfFilter = { store: matchPpmStoreScope(storeOid), status: { $in: ['Pending', 'Modified'] } };
+      const [tasks, covered] = await Promise.all([
+        PpmWorkflowTask.find(wfFilter)
+          .sort({ updatedAt: -1 })
+          .limit(30)
+          .select('_id status manager_comment createdAt updatedAt approved_broadcast_at')
+          .lean(),
+        assetIdsCoveredByPendingWorkflowQueues(storeOid)
+      ]);
+      const wfRows = await mapWorkflowTasksToBellRows(tasks);
+      const openRows = await fetchOpenPpmTasksForManagerBell(storeOid, covered, 30, {});
+      return res.json(sortBellRowsDesc([...wfRows, ...openRows]).slice(0, 30));
+    }
+
+    let filter = { store: matchPpmStoreScope(storeOid) };
+    if (isAdminRole(role)) {
       filter = { ...filter, status: { $in: ['Rejected', 'Modified'] } };
     } else if (role === 'Technician' || role === 'Viewer') {
       filter = { ...filter, status: 'Approved' };
@@ -3051,21 +3274,7 @@ router.get('/dashboard-alerts', protect, restrictViewer, async (req, res) => {
       .limit(30)
       .select('_id status manager_comment createdAt updatedAt approved_broadcast_at')
       .lean();
-    const taskIds = tasks.map((t) => t._id);
-    const assetCounts = await PpmAssetTemp.aggregate([
-      { $match: { ppm_task_id: { $in: taskIds } } },
-      { $group: { _id: '$ppm_task_id', count: { $sum: 1 } } }
-    ]);
-    const countMap = new Map(assetCounts.map((x) => [String(x._id), Number(x.count || 0)]));
-    const out = tasks.map((t) => ({
-      task_id: String(t._id),
-      status: String(t.status || ''),
-      manager_comment: String(t.manager_comment || ''),
-      assets_included: countMap.get(String(t._id)) || 0,
-      created_at: t.createdAt,
-      updated_at: t.updatedAt,
-      approved_broadcast_at: t.approved_broadcast_at || null
-    }));
+    const out = await mapWorkflowTasksToBellRows(tasks);
     return res.json(out);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to load PPM dashboard alerts', error: error.message });

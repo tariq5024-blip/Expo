@@ -45,8 +45,10 @@ function PpmNotifPanel({
   ppmAckUserId,
   ppmAckStoreId,
   ppmHeaderHref,
+  ppmWorkOrdersHref = '/ppm',
   onClose
 }) {
+  const rowHref = (row) => (row?.kind === 'work_order' ? ppmWorkOrdersHref : ppmHeaderHref);
   const dark = tone === 'dark';
   const shell = dark
     ? 'rounded-xl border border-white/15 bg-slate-900 text-left text-white shadow-2xl'
@@ -93,7 +95,7 @@ function PpmNotifPanel({
             return (
               <li key={fp || row.task_id}>
                 <Link
-                  to={ppmHeaderHref}
+                  to={rowHref(row)}
                   onClick={() => {
                     if (fp) markPpmNotificationFpRead(fp, ppmAckUserId, ppmAckStoreId);
                     onClose();
@@ -162,8 +164,22 @@ function PpmNotifPanel({
             dark ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-[rgb(var(--accent-color))] text-[rgb(var(--accent-contrast))] hover:brightness-105'
           }`}
         >
-          Open PPM
+          {ppmHeaderHref === ppmWorkOrdersHref ? 'Open PPM' : 'Manager queue'}
         </Link>
+        {ppmHeaderHref !== ppmWorkOrdersHref ? (
+          <Link
+            to={ppmWorkOrdersHref}
+            onClick={() => {
+              markAllPpmNotificationsRead(history, ppmAckUserId, ppmAckStoreId);
+              onClose();
+            }}
+            className={`mt-1 block rounded-lg px-3 py-2 text-center text-sm font-semibold ${
+              dark ? 'bg-white/10 text-white hover:bg-white/15' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+            }`}
+          >
+            PPM work orders
+          </Link>
+        ) : null}
       </div>
     </div>
   );
@@ -601,6 +617,7 @@ const Layout = () => {
                         ppmAckUserId={ppmAckUserId}
                         ppmAckStoreId={ppmAckStoreId}
                         ppmHeaderHref={ppmHeaderHref}
+                        ppmWorkOrdersHref="/ppm"
                         onClose={() => setPpmNotifOpen(false)}
                       />
                     </div>
@@ -663,6 +680,7 @@ const Layout = () => {
                 ppmAckUserId={ppmAckUserId}
                 ppmAckStoreId={ppmAckStoreId}
                 ppmHeaderHref={ppmHeaderHref}
+                ppmWorkOrdersHref="/ppm"
                 onClose={() => setPpmNotifOpen(false)}
               />
             </div>

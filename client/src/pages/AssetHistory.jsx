@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/axios';
-import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Activity, User, AlertCircle } from 'lucide-react';
 
 const AssetHistory = () => {
-  const { user } = useAuth();
   const { id } = useParams();
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -31,8 +29,8 @@ const AssetHistory = () => {
     ? [...asset.history].sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt))
     : [];
 
-  const backHref = user?.role === 'Technician' ? '/ppm' : '/assets';
-  const backLabel = user?.role === 'Technician' ? 'Back to PPM' : 'Back to Assets';
+  const backHref = '/ppm';
+  const backLabel = 'PPM Asset';
 
   return (
     <div className="p-6 max-w-6xl mx-auto">

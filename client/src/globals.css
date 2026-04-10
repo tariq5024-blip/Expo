@@ -21,8 +21,7 @@
     --text-muted: 100 116 139;
     --border-color: 226 232 240;
     --accent-color: 255 165 0;
-    /* White label on orange CTAs reads more clearly than black on bright orange */
-    --accent-contrast: 255 255 255;
+    --accent-contrast: 0 0 0;
     --ring-color: 255 165 0;
     --shadow-color: 15 23 42;
     --page-grad-start: 248 250 252;

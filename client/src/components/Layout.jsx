@@ -161,7 +161,7 @@ function PpmNotifPanel({
             onClose();
           }}
           className={`block rounded-lg px-3 py-2 text-center text-sm font-semibold ${
-            dark ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-[rgb(var(--accent-color))] text-[rgb(var(--accent-contrast))] hover:brightness-105'
+            dark ? 'bg-orange-500 text-black hover:bg-orange-600' : 'bg-[rgb(var(--accent-color))] text-[rgb(var(--accent-contrast))] hover:brightness-105'
           }`}
         >
           {ppmHeaderHref === ppmWorkOrdersHref ? 'Open PPM' : 'Manager queue'}

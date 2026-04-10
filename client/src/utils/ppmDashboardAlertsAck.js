@@ -78,7 +78,7 @@ export function isPpmWorkflowAlertActiveForUser(user, alert) {
   const s = String(alert?.status || '');
   const mgrLike = r.toLowerCase().includes('manager');
   if (mgrLike) return s === 'Pending' || s === 'Modified';
-  if (r === 'Admin' || r === 'Super Admin') return s === 'Rejected' || s === 'Modified';
+  if (r === 'Admin' || r === 'Super Admin') return s === 'Approved' || s === 'Rejected' || s === 'Modified';
   if (r === 'Technician' || r === 'Viewer') return s === 'Approved';
   return false;
 }

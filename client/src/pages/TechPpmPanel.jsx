@@ -92,6 +92,34 @@ const rowManagerCommentParts = (row) => {
   return openTaskManagerCommentParts(row?.open_task);
 };
 
+const rowTechnicianCommentDetails = (row) => {
+  const d = row?.technician_comment_display;
+  const notes = String(d?.notes || row?.open_task?.technician_notes || '').trim();
+  const equipment = Array.isArray(d?.equipment_used)
+    ? d.equipment_used.map((x) => String(x || '').trim()).filter(Boolean)
+    : (Array.isArray(row?.open_task?.equipment_used)
+      ? row.open_task.equipment_used.map((x) => String(x || '').trim()).filter(Boolean)
+      : []);
+  const checklistItems = Array.isArray(d?.checklist)
+    ? d.checklist
+    : (Array.isArray(row?.open_task?.checklist) ? row.open_task.checklist : []);
+  const checklistSummary = checklistItems
+    .filter((item) => {
+      const value = String(item?.value || '').trim();
+      const note = String(item?.notes || '').trim();
+      return Boolean(value || note);
+    })
+    .slice(0, 2)
+    .map((item) => {
+      const label = String(item?.label || item?.key || 'Checklist');
+      const value = String(item?.value || '').trim();
+      const note = String(item?.notes || '').trim();
+      if (value && note) return `${label}: ${value} (${note})`;
+      return `${label}: ${value || note}`;
+    });
+  return { notes, equipment, checklistSummary };
+};
+
 const UNHEALTHY_CONDITIONS = new Set(['faulty', 'workshop', 'under repair/workshop']);
 
 const isAssetUnhealthy = (condition) => UNHEALTHY_CONDITIONS.has(String(condition || '').trim().toLowerCase());
@@ -125,7 +153,11 @@ const ppmSearchFields = (asset, row) => ([
   row?.manager_comment_display?.admin,
   row?.manager_comment_display?.review,
   row?.open_task?.manager_notes,
-  row?.open_task?.manager_review?.comment
+  row?.open_task?.manager_review?.comment,
+  row?.technician_comment_display?.notes,
+  ...(Array.isArray(row?.technician_comment_display?.equipment_used)
+    ? row.technician_comment_display.equipment_used
+    : [])
 ]);
 
 const TechPpmPanel = () => {
@@ -136,6 +168,8 @@ const TechPpmPanel = () => {
   const adminLikeRole = roleLower.includes('admin');
   const canOpenAssetHistory = user?.role === 'Admin' || user?.role === 'Super Admin' || user?.role === 'Viewer';
   const canManagePpmInclusion = adminLikeRole || managerLikeRole || user?.role === 'Super Admin';
+  /** “Notify managers” reminder is admin-only; managers should not see it on their own account. */
+  const canShowBulkManagerNotifyBanner = adminLikeRole || user?.role === 'Super Admin';
   const [rows, setRows] = useState([]);
   const [overview, setOverview] = useState({
     total: 0,
@@ -184,18 +218,18 @@ const TechPpmPanel = () => {
   const [pendingBulkPpmNotify, setPendingBulkPpmNotify] = useState(false);
   const [bulkNotifyBusy, setBulkNotifyBusy] = useState(false);
   const [managerNotifyEmails, setManagerNotifyEmails] = useState([]);
+  const [toast, setToast] = useState(null);
   const [pendingRemove, setPendingRemove] = useState(null);
   const [pendingDrawerCancel, setPendingDrawerCancel] = useState(null);
-  const [pendingResetProgram, setPendingResetProgram] = useState(null);
   const ticketLookupGen = useRef(0);
   const pendingRemoveTimerRef = useRef(null);
   const pendingDrawerCancelTimerRef = useRef(null);
-  const pendingResetTimerRef = useRef(null);
   const importFileInputRef = useRef(null);
   const [ppmInlineEditAssetId, setPpmInlineEditAssetId] = useState(null);
   const assetsLoadGen = useRef(0);
   const incompleteLoadGen = useRef(0);
-  const workOrderColSpan = canManagePpmInclusion ? 19 : 18;
+  const toastTimerRef = useRef(null);
+  const workOrderColSpan = canManagePpmInclusion ? 20 : 19;
 
   const bulkNotifySessionKey = useMemo(() => {
     const id = activeStore?._id != null ? String(activeStore._id) : '';
@@ -208,34 +242,42 @@ const TechPpmPanel = () => {
 
   const updatePendingBulkNotify = useCallback(
     (next) => {
-      setPendingBulkPpmNotify(next);
+      if (canShowBulkManagerNotifyBanner) {
+        setPendingBulkPpmNotify(next);
+      } else {
+        setPendingBulkPpmNotify(false);
+      }
       if (!bulkNotifySessionKey || !canManagePpmInclusion) return;
       if (next) sessionStorage.setItem(bulkNotifySessionKey, '1');
       else sessionStorage.removeItem(bulkNotifySessionKey);
     },
-    [bulkNotifySessionKey, canManagePpmInclusion]
+    [bulkNotifySessionKey, canManagePpmInclusion, canShowBulkManagerNotifyBanner]
   );
 
   useEffect(() => {
-    if (!canManagePpmInclusion || !bulkNotifySessionKey) {
+    if (!bulkNotifySessionKey) {
+      setPendingBulkPpmNotify(false);
+      return;
+    }
+    if (!canShowBulkManagerNotifyBanner) {
       setPendingBulkPpmNotify(false);
       return;
     }
     setPendingBulkPpmNotify(sessionStorage.getItem(bulkNotifySessionKey) === '1');
-  }, [canManagePpmInclusion, bulkNotifySessionKey]);
+  }, [canShowBulkManagerNotifyBanner, bulkNotifySessionKey]);
 
   useEffect(() => {
-    if (!canManagePpmInclusion || !pendingBulkPpmNotify) return;
+    if (!canShowBulkManagerNotifyBanner || !pendingBulkPpmNotify) return;
     const onBeforeUnload = (e) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [canManagePpmInclusion, pendingBulkPpmNotify]);
+  }, [canShowBulkManagerNotifyBanner, pendingBulkPpmNotify]);
 
   useEffect(() => {
-    if (!canManagePpmInclusion || !activeStore?._id) {
+    if (!canShowBulkManagerNotifyBanner || !activeStore?._id) {
       setManagerNotifyEmails([]);
       return;
     }
@@ -255,7 +297,7 @@ const TechPpmPanel = () => {
     };
     void loadManagerRecipients();
     return () => { cancelled = true; };
-  }, [canManagePpmInclusion, activeStore?._id]);
+  }, [canShowBulkManagerNotifyBanner, activeStore?._id]);
 
   useEffect(() => {
     if (!canManagePpmInclusion || !createDraftSessionKey) return;
@@ -760,6 +802,16 @@ const TechPpmPanel = () => {
     setSpareForm({ item_name: '', quantity: 1, description: '' });
   };
 
+  const showToast = useCallback((message, tone = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message: String(message || ''), tone });
+    toastTimerRef.current = setTimeout(() => setToast(null), 2600);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+
   const updateItem = (idx, value) => {
     if (!task) return;
     const checklist = [...(task.checklist || [])];
@@ -799,6 +851,11 @@ const TechPpmPanel = () => {
         technician_notes: task.technician_notes || ''
       });
       closeDrawer();
+      if (showIncompleteList) {
+        // Task moved out of "Not completed"; return user to Work Orders list.
+        setShowIncompleteList(false);
+        showToast('Task completed. Moved to Work orders.');
+      }
       void load();
       if (showIncompleteList) void loadIncomplete();
     } catch (error) {
@@ -821,6 +878,11 @@ const TechPpmPanel = () => {
       setBusy(true);
       const res = await api.patch(`/ppm/${task._id}/reopen-for-edit`);
       setTask(res.data);
+      if (showIncompleteList) {
+        // Reopened tasks are In Progress; show them in Work Orders.
+        setShowIncompleteList(false);
+        showToast('Task reopened. Moved to Work orders.');
+      }
       void load();
       if (showIncompleteList) void loadIncomplete();
     } catch (error) {
@@ -923,10 +985,6 @@ const TechPpmPanel = () => {
     if (pendingDrawerCancelTimerRef.current) {
       window.clearTimeout(pendingDrawerCancelTimerRef.current);
       pendingDrawerCancelTimerRef.current = null;
-    }
-    if (pendingResetTimerRef.current) {
-      window.clearTimeout(pendingResetTimerRef.current);
-      pendingResetTimerRef.current = null;
     }
   }, []);
 
@@ -1089,36 +1147,22 @@ const TechPpmPanel = () => {
       alert('Enter your account password to confirm.');
       return;
     }
-    if (pendingResetTimerRef.current) {
-      window.clearTimeout(pendingResetTimerRef.current);
-      pendingResetTimerRef.current = null;
-    }
     setResetProgramOpen(false);
     setResetProgramPassword('');
-    setPendingResetProgram({ password });
-    pendingResetTimerRef.current = window.setTimeout(() => {
-      pendingResetTimerRef.current = null;
-      setPendingResetProgram((current) => {
-        if (!current?.password) return null;
-        void (async () => {
-          try {
-            setResetProgramBusy(true);
-            const { data } = await api.post('/ppm/reset-program', { password: current.password });
-            closeDrawer();
-            clearCreateAssetSelection();
-            await load();
-            const n = data?.deletedTasks ?? 0;
-            const a = data?.assetsPpmCleared ?? 0;
-            alert(`PPM program reset for this store. Removed ${n} task(s) and cleared PPM flags on ${a} asset(s).`);
-          } catch (error) {
-            alert(error.response?.data?.message || 'Could not reset PPM program');
-          } finally {
-            setResetProgramBusy(false);
-          }
-        })();
-        return null;
-      });
-    }, PPM_REMOVE_UNDO_MS);
+    try {
+      setResetProgramBusy(true);
+      const { data } = await api.post('/ppm/reset-program', { password });
+      closeDrawer();
+      clearCreateAssetSelection();
+      await load();
+      const n = data?.deletedTasks ?? 0;
+      const a = data?.assetsPpmCleared ?? 0;
+      alert(`PPM program reset for this store. Removed ${n} task(s) and cleared PPM flags on ${a} asset(s).`);
+    } catch (error) {
+      alert(error.response?.data?.message || 'Could not reset PPM program');
+    } finally {
+      setResetProgramBusy(false);
+    }
   };
 
   const cancelTaskDrawer = async () => {
@@ -1159,14 +1203,6 @@ const TechPpmPanel = () => {
     setPendingDrawerCancel(null);
   };
 
-  const undoPendingResetProgram = () => {
-    if (pendingResetTimerRef.current) {
-      window.clearTimeout(pendingResetTimerRef.current);
-      pendingResetTimerRef.current = null;
-    }
-    setPendingResetProgram(null);
-  };
-
   const sendBulkPpmNotification = async () => {
     try {
       setBulkNotifyBusy(true);
@@ -1201,6 +1237,19 @@ const TechPpmPanel = () => {
 
   return (
     <div className="space-y-4">
+      {toast ? (
+        <div className="fixed right-4 top-4 z-[120]">
+          <div
+            className={`rounded-lg border px-3 py-2 text-sm shadow-lg ${
+              toast.tone === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-slate-50 border-slate-300 text-slate-800'
+            }`}
+          >
+            {toast.message}
+          </div>
+        </div>
+      ) : null}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">PPM program overview</h1>
         <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
@@ -1216,7 +1265,7 @@ const TechPpmPanel = () => {
         </p>
       </div>
 
-      {canManagePpmInclusion && pendingBulkPpmNotify ? (
+      {canShowBulkManagerNotifyBanner && pendingBulkPpmNotify ? (
         <div
           role="status"
           className="rounded-xl border border-[rgb(var(--accent-color)/0.35)] bg-app-accent-soft px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
@@ -1283,20 +1332,6 @@ const TechPpmPanel = () => {
             Cancelling this drawer task in a few seconds.
           </p>
           <button type="button" onClick={undoPendingDrawerCancel} className="btn-app-outline-md">
-            Undo
-          </button>
-        </div>
-      ) : null}
-
-      {canManagePpmInclusion && pendingResetProgram ? (
-        <div
-          role="status"
-          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm"
-        >
-          <p className="text-sm text-slate-800">
-            Reset PPM program queued. It will run in a few seconds.
-          </p>
-          <button type="button" onClick={undoPendingResetProgram} className="btn-app-outline-md">
             Undo
           </button>
         </div>
@@ -1805,9 +1840,15 @@ const TechPpmPanel = () => {
                   <th className="px-3 py-2 text-left">Next service</th>
                   <th
                     className="px-3 py-2 text-left min-w-[11rem] max-w-[18rem]"
-                    title="Admin manager notes and manager review comment on the open PPM task"
+                    title="Admin manager notes and manager review comment"
                   >
                     Manager comment
+                  </th>
+                  <th
+                    className="px-3 py-2 text-left min-w-[12rem] max-w-[20rem]"
+                    title="Latest technician notes, equipment used, and checklist summary"
+                  >
+                    Technician details
                   </th>
                   <th className="px-3 py-2 text-left">Actions</th>
                   </tr>
@@ -1882,7 +1923,10 @@ const TechPpmPanel = () => {
                       <td className="px-3 py-2 align-top text-xs min-w-[10rem] max-w-[16rem]">
                         {(() => {
                           const { admin, review } = rowManagerCommentParts(row);
-                          const tip = [admin && `Notes: ${admin}`, review && `Review: ${review}`].filter(Boolean).join('\n\n');
+                          const tip = [
+                            admin && `Manager notes: ${admin}`,
+                            review && `Manager review: ${review}`
+                          ].filter(Boolean).join('\n\n');
                           if (!admin && !review) {
                             return <span className="text-slate-400">—</span>;
                           }
@@ -1895,6 +1939,41 @@ const TechPpmPanel = () => {
                                 <p className="text-slate-600 line-clamp-2 whitespace-pre-wrap break-words border-l-2 border-[rgb(var(--accent-color)/0.5)] pl-2">
                                   <span className="font-semibold text-app-accent">Review: </span>
                                   {review}
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3 py-2 align-top text-xs min-w-[12rem] max-w-[20rem]">
+                        {(() => {
+                          const { notes: techNotes, equipment, checklistSummary } = rowTechnicianCommentDetails(row);
+                          const tip = [
+                            techNotes && `Technician notes: ${techNotes}`,
+                            equipment.length > 0 && `Equipment: ${equipment.join(', ')}`,
+                            checklistSummary.length > 0 && `Checklist: ${checklistSummary.join(' | ')}`
+                          ].filter(Boolean).join('\n\n');
+                          if (!techNotes && equipment.length === 0 && checklistSummary.length === 0) {
+                            return <span className="text-slate-400">—</span>;
+                          }
+                          return (
+                            <div className="space-y-1" title={tip || undefined}>
+                              {techNotes ? (
+                                <p className="text-slate-700 line-clamp-2 whitespace-pre-wrap break-words border-l-2 border-emerald-200 pl-2">
+                                  <span className="font-semibold text-emerald-700">Tech: </span>
+                                  {techNotes}
+                                </p>
+                              ) : null}
+                              {equipment.length > 0 ? (
+                                <p className="text-slate-600 line-clamp-2 whitespace-pre-wrap break-words">
+                                  <span className="font-semibold">Equipment: </span>
+                                  {equipment.join(', ')}
+                                </p>
+                              ) : null}
+                              {checklistSummary.length > 0 ? (
+                                <p className="text-slate-600 line-clamp-2 whitespace-pre-wrap break-words">
+                                  <span className="font-semibold">Checklist: </span>
+                                  {checklistSummary.join(' | ')}
                                 </p>
                               ) : null}
                             </div>

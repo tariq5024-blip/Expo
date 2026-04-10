@@ -78,6 +78,21 @@ sudo systemctl start mongod || sudo systemctl start mongodb
 
 ## 4) Run backend and frontend
 
+Fastest way after every laptop restart (recommended):
+
+```bash
+cd /path/to/Expo
+npm run dev:local
+```
+
+What `dev:local` does:
+- creates `server/.env` from `server/.env.example` if missing
+- auto-fills required local secrets if they are empty/placeholders
+- verifies MongoDB reachability and tries to start local MongoDB service
+- starts frontend + backend together
+
+Manual way (two terminals):
+
 Open terminal 1:
 
 ```bash

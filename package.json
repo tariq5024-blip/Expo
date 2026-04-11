@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npm ci --prefix server && npm ci --prefix client && npm run build --prefix client",
     "start": "cd server && node server.js",
-    "dev": "npx concurrently -n srv,web -c cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev": "npx concurrently -n srv,web -c cyan,magenta \"npm run dev --prefix server\" \"bash scripts/wait-dev-api.sh && npm run dev --prefix client\"",
     "dev:local": "bash scripts/dev-local.sh",
     "dev:3000": "PORT=3000 NODE_ENV=production node server/server.js",
     "check:cycles": "madge --circular --extensions js,jsx,ts,tsx client/src && madge --circular --extensions js,jsx,ts,tsx server",

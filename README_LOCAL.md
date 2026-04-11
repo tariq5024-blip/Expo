@@ -93,7 +93,7 @@ What `dev:local` does:
 - creates `server/.env` from `server/.env.example` if missing
 - auto-fills required local secrets if they are empty/placeholders
 - verifies MongoDB reachability and tries to start local MongoDB service
-- starts frontend + backend together
+- starts frontend + backend together (`npm run dev` waits until `http://127.0.0.1:PORT/api/healthz` responds before launching Vite, so you should not see brief `ECONNREFUSED` proxy errors on startup)
 
 Manual way (two terminals):
 

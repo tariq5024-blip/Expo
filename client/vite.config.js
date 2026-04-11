@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const apiHost = (globalThis.process && globalThis.process.env && globalThis.process.env.VITE_API_HOST) || 'localhost'
+// Default 127.0.0.1 avoids IPv6 (::1) vs IPv4 listen mismatches that show up as ECONNREFUSED on some Linux setups.
+const apiHost = (globalThis.process && globalThis.process.env && globalThis.process.env.VITE_API_HOST) || '127.0.0.1'
 const apiPort = (globalThis.process && globalThis.process.env && globalThis.process.env.VITE_API_PORT) || '5000'
 
 export default defineConfig({

@@ -83,7 +83,8 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     // Check if user.role is in allowedRoles OR if user is Super Admin and 'Admin' is in allowedRoles
     const isAllowed = allowedRoles.includes(user.role)
       || (user.role === 'Super Admin' && allowedRoles.includes('Admin'))
-      || (isManagerLike && allowedRoles.includes('Admin'));
+      || (isManagerLike && allowedRoles.includes('Admin'))
+      || (isManagerLike && allowedRoles.includes('Manager'));
     
     if (!isAllowed) {
       // Allow Super Admin to access everything? User said "SUPER ADMIN HAVE ALL PERMISSIONS".

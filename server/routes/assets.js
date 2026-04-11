@@ -3,6 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const crypto = require('crypto');
 const Asset = require('../models/Asset');
+const PpmTask = require('../models/PpmTask');
 const Product = require('../models/Product');
 const Store = require('../models/Store');
 const User = require('../models/User');
@@ -11,7 +12,7 @@ const Request = require('../models/Request');
 const Pass = require('../models/Pass');
 const CollectionApproval = require('../models/CollectionApproval');
 const AssetImportUpdateBatch = require('../models/AssetImportUpdateBatch');
-const { protect, admin, restrictViewer } = require('../middleware/authMiddleware');
+const { protect, admin, restrictViewer, resolveAssignedStoreId } = require('../middleware/authMiddleware');
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const fs = require('fs');
@@ -229,7 +230,13 @@ function resolveAssetConditionEnumMatches(q) {
   return Array.from(matches);
 }
 
-const getScopedStoreId = (req) => String(req.activeStore || req.user?.assignedStore || '').trim();
+const getScopedStoreId = (req) => {
+  const raw = req?.activeStore;
+  if (raw != null && raw !== '' && mongoose.Types.ObjectId.isValid(String(raw))) {
+    return String(raw);
+  }
+  return resolveAssignedStoreId(req?.user) || '';
+};
 const hasAssetStoreAccess = (req, storeId) => {
   if (req.user?.role === 'Super Admin') return true;
   const scopedStoreId = getScopedStoreId(req);
@@ -1223,21 +1230,87 @@ async function getStoreIds(storeId) {
   return all.map((id) => new mongoose.Types.ObjectId(id));
 }
 
+/** Match PpmTask.store whether stored as ObjectId or same 24-hex string (aligned with ppm routes). */
+function matchPpmTaskStoreScope(activeStoreId) {
+  const oid = new mongoose.Types.ObjectId(String(activeStoreId));
+  return { $in: [oid, String(oid)] };
+}
+
+/** PpmTask.store may match any of several store ids (parent + children), each as ObjectId or string. */
+function matchPpmTaskStoreScopeForStores(storeOidList) {
+  if (!Array.isArray(storeOidList) || storeOidList.length === 0) return null;
+  const variants = [];
+  for (const id of storeOidList) {
+    if (!id) continue;
+    const oid = id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(String(id));
+    variants.push(oid, String(oid));
+  }
+  if (variants.length === 0) return null;
+  return { $in: variants };
+}
+
+const OPEN_PPM_TASK_STATUSES = ['Scheduled', 'In Progress', 'Overdue'];
+
+/**
+ * Asset ids that carry an open PPM work order and must be hidden from main inventory.
+ * Mirrors GET /api/assets store scoping: Super Admin without x-active-store still needs a global
+ * distinct; Admins without req.activeStore still resolve assignedStore like RBAC does.
+ */
+async function getBusyPpmAssetIdsExcludedFromMainInventory(req) {
+  const base = { status: { $in: OPEN_PPM_TASK_STATUSES } };
+  const distinctBusy = async (storeClause) => {
+    const query = storeClause ? { ...base, store: storeClause } : base;
+    const ids = await PpmTask.distinct('asset', query);
+    return (ids || []).filter(Boolean);
+  };
+
+  const activeRaw = req?.activeStore;
+  if (activeRaw != null && mongoose.Types.ObjectId.isValid(String(activeRaw))) {
+    return distinctBusy(matchPpmTaskStoreScope(String(activeRaw)));
+  }
+
+  const role = req?.user?.role;
+  if (role !== 'Super Admin') {
+    const assigned = resolveAssignedStoreId(req?.user);
+    if (assigned && mongoose.Types.ObjectId.isValid(assigned)) {
+      return distinctBusy(matchPpmTaskStoreScope(assigned));
+    }
+    return distinctBusy(null);
+  }
+
+  const qs = String(req?.query?.store || '').trim();
+  if (qs && mongoose.Types.ObjectId.isValid(qs)) {
+    const storeTree = await getStoreIds(qs);
+    const storeClause = matchPpmTaskStoreScopeForStores(storeTree);
+    if (!storeClause) return [];
+    return distinctBusy(storeClause);
+  }
+
+  return distinctBusy(null);
+}
+
 /**
  * Main "Assets" inventory (All Assets, stats, search, export) stays separate from the PPM module:
  * - ppm_import_only: rows created from PPM bulk import
  * - ppm_enabled: any asset enrolled in the PPM program
+ * - assets with an open PPM work order (Scheduled / In Progress / Overdue) for the active store
  * PPM UIs use /api/ppm/* (e.g. self-service-assets). Escape hatch for GET /api/assets only:
  * ?include_ppm_program=true / ?include_ppm_import=true
  */
-function applyMainInventoryScope(filter, req) {
+async function applyMainInventoryScope(filter, req) {
   const q = req && req.query ? req.query : {};
   const includePpmImportOnly = String(q.include_ppm_import || '').trim().toLowerCase() === 'true';
   const includePpmProgram = String(q.include_ppm_program || '').trim().toLowerCase() === 'true';
   // Import stubs are both flags; one opt-in shows them in GET /assets again without needing two params.
   if (includePpmImportOnly) return;
   filter.ppm_import_only = { $ne: true };
-  if (!includePpmProgram) filter.ppm_enabled = { $ne: true };
+  if (!includePpmProgram) {
+    filter.ppm_enabled = { $ne: true };
+    const nin = await getBusyPpmAssetIdsExcludedFromMainInventory(req);
+    if (nin.length > 0) {
+      filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), { _id: { $nin: nin } }];
+    }
+  }
 }
 
 async function findProductNameByModelNumber(modelNumber, activeStoreId) {
@@ -1434,7 +1507,7 @@ router.get('/', protect, async (req, res) => {
     } else {
       filter.disposed = false;
     }
-    applyMainInventoryScope(filter, req);
+    await applyMainInventoryScope(filter, req);
     if (q) {
       const qLowerForMode = q.toLowerCase();
       const reservedPrefixActive = qLowerForMode.length > 0 && 'reserved'.startsWith(qLowerForMode);
@@ -2079,7 +2152,7 @@ router.get('/search-serial', protect, async (req, res) => {
       query.store = { $in: storeIds };
     }
 
-    applyMainInventoryScope(query, null);
+    await applyMainInventoryScope(query, req);
 
     // Optimization: If exactly 4 chars, try exact match on serial_last_4 first (extremely fast)
     const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2116,7 +2189,7 @@ router.get('/stats', protect, async (req, res) => {
   try {
     const LOW_STOCK_THRESHOLD = 5;
     const filter = { disposed: false };
-    applyMainInventoryScope(filter, null);
+    await applyMainInventoryScope(filter, req);
     const maintenanceVendor = String(req.query.maintenance_vendor || '').trim();
     let targetStoreId = null;
 
@@ -2584,7 +2657,7 @@ router.get('/search', protect, async (req, res) => {
       qObj.store = { $in: storeIds };
     }
 
-    applyMainInventoryScope(qObj, null);
+    await applyMainInventoryScope(qObj, req);
 
     const assets = await Asset.find(qObj)
       .select('name model_number serial_number uniqueId store status condition location assigned_to reserved updatedAt')
@@ -2611,7 +2684,7 @@ router.get('/my', protect, async (req, res) => {
         { history: { $elemMatch: { user: req.user.name, action: 'Reported Faulty' } } }
       ]
     };
-    applyMainInventoryScope(myFilter, null);
+    await applyMainInventoryScope(myFilter, req);
     const assets = await Asset.find(myFilter)
       .populate('store')
       .populate('assigned_to', 'name')
@@ -4070,7 +4143,7 @@ router.post('/import/revert-last', protect, admin, async (req, res) => {
 router.get('/export', protect, admin, async (req, res) => {
   try {
     const exportFilter = {};
-    applyMainInventoryScope(exportFilter, null);
+    await applyMainInventoryScope(exportFilter, req);
     const assets = await Asset.find(exportFilter).populate('store').populate('assigned_to');
 
     // Export columns aligned with the bulk import Excel headers
@@ -4216,7 +4289,7 @@ router.get('/by-technician', protect, admin, async (req, res) => {
       };
     }
 
-    applyMainInventoryScope(query, null);
+    await applyMainInventoryScope(query, req);
 
     const total = await Asset.countDocuments(query);
     const assets = await Asset.find(query)
@@ -5598,7 +5671,7 @@ router.post('/return-request', protect, restrictViewer, async (req, res) => {
 router.get('/return-pending', protect, admin, async (req, res) => {
   try {
     const rpFilter = { return_pending: true };
-    applyMainInventoryScope(rpFilter, null);
+    await applyMainInventoryScope(rpFilter, req);
     const assets = await Asset.find(rpFilter)
       .populate('store')
       .populate('assigned_to', 'name email');

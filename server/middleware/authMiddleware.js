@@ -134,4 +134,12 @@ const restrictViewer = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, admin, adminOrViewer, superAdmin, restrictViewer };
+module.exports = {
+  protect,
+  admin,
+  adminOrViewer,
+  superAdmin,
+  restrictViewer,
+  resolveAssignedStoreId,
+  parseActiveStoreHeader
+};

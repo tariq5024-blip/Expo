@@ -16,7 +16,7 @@ const {
   getStoreNotificationRecipients,
   getStoreNotificationSubjects
 } = require('../utils/storeEmail');
-const { protect, restrictViewer } = require('../middleware/authMiddleware');
+const { protect, restrictViewer, resolveAssignedStoreId } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -33,6 +33,25 @@ const matchPpmStoreScope = (storeOid) => {
   return { $in: [oid, String(oid)] };
 };
 
+/**
+ * Active store for manager queue / section / reviews (matches GET /manager/pending):
+ * req.activeStore, then populated-safe assignedStore, then x-active-store header.
+ */
+function resolvePpmManagerQueueStoreId(req) {
+  if (req.activeStore && mongoose.Types.ObjectId.isValid(String(req.activeStore))) {
+    return String(req.activeStore);
+  }
+  const fromUser = resolveAssignedStoreId(req.user);
+  if (fromUser && mongoose.Types.ObjectId.isValid(fromUser)) {
+    return fromUser;
+  }
+  const hs = req.headers['x-active-store'] && String(req.headers['x-active-store']).trim();
+  if (hs && hs !== 'undefined' && hs !== 'all' && mongoose.Types.ObjectId.isValid(hs)) {
+    return hs;
+  }
+  return null;
+}
+
 /** Unique .xlsx filename per download (avoids overwriting the same file in Downloads). */
 const ppmExportFilename = () => {
   const d = new Date();
@@ -46,6 +65,39 @@ const completionOutsideCurrentCycle = (completedAt, nowMs = Date.now()) => {
   const t = new Date(completedAt).getTime();
   if (!Number.isFinite(t)) return true;
   return nowMs - t >= PPM_CYCLE_MS;
+};
+
+/** Same buckets as GET /ppm/overview (latest non-cancelled task per asset). */
+const ppmAssetSelfServiceBucket = (latestRow, nowMs = Date.now()) => {
+  if (!latestRow) return 'pending';
+  const st = String(latestRow.status || '');
+  if (st === 'Not Completed') return 'not_completed';
+  if (st === 'Completed') {
+    return completionOutsideCurrentCycle(latestRow.completed_at, nowMs) ? 'pending' : 'completed';
+  }
+  return 'pending';
+};
+
+const aggregateLatestPpmRowByAsset = async (storeScope, assetObjectIds) => {
+  if (!assetObjectIds.length) return new Map();
+  const rows = await PpmTask.aggregate([
+    {
+      $match: {
+        store: storeScope,
+        asset: { $in: assetObjectIds },
+        status: { $ne: 'Cancelled' }
+      }
+    },
+    { $sort: { updatedAt: -1 } },
+    {
+      $group: {
+        _id: '$asset',
+        status: { $first: '$status' },
+        completed_at: { $first: '$completed_at' }
+      }
+    }
+  ]);
+  return new Map(rows.map((x) => [String(x._id), { status: x.status, completed_at: x.completed_at }]));
 };
 
 const VMS_CHECKLIST_KEY = 'vms_online';
@@ -189,6 +241,20 @@ const buildPpmStatusEmailRecipients = async ({ storeId, actorEmail }) => {
   ].filter(Boolean)));
 };
 
+/**
+ * PPM lifecycle emails to portal buckets (flowchart: completion reaches Admin, Technician, Viewer, Manager).
+ */
+const getPpmStakeholderBroadcastEmailsFromConfig = async (storeId) => {
+  if (!storeId || !mongoose.Types.ObjectId.isValid(String(storeId))) return [];
+  const buckets = await loadStoreRecipientBuckets(storeId);
+  return Array.from(new Set([
+    ...(buckets.technician || []),
+    ...(buckets.admin || []),
+    ...(buckets.viewer || []),
+    ...(buckets.manager || [])
+  ].filter(Boolean)));
+};
+
 const notifyPpmStatusChange = async ({
   task,
   req,
@@ -197,11 +263,9 @@ const notifyPpmStatusChange = async ({
   details = ''
 }) => {
   try {
-    if (process.env.DISABLE_LEGACY_PPM_STATUS_EMAILS !== 'false') return;
-    const recipients = await buildPpmStatusEmailRecipients({
-      storeId: task?.store || req.activeStore || req.user?.assignedStore || null,
-      actorEmail: req.user?.email || ''
-    });
+    if (process.env.DISABLE_LEGACY_PPM_STATUS_EMAILS === 'true') return;
+    const storeId = task?.store || req.activeStore || resolveAssignedStoreId(req.user) || null;
+    const recipients = await getPpmStakeholderBroadcastEmailsFromConfig(storeId);
     if (recipients.length === 0) return;
     const assetName = String(
       task?.asset?.model_number ||
@@ -216,7 +280,7 @@ const notifyPpmStatusChange = async ({
     const by = `${String(req.user?.name || 'Unknown')} (${String(req.user?.role || '-')})`;
     const taskId = String(task?._id || '');
     const safeDetails = String(details || '').trim();
-    const subjects = await getStoreNotificationSubjects(task?.store || req.activeStore || null);
+    const subjects = await getStoreNotificationSubjects(storeId);
     const ppmPrefix = subjects.ppm || 'Expo City Dubai PPM Notification';
 
     const subject = `${ppmPrefix}: ${status} - ${uid} (${assetName})`;
@@ -236,7 +300,7 @@ const notifyPpmStatusChange = async ({
     const html = `<div>${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div>`;
 
     await sendStoreEmail({
-      storeId: task?.store || req.activeStore || null,
+      storeId,
       to: recipients.join(','),
       subject,
       text,
@@ -255,6 +319,8 @@ const loadTaskForStatusNotification = async (taskId) => PpmTask.findById(taskId)
 
 const isManagerLikeRole = (role) => String(role || '').toLowerCase().includes('manager');
 const isAdminRole = (role) => role === 'Admin' || isManagerLikeRole(role) || role === 'Super Admin';
+/** Flowchart: only Admin submits work to the manager queue (not store Manager role). */
+const canSubmitPpmToManagerQueue = (role) => role === 'Admin' || role === 'Super Admin';
 const canUsePpmRole = (role) => role === 'Technician' || isAdminRole(role);
 const canAccessPpmAssetList = (role) => canUsePpmRole(role) || role === 'Viewer';
 
@@ -291,6 +357,20 @@ const ensureTaskAccess = (task, req) => {
   return false;
 };
 
+/** Admin has not yet put this open PPM in the manager queue → hide from Manager dashboards (Admin still sees all). */
+const excludeProgramAssetsUnsubmittedManagerQueue = async (storeScope, programAssetIds) => {
+  if (!programAssetIds.length) return [];
+  const blocked = await PpmTask.distinct('asset', {
+    store: storeScope,
+    asset: { $in: programAssetIds },
+    status: { $in: ['Scheduled', 'In Progress', 'Overdue'] },
+    'manager_review.status': 'Pending',
+    manager_notification_pending: { $ne: true }
+  });
+  const blockedSet = new Set(blocked.map((id) => String(id)));
+  return programAssetIds.filter((id) => !blockedSet.has(String(id)));
+};
+
 /**
  * Same asset set as GET /ppm/overview "in program": ppm_enabled ∪ in-store asset with a non-cancelled PPM task.
  * Work Orders (self-service) must use this for empty search so KPIs match the table.
@@ -298,6 +378,8 @@ const ensureTaskAccess = (task, req) => {
  * @param storeOid Store ObjectId
  * @param [options] For Technician/Viewer, assets with an open PPM task still in
  *   manager review (Pending / Rejected / Modified) are excluded so techs only see manager-approved work.
+ *   For Manager (not Admin/Super Admin), assets whose open PPM is still Pending but not yet submitted to
+ *   the manager queue (admin has not clicked Send notification) are excluded so draft imports stay admin-only.
  */
 const loadProgramScopedAssetObjectIds = async (storeOid, options = {}) => {
   const viewerRole = String(options.viewerRole || '');
@@ -330,6 +412,12 @@ const loadProgramScopedAssetObjectIds = async (storeOid, options = {}) => {
   let ids = [...programIdSet].map((id) => new mongoose.Types.ObjectId(id));
   if (viewerRole === 'Technician' || viewerRole === 'Viewer') {
     ids = await excludeProgramAssetsPendingManagerReview(storeScope, ids);
+  } else if (
+    isManagerLikeRole(viewerRole)
+    && viewerRole !== 'Admin'
+    && viewerRole !== 'Super Admin'
+  ) {
+    ids = await excludeProgramAssetsUnsubmittedManagerQueue(storeScope, ids);
   }
   return ids;
 };
@@ -340,7 +428,7 @@ const excludeProgramAssetsPendingManagerReview = async (storeScope, programAsset
   const blocked = await PpmTask.distinct('asset', {
     store: storeScope,
     asset: { $in: programAssetIds },
-    status: { $in: ['Scheduled', 'In Progress'] },
+    status: { $in: ['Scheduled', 'In Progress', 'Overdue'] },
     'manager_review.status': { $in: ['Pending', 'Rejected', 'Modified'] }
   });
   const blockedSet = new Set(blocked.map((id) => String(id)));
@@ -356,7 +444,7 @@ const technicianBlockedByManagerReview = (task) => {
 /**
  * Latest PPM task per asset that carries manager_notes or manager_review.comment.
  * Used so the work-order table still shows manager feedback after a task is Cancelled
- * (open_task query only returns Scheduled / In Progress).
+ * (open_task query uses Scheduled / In Progress / Overdue).
  */
 const latestManagerCommentByAsset = async (storeScope, assetObjectIds) => {
   if (!assetObjectIds.length) return new Map();
@@ -501,6 +589,80 @@ const resolveAssetIdsFromPpmTempRows = async (storeOid, tempRows) => {
 };
 
 /**
+ * Manager workflow card: ticket + schedule mirror admin PPM (asset ticket_number preferred over WO),
+ * plus earliest scheduled_for / latest due_at and “days until due” from linked open tasks.
+ */
+async function hydrateWorkflowManagerCardFields(workflowLean, storeOid, tempAssets) {
+  const w = workflowLean && typeof workflowLean === 'object' ? { ...workflowLean } : {};
+  try {
+    const linkedIds = await resolveAssetIdsFromPpmTempRows(storeOid, tempAssets || []);
+    if (!linkedIds.length) return w;
+    const storeScope = matchPpmStoreScope(storeOid);
+    const [assetDocs, openTasks] = await Promise.all([
+      Asset.find({ _id: { $in: linkedIds }, disposed: { $ne: true } }).select('ticket_number').lean(),
+      PpmTask.find({
+        store: storeScope,
+        asset: { $in: linkedIds },
+        status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
+      })
+        .select('asset work_order_ticket scheduled_for due_at createdAt')
+        .sort({ createdAt: -1 })
+        .lean()
+    ]);
+    const assetById = new Map(assetDocs.map((a) => [String(a._id), a]));
+    const taskByAsset = new Map();
+    for (const t of openTasks) {
+      const k = String(t.asset);
+      if (!taskByAsset.has(k)) taskByAsset.set(k, t);
+    }
+
+    const ticketSet = new Set();
+    for (const row of tempAssets || []) {
+      const rt = String(row.ticket || '').trim();
+      if (rt) ticketSet.add(rt);
+    }
+    for (const oid of linkedIds) {
+      const aid = String(oid);
+      const ast = assetById.get(aid);
+      const tsk = taskByAsset.get(aid);
+      const assetTk = String(ast?.ticket_number || '').trim();
+      const wot = String(tsk?.work_order_ticket || '').trim();
+      const eff = assetTk || wot;
+      if (eff) ticketSet.add(eff);
+    }
+
+    if (!String(w.batch_ticket || '').trim()) {
+      const arr = [...ticketSet];
+      if (arr.length === 1) w.batch_ticket = arr[0];
+      else if (arr.length > 1) w.batch_ticket = arr.join(', ');
+    }
+
+    const schedMs = openTasks
+      .map((t) => new Date(t.scheduled_for).getTime())
+      .filter((x) => Number.isFinite(x));
+    const dueMs = openTasks
+      .map((t) => new Date(t.due_at).getTime())
+      .filter((x) => Number.isFinite(x));
+    if (schedMs.length) {
+      w.ppm_linked_scheduled_for = new Date(Math.min(...schedMs));
+    }
+    if (dueMs.length) {
+      const maxDue = Math.max(...dueMs);
+      w.ppm_linked_due_at = new Date(maxDue);
+      const days = Math.ceil((maxDue - Date.now()) / 86400000);
+      w.ppm_linked_days_label = days < 0 ? 'Overdue' : `${days} Day${days === 1 ? '' : 's'}`;
+      if (schedMs.length) {
+        const minSched = Math.min(...schedMs);
+        w.ppm_linked_cycle_days = Math.round((maxDue - minSched) / 86400000);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return w;
+}
+
+/**
  * Manager actions on PpmWorkflowTask set manager_comment on the workflow and try to copy to PpmTask.
  * If temp-row → asset resolution failed at that moment, tasks never get manager_review.comment.
  * This map surfaces the workflow comment for program assets so the work-order table still shows it.
@@ -544,12 +706,46 @@ const latestWorkflowManagerCommentByAsset = async (storeScope, programAssetIdSet
   return out;
 };
 
-/** Assets already tied to a Pending/Modified isolated workflow (avoid duplicate bell rows). */
+/** Assets tied to a Pending/Modified workflow that was already submitted to the manager (dedupe vs per-asset queue). */
 const assetIdsCoveredByPendingWorkflowQueues = async (storeOid) => {
   const storeScope = matchPpmStoreScope(storeOid);
   const wfs = await PpmWorkflowTask.find({
     store: storeScope,
-    status: { $in: ['Pending', 'Modified'] }
+    status: { $in: ['Pending', 'Modified'] },
+    sent_to_manager_at: { $ne: null }
+  })
+    .select('_id')
+    .lean();
+  if (!wfs.length) return new Set();
+  const wfIds = wfs.map((w) => w._id);
+  const allTemps = await PpmAssetTemp.find({ ppm_task_id: { $in: wfIds } }).lean();
+  const tempsByWf = new Map();
+  for (const row of allTemps) {
+    const k = String(row.ppm_task_id);
+    if (!tempsByWf.has(k)) tempsByWf.set(k, []);
+    tempsByWf.get(k).push(row);
+  }
+  const assets = await Asset.find({ store: storeScope, disposed: { $ne: true } })
+    .select('_id uniqueId abs_code serial_number mac_address qr_code rfid')
+    .lean();
+  const { matchRow } = buildPpmTempRowMatcher(assets);
+  const out = new Set();
+  for (const w of wfs) {
+    const temps = tempsByWf.get(String(w._id)) || [];
+    for (const sid of assetIdStringsFromTempRows(temps, matchRow)) {
+      out.add(sid);
+    }
+  }
+  return out;
+};
+
+/** Import workflow batches not yet submitted — per-asset PPM rows must be notified via POST /ppm/notify-manager, not bulk task email. */
+const assetIdsLinkedToUnsentWorkflowBatches = async (storeOid) => {
+  const storeScope = matchPpmStoreScope(storeOid);
+  const wfs = await PpmWorkflowTask.find({
+    store: storeScope,
+    status: { $in: ['Pending', 'Modified'] },
+    $or: [{ sent_to_manager_at: null }, { sent_to_manager_at: { $exists: false } }]
   })
     .select('_id')
     .lean();
@@ -598,7 +794,7 @@ const fetchOpenPpmTasksForManagerBell = async (storeOid, coveredAssetIds, limit,
   };
   const q = {
     store: storeScope,
-    status: { $in: ['Scheduled', 'In Progress', 'Not Completed'] },
+    status: { $in: ['Scheduled', 'In Progress', 'Overdue', 'Not Completed'] },
     $and: [needsAttention]
   };
   if (sinceDate) {
@@ -740,7 +936,26 @@ router.get('/overview', protect, allowPpmRead, async (req, res) => {
 // @route   GET /api/ppm/export
 router.get('/export', protect, allowPpmRead, async (req, res) => {
   try {
-    const filter = applyStoreScope(req, {});
+    let filter = applyStoreScope(req, {});
+    if (
+      isManagerLikeRole(req.user?.role)
+      && req.user?.role !== 'Admin'
+      && req.user?.role !== 'Super Admin'
+    ) {
+      filter = {
+        ...filter,
+        $and: [
+          ...(Array.isArray(filter.$and) ? filter.$and : []),
+          {
+            $nor: [{
+              status: { $in: ['Scheduled', 'In Progress', 'Overdue'] },
+              'manager_review.status': 'Pending',
+              manager_notification_pending: { $ne: true }
+            }]
+          }
+        ]
+      };
+    }
     const rows = await PpmTask.find(filter)
       .populate('assigned_to', 'name email')
       .populate('completed_by', 'name email')
@@ -951,6 +1166,11 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
     }
     const storeOid = new mongoose.Types.ObjectId(req.activeStore);
     const storeScope = matchPpmStoreScope(storeOid);
+    const bucketRaw = String(req.query.ppm_bucket || 'all').trim().toLowerCase().replace(/\s+/g, '_');
+    const ppmBucket =
+      bucketRaw === 'completed' || bucketRaw === 'not_completed' || bucketRaw === 'pending'
+        ? bucketRaw
+        : 'all';
     const keyword = String(req.query.q || '').trim();
     const keywordLower = keyword.toLowerCase();
     const cameraOnly = String(req.query.camera_only || 'false').toLowerCase() === 'true';
@@ -979,6 +1199,15 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
           (await loadProgramScopedAssetObjectIds(storeOid, { viewerRole: req.user.role })).map(String)
         );
         assets = assets.filter((a) => allowed.has(String(a._id)));
+      } else if (
+        isManagerLikeRole(req.user?.role)
+        && req.user?.role !== 'Admin'
+        && req.user?.role !== 'Super Admin'
+      ) {
+        const allowed = new Set(
+          (await loadProgramScopedAssetObjectIds(storeOid, { viewerRole: req.user.role })).map(String)
+        );
+        assets = assets.filter((a) => allowed.has(String(a._id)));
       }
     } else if (cameraOnly) {
       assets = await Asset.find({ store: storeScope, disposed: { $ne: true } })
@@ -991,6 +1220,15 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
         /camera/i.test(String(a.product_name || a.name || a.model_number || ''))
       );
       if (req.user?.role === 'Technician' || req.user?.role === 'Viewer') {
+        const allowed = new Set(
+          (await loadProgramScopedAssetObjectIds(storeOid, { viewerRole: req.user.role })).map(String)
+        );
+        assets = assets.filter((a) => allowed.has(String(a._id)));
+      } else if (
+        isManagerLikeRole(req.user?.role)
+        && req.user?.role !== 'Admin'
+        && req.user?.role !== 'Super Admin'
+      ) {
         const allowed = new Set(
           (await loadProgramScopedAssetObjectIds(storeOid, { viewerRole: req.user.role })).map(String)
         );
@@ -1016,10 +1254,24 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
         }
         return res.json([]);
       }
+      let scopedProgramIds = programIds;
+      if (ppmBucket !== 'all') {
+        const latestByAsset = await aggregateLatestPpmRowByAsset(storeScope, programIds);
+        const nowMs = Date.now();
+        scopedProgramIds = programIds.filter(
+          (id) => ppmAssetSelfServiceBucket(latestByAsset.get(String(id)), nowMs) === ppmBucket
+        );
+      }
+      if (scopedProgramIds.length === 0) {
+        if (hasPage) {
+          return res.json({ items: [], total: 0, page: 1, pages: 1, limit: pageSize || 50 });
+        }
+        return res.json([]);
+      }
       const baseFilter = {
         store: storeScope,
         disposed: { $ne: true },
-        _id: { $in: programIds }
+        _id: { $in: scopedProgramIds }
       };
       if (hasPage) {
         const total = await Asset.countDocuments(baseFilter);
@@ -1057,7 +1309,7 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
       PpmTask.find({
         asset: { $in: assetIds },
         store: storeScope,
-        status: { $in: ['Scheduled', 'In Progress'] }
+        status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
       })
         .sort({ createdAt: -1 })
         .lean(),
@@ -1083,7 +1335,7 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
     }
     const lastMap = new Map(lastCompleted.map((x) => [String(x._id), x.completed_at]));
 
-    const rows = assets.map((a) => {
+    let rows = assets.map((a) => {
       const cf = a.customFields && typeof a.customFields === 'object' ? a.customFields : {};
       const open = openByAsset.get(String(a._id)) || null;
       const fb = managerCommentByAsset.get(String(a._id)) || null;
@@ -1133,6 +1385,15 @@ router.get('/self-service-assets', protect, allowPpmRead, async (req, res) => {
         }
       };
     });
+
+    if (ppmBucket !== 'all' && rows.length > 0) {
+      const rowAssetIds = rows.map((r) => r.asset?._id).filter(Boolean);
+      const latestByAsset = await aggregateLatestPpmRowByAsset(storeScope, rowAssetIds);
+      const nowMs = Date.now();
+      rows = rows.filter(
+        (r) => ppmAssetSelfServiceBucket(latestByAsset.get(String(r.asset?._id)), nowMs) === ppmBucket
+      );
+    }
 
     if (pageMeta) {
       return res.json({
@@ -1214,7 +1475,14 @@ router.get('/', protect, allowPpmRead, async (req, res) => {
       page: pageRaw
     } = req.query || {};
     const filter = applyStoreScope(req);
-    if (status) filter.status = status;
+    const statusNorm = String(status || '').trim();
+    if (statusNorm) {
+      if (/^pending$/i.test(statusNorm)) {
+        filter.status = { $in: ['Scheduled', 'In Progress', 'Overdue'] };
+      } else {
+        filter.status = statusNorm;
+      }
+    }
     if (assigned_to && mongoose.Types.ObjectId.isValid(assigned_to)) {
       filter.assigned_to = new mongoose.Types.ObjectId(assigned_to);
     }
@@ -1227,8 +1495,23 @@ router.get('/', protect, allowPpmRead, async (req, res) => {
     if (req.user?.role === 'Technician' || req.user?.role === 'Viewer') {
       filter.$nor = [
         {
-          status: { $in: ['Scheduled', 'In Progress'] },
+          status: { $in: ['Scheduled', 'In Progress', 'Overdue'] },
           'manager_review.status': { $in: ['Pending', 'Rejected', 'Modified'] }
+        }
+      ];
+    } else if (
+      isManagerLikeRole(req.user?.role)
+      && req.user?.role !== 'Admin'
+      && req.user?.role !== 'Super Admin'
+    ) {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        {
+          $nor: [{
+            status: { $in: ['Scheduled', 'In Progress', 'Overdue'] },
+            'manager_review.status': 'Pending',
+            manager_notification_pending: { $ne: true }
+          }]
         }
       ];
     }
@@ -1362,9 +1645,15 @@ router.post('/', protect, restrictViewer, async (req, res) => {
         reviewed_at: null,
         reviewed_by: null
       },
-      manager_notification_pending: true,
+      /** Admin submits to manager manually via POST /ppm/notify-bulk-program with task_ids. */
+      manager_notification_pending: false,
       manager_notification_sent_at: null
     });
+
+    await Asset.updateOne(
+      { _id: asset._id, disposed: { $ne: true } },
+      { $set: { ticket_number: workOrderTicket } }
+    );
 
     await ActivityLog.create({
       user: req.user?.name || 'Unknown',
@@ -1389,49 +1678,6 @@ router.post('/', protect, restrictViewer, async (req, res) => {
       }).catch((err) => {
         console.error('PPM status notification failed:', err?.message || err);
       });
-      const storeForManagers = asset.store || req.activeStore;
-      const managerRecipients = await getPpmManagerRecipientEmails(storeForManagers);
-      if (managerRecipients.length > 0) {
-        try {
-          const subjects = await getStoreNotificationSubjects(storeForManagers);
-          const ppmPrefix = subjects.ppm || 'Expo City Dubai PPM Notification';
-          const a = out.asset || {};
-          const uid = String(a.uniqueId || '—');
-          const abs = String(a.abs_code || '—');
-          const title = String(a.name || a.model_number || a.product_name || 'Asset');
-          const createdByLine = `${String(req.user?.name || 'Admin')} (${String(req.user?.role || '')})`;
-          const { subject, text, html } = buildPpmManagerCreatedEmail({
-            ppmPrefix,
-            introHtml: '<p>A new PPM work order was created by an Admin and needs <strong>Manager review</strong> (pending approval).</p>',
-            introText: 'A new PPM work order was created by an Admin and needs Manager review (pending approval).',
-            workOrderTicket,
-            createdByLine,
-            managerNotes: manager_notes,
-            assetRows: [{
-              textLine: `UID:${uid} | ABS:${abs} | ${title} | Task:${String(task._id)}`,
-              uid,
-              abs,
-              title,
-              taskId: String(task._id)
-            }]
-          });
-          await sendStoreEmail({
-            storeId: storeForManagers,
-            to: managerRecipients.join(','),
-            subject,
-            text,
-            html,
-            context: 'ppm-work-order-notify-manager'
-          });
-        } catch (emailErr) {
-          console.error('PPM create: manager notify email failed (task was created):', emailErr?.message || emailErr);
-        }
-      } else {
-        console.warn(
-          'PPM create: no manager recipient emails for store; configure Manager notification emails in Super Admin Portal (emailConfig.managerRecipients).',
-          String(storeForManagers)
-        );
-      }
     }
     return res.status(201).json(out);
   } catch (error) {
@@ -1480,7 +1726,7 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
         : null;
     const openFilter = {
       asset: { $in: assetOids },
-      status: { $in: ['Scheduled', 'In Progress'] }
+      status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
     };
     if (storeScopeOid) openFilter.store = matchPpmStoreScope(storeScopeOid);
     const openTasks = await PpmTask.find(openFilter)
@@ -1494,6 +1740,8 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
     const newCreatedIds = [];
     const reusedTaskIds = [];
     const updatedExistingIds = [];
+    /** Assets whose PPM ticket should match the admin-entered WO (table + manager). */
+    const ticketSyncAssetIds = new Set();
     const historyEntry = {
       action: 'PPM Created',
       user: req.user?.name || '',
@@ -1521,6 +1769,7 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
           // Idempotent retry: same asset + same open ticket => reuse existing task.
           createdIds.push(existing._id);
           reusedTaskIds.push(existing._id);
+          ticketSyncAssetIds.add(String(asset_id));
           continue;
         }
         if (existing && String(existing.status || '') === 'Scheduled') {
@@ -1537,12 +1786,13 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
                   manager_notes: String(manager_notes || ''),
                   work_order_ticket: workOrderTicket,
                   assigned_to: assignedOid,
-                  manager_notification_pending: true
+                  manager_notification_pending: false
                 }
               }
             );
             createdIds.push(existing._id);
             updatedExistingIds.push(existing._id);
+            ticketSyncAssetIds.add(String(asset_id));
             openTaskByAsset.set(String(asset_id), {
               ...existing,
               work_order_ticket: workOrderTicket
@@ -1584,11 +1834,12 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
             reviewed_at: null,
             reviewed_by: null
           },
-          manager_notification_pending: true,
+          manager_notification_pending: false,
           manager_notification_sent_at: null
         });
         createdIds.push(task._id);
         newCreatedIds.push(task._id);
+        ticketSyncAssetIds.add(String(asset_id));
         hasOpen.add(String(asset_id));
         openTaskByAsset.set(String(asset_id), {
           _id: task._id,
@@ -1598,6 +1849,19 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
         });
       } catch (e) {
         failed.push({ asset_id, message: e?.message || 'Create failed' });
+      }
+    }
+
+    if (ticketSyncAssetIds.size > 0) {
+      const syncOids = [...ticketSyncAssetIds]
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+      if (syncOids.length > 0) {
+        const assetTicketFilter = { _id: { $in: syncOids }, disposed: { $ne: true } };
+        if (storeScopeOid) {
+          assetTicketFilter.store = matchPpmStoreScope(storeScopeOid);
+        }
+        await Asset.updateMany(assetTicketFilter, { $set: { ticket_number: workOrderTicket } });
       }
     }
 
@@ -1638,55 +1902,6 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
       });
     }
 
-    if (newlyCreatedRows.length > 0) {
-      const storeForManagers = newlyCreatedRows[0]?.store || newlyCreatedRows[0]?.asset?.store || req.activeStore;
-      const managerRecipients = await getPpmManagerRecipientEmails(storeForManagers);
-      if (managerRecipients.length > 0) {
-        try {
-          const subjects = await getStoreNotificationSubjects(storeForManagers);
-          const ppmPrefix = subjects.ppm || 'Expo City Dubai PPM Notification';
-          const createdByLine = `${String(req.user?.name || 'Admin')} (${String(req.user?.role || '')})`;
-          const assetRows = newlyCreatedRows.map((row) => {
-            const a = row.asset || {};
-            const uid = String(a.uniqueId || '—');
-            const abs = String(a.abs_code || '—');
-            const title = String(a.name || a.model_number || a.product_name || 'Asset');
-            return {
-              textLine: `UID:${uid} | ABS:${abs} | ${title} | Task:${String(row._id)}`,
-              uid,
-              abs,
-              title,
-              taskId: String(row._id)
-            };
-          });
-          const { subject, text, html } = buildPpmManagerCreatedEmail({
-            ppmPrefix,
-            introHtml: `<p>An Admin created <strong>${assetRows.length}</strong> PPM work order(s) that need <strong>Manager review</strong> (pending approval).</p>`,
-            introText: `An Admin created ${assetRows.length} PPM work order(s) that need Manager review (pending approval).`,
-            workOrderTicket: workOrderTicket,
-            createdByLine,
-            managerNotes: manager_notes,
-            assetRows
-          });
-          await sendStoreEmail({
-            storeId: storeForManagers,
-            to: managerRecipients.join(','),
-            subject,
-            text,
-            html,
-            context: 'ppm-work-order-notify-manager-batch'
-          });
-        } catch (emailErr) {
-          console.error('PPM batch: manager notify email failed (tasks were created):', emailErr?.message || emailErr);
-        }
-      } else {
-        console.warn(
-          'PPM batch: no manager recipient emails for store; configure Manager notification emails in Super Admin Portal (emailConfig.managerRecipients).',
-          String(storeForManagers)
-        );
-      }
-    }
-
     return res.status(newCreatedIds.length > 0 ? 201 : 200).json({
       created: populated,
       failed,
@@ -1701,11 +1916,12 @@ router.post('/batch', protect, restrictViewer, async (req, res) => {
 });
 
 // @route   POST /api/ppm/reset-program
-// @desc    Remove all PPM tasks for the active store and clear ppm_enabled on assets (admin password required)
+// @desc    Remove all PPM data for the active store: work-order tasks, import workflows, temp import rows,
+//          isolated history logs, and clear ppm_enabled / ppm_import_only on assets (Admin or Super Admin + password)
 router.post('/reset-program', protect, restrictViewer, async (req, res) => {
   try {
-    if (!isAdminRole(req.user?.role)) {
-      return res.status(403).json({ message: 'Only Admin can reset the PPM program' });
+    if (req.user?.role !== 'Admin' && req.user?.role !== 'Super Admin') {
+      return res.status(403).json({ message: 'Only Admin or Super Admin can reset the PPM program' });
     }
     if (!req.activeStore || !mongoose.Types.ObjectId.isValid(req.activeStore)) {
       return res.status(400).json({ message: 'Active store is required' });
@@ -1725,23 +1941,34 @@ router.post('/reset-program', protect, restrictViewer, async (req, res) => {
 
     const storeOid = new mongoose.Types.ObjectId(req.activeStore);
     const storeScope = matchPpmStoreScope(storeOid);
-    const del = await PpmTask.deleteMany({ store: storeScope });
-    const assetUpd = await Asset.updateMany(
-      { store: storeScope, disposed: { $ne: true } },
-      { $set: { ppm_enabled: false } }
-    );
+    const [del, wfDel, tempDel, histDel, assetUpd] = await Promise.all([
+      PpmTask.deleteMany({ store: storeScope }),
+      PpmWorkflowTask.deleteMany({ store: storeScope }),
+      PpmAssetTemp.deleteMany({ store: storeScope }),
+      PpmHistoryLog.deleteMany({ store: storeScope }),
+      Asset.updateMany(
+        { store: storeScope, disposed: { $ne: true } },
+        { $set: { ppm_enabled: false, ppm_import_only: false } }
+      )
+    ]);
 
     await ActivityLog.create({
       user: req.user?.name || 'Unknown',
       email: activityLogUserEmail(req),
       role: activityLogUserRole(req),
       action: 'PPM Program Reset',
-      details: `Removed ${del.deletedCount} PPM task(s); cleared PPM inclusion on ${assetUpd.modifiedCount} asset(s) in active store`,
+      details:
+        `Removed ${del.deletedCount} PPM work-order task(s), ${wfDel.deletedCount} workflow batch(es), ` +
+        `${tempDel.deletedCount} import temp row(s), ${histDel.deletedCount} PPM history log(s); ` +
+        `cleared PPM flags on ${assetUpd.modifiedCount} asset(s) in active store`,
       store: req.activeStore
     });
 
     return res.json({
       deletedTasks: del.deletedCount,
+      deletedWorkflows: wfDel.deletedCount,
+      deletedTempAssets: tempDel.deletedCount,
+      deletedHistoryLogs: histDel.deletedCount,
       assetsPpmCleared: assetUpd.modifiedCount
     });
   } catch (error) {
@@ -1750,16 +1977,75 @@ router.post('/reset-program', protect, restrictViewer, async (req, res) => {
 });
 
 // @route   POST /api/ppm/notify-bulk-program
-// @desc    Email Managers assigned to the active store that the PPM program was updated
+// @desc    Submit explicit PpmTask ids to the manager queue (email + in-app); assets in an unsent import workflow must use POST /ppm/notify-manager instead
 router.post('/notify-bulk-program', protect, restrictViewer, async (req, res) => {
   try {
-    if (!isAdminRole(req.user?.role)) {
-      return res.status(403).json({ message: 'Only Admin can send manager notifications' });
+    if (!canSubmitPpmToManagerQueue(req.user?.role)) {
+      return res.status(403).json({ message: 'Only Admin or Super Admin can send manager notifications' });
     }
     if (!req.activeStore || !mongoose.Types.ObjectId.isValid(req.activeStore)) {
       return res.status(400).json({ message: 'Active store is required' });
     }
     const storeId = req.activeStore;
+    const storeOid = new mongoose.Types.ObjectId(storeId);
+    const storeScope = matchPpmStoreScope(storeOid);
+    const rawIds = Array.isArray(req.body?.task_ids) ? req.body.task_ids : [];
+    const requested = [...new Set(rawIds.map((id) => String(id || '').trim()).filter((id) => mongoose.Types.ObjectId.isValid(id)))];
+    if (requested.length === 0) {
+      return res.status(400).json({
+        message:
+          'task_ids is required (non-empty array of PPM task ids). Select assets whose new tasks are not yet sent, or use Send notification after a bulk import to submit the import workflow.'
+      });
+    }
+    const requestedOids = requested.map((id) => new mongoose.Types.ObjectId(id));
+    const unsentImportAssets = await assetIdsLinkedToUnsentWorkflowBatches(storeOid);
+    const candidates = await PpmTask.find({
+      _id: { $in: requestedOids },
+      store: storeScope,
+      manager_notification_pending: { $ne: true },
+      'manager_review.status': { $in: ['Pending', 'Modified'] },
+      status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
+    })
+      .populate('asset', 'uniqueId abs_code name model_number serial_number ticket_number')
+      .lean();
+    const skippedWrongState = requested.length - candidates.length;
+    const blockedByImport = [];
+    const toStage = [];
+    for (const t of candidates) {
+      const aid = String(t.asset?._id || t.asset || '');
+      if (aid && unsentImportAssets.has(aid)) {
+        blockedByImport.push(String(t._id));
+        continue;
+      }
+      toStage.push(t);
+    }
+    if (toStage.length === 0) {
+      const hint =
+        blockedByImport.length > 0
+          ? ' These assets belong to a bulk import batch: click Send notification to managers (after import) so the import workflow is submitted, not individual PPM rows.'
+          : '';
+      return res.status(400).json({
+        message:
+          `No eligible PPM tasks to submit (must be Scheduled/In Progress/Overdue, manager review Pending or Modified after you revised the task, not already in manager queue, in this store).${hint}`,
+        skipped_wrong_state: skippedWrongState,
+        blocked_import_workflow: blockedByImport.length
+      });
+    }
+    const stageIds = toStage.map((t) => t._id);
+    const sentAt = new Date();
+    await PpmTask.updateMany(
+      { _id: { $in: stageIds } },
+      {
+        $set: {
+          manager_notification_pending: true,
+          manager_notification_sent_at: sentAt,
+          'manager_review.status': 'Pending',
+          'manager_review.reviewed_at': null,
+          'manager_review.reviewed_by': null
+        }
+      }
+    );
+
     const storeDoc = await Store.findById(storeId).select('name emailConfig.managerRecipients emailConfig.ppmNotificationSubject').lean();
     const configuredManagers = Array.isArray(storeDoc?.emailConfig?.managerRecipients)
       ? storeDoc.emailConfig.managerRecipients
@@ -1767,48 +2053,33 @@ router.post('/notify-bulk-program', protect, restrictViewer, async (req, res) =>
     const recipients = Array.from(new Set(
       configuredManagers.map((v) => String(v || '').trim().toLowerCase()).filter(Boolean)
     ));
-    // Consolidated daily summary: all tasks created today in active store.
-    const dayStart = new Date();
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setDate(dayEnd.getDate() + 1);
-    const todaysTasks = await PpmTask.find({
-      store: new mongoose.Types.ObjectId(storeId),
-      createdAt: { $gte: dayStart, $lt: dayEnd }
-    })
-      .populate('asset', 'uniqueId abs_code name model_number serial_number ticket_number')
-      .sort({ createdAt: 1 })
-      .lean();
-    if (todaysTasks.length === 0) {
-      return res.status(400).json({ message: 'No PPM tasks created today for this store.' });
-    }
-    const taskIds = todaysTasks.map((t) => t?._id).filter(Boolean);
-    if (taskIds.length > 0) {
-      await PpmTask.updateMany(
-        { _id: { $in: taskIds } },
-        { $set: { manager_notification_pending: true, manager_notification_sent_at: new Date() } }
-      );
-    }
-
     const ppmPrefix = String(storeDoc?.emailConfig?.ppmNotificationSubject || 'Expo City Dubai PPM Notification').trim() || 'Expo City Dubai PPM Notification';
-    const subject = `${ppmPrefix}: Daily PPM tasks summary (${dayStart.toLocaleDateString()})`;
-    const by = `${String(req.user?.name || 'Unknown')} (${String(req.user?.role || '-')})`;
-    const lines = [
-      `Store: ${String(storeDoc?.name || 'Store')}`,
-      `Daily summary date: ${dayStart.toLocaleDateString()}`,
-      `Total PPM tasks created today: ${todaysTasks.length}`,
-      '',
-      'Assets added to PPM today:',
-      ...todaysTasks.map((t, idx) => {
-        const a = t.asset || {};
-        return `${idx + 1}. UID:${a.uniqueId || '—'} | ABS:${a.abs_code || '—'} | Name:${a.name || a.model_number || '—'} | SN:${a.serial_number || '—'} | Ticket:${t.work_order_ticket || a.ticket_number || '—'}`;
-      }),
-      '',
-      `Notification sent by: ${by}`,
-      'This message was sent only to emails configured in "Manager notification emails".'
-    ];
-    const text = lines.join('\n');
-    const html = `<div>${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div>`;
+    const createdByLine = `${String(req.user?.name || 'Admin')} (${String(req.user?.role || '')})`;
+    const tickets = [...new Set(toStage.map((t) => String(t.work_order_ticket || '').trim()).filter(Boolean))];
+    const workOrderTicket =
+      tickets.length === 0 ? '—' : tickets.length === 1 ? tickets[0] : `Multiple (${tickets.length} distinct tickets — see table)`;
+    const assetRows = toStage.map((t) => {
+      const a = t.asset || {};
+      const uid = String(a.uniqueId || '—');
+      const abs = String(a.abs_code || '—');
+      const title = String(a.name || a.model_number || 'Asset');
+      return {
+        textLine: `UID:${uid} | ABS:${abs} | ${title} | Task:${String(t._id)} | Ticket:${String(t.work_order_ticket || a.ticket_number || '—')}`,
+        uid,
+        abs,
+        title,
+        taskId: String(t._id)
+      };
+    });
+    const { subject, text, html } = buildPpmManagerCreatedEmail({
+      ppmPrefix,
+      introHtml: `<p>An Admin submitted <strong>${assetRows.length}</strong> PPM work order(s) for <strong>Manager review</strong> (pending approval).</p>`,
+      introText: `An Admin submitted ${assetRows.length} PPM work order(s) for Manager review (pending approval).`,
+      workOrderTicket,
+      createdByLine,
+      managerNotes: '',
+      assetRows
+    });
     let emailSent = false;
     if (recipients.length > 0) {
       await sendStoreEmail({
@@ -1826,14 +2097,17 @@ router.post('/notify-bulk-program', protect, restrictViewer, async (req, res) =>
       email: activityLogUserEmail(req),
       role: activityLogUserRole(req),
       action: 'PPM manager notification sent',
-      details: `Manager queue tasks: ${todaysTasks.length}; manager recipient emails: ${recipients.length}; emailSent=${emailSent}`,
+      details: `Submitted tasks: ${toStage.length}; skipped_wrong_state: ${skippedWrongState}; blocked_import_workflow: ${blockedByImport.length}; manager recipient emails: ${recipients.length}; emailSent=${emailSent}`,
       store: req.activeStore || null
     });
     return res.json({
       ok: true,
       recipientCount: recipients.length,
       recipientEmails: recipients,
-      taskCount: todaysTasks.length,
+      taskCount: toStage.length,
+      skipped_wrong_state: skippedWrongState,
+      blocked_import_workflow: blockedByImport.length,
+      blocked_import_task_ids: blockedByImport,
       emailSent
     });
   } catch (error) {
@@ -1848,22 +2122,13 @@ router.get('/manager/pending', protect, restrictViewer, async (req, res) => {
     if (!isManagerLikeRole(req.user?.role) && req.user?.role !== 'Admin' && req.user?.role !== 'Super Admin') {
       return res.status(403).json({ message: 'Only Manager/Admin can view manager PPM queue' });
     }
-    let effectiveStore =
-      (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
-        ? req.activeStore
-        : ((req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)))
-          ? String(req.user.assignedStore)
-          : null);
-    if (!effectiveStore) {
-      const hs = req.headers['x-active-store'] && String(req.headers['x-active-store']).trim();
-      if (hs && hs !== 'undefined' && hs !== 'all' && mongoose.Types.ObjectId.isValid(hs)) {
-        effectiveStore = hs;
-      }
-    }
+    const effectiveStore = resolvePpmManagerQueueStoreId(req);
     if (!effectiveStore) {
       return res.status(400).json({ message: 'Active store is required' });
     }
     const storeScope = matchPpmStoreScope(new mongoose.Types.ObjectId(effectiveStore));
+    const storeOid = new mongoose.Types.ObjectId(effectiveStore);
+    const coveredByWorkflow = await assetIdsCoveredByPendingWorkflowQueues(storeOid);
     const rows = await PpmTask.find({
       store: storeScope,
       manager_notification_pending: true,
@@ -1872,13 +2137,17 @@ router.get('/manager/pending', protect, restrictViewer, async (req, res) => {
         { manager_review: { $exists: false } },
         { 'manager_review.status': { $exists: false } }
       ],
-      status: { $in: ['Scheduled', 'In Progress', 'Not Completed'] }
+      status: { $in: ['Scheduled', 'In Progress', 'Overdue', 'Not Completed'] }
     })
       .populate('asset', 'uniqueId abs_code name model_number serial_number ticket_number maintenance_vendor')
+      .populate('created_by', 'name email role')
+      .populate('assigned_to', 'name email role')
       .sort({ createdAt: -1 })
       .limit(300)
       .lean();
-    return res.json(rows);
+    /** Bulk import already surfaces as one workflow card — hide per-asset duplicates here. */
+    const filtered = rows.filter((row) => !coveredByWorkflow.has(String(row.asset?._id || row.asset || '')));
+    return res.json(filtered);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to load manager queue', error: error.message });
   }
@@ -1895,12 +2164,7 @@ router.patch('/:id/manager-review', protect, restrictViewer, async (req, res) =>
     if (!mongoose.Types.ObjectId.isValid(taskId)) {
       return res.status(400).json({ message: 'Invalid task id' });
     }
-    const resolvedStoreId =
-      (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
-        ? req.activeStore
-        : ((req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)))
-          ? String(req.user.assignedStore)
-          : null);
+    const resolvedStoreId = resolvePpmManagerQueueStoreId(req);
     if (!resolvedStoreId) {
       return res.status(400).json({ message: 'Active store is required' });
     }
@@ -1914,7 +2178,7 @@ router.patch('/:id/manager-review', protect, restrictViewer, async (req, res) =>
     }
     const task = await PpmTask.findOne({
       _id: new mongoose.Types.ObjectId(taskId),
-      store: new mongoose.Types.ObjectId(resolvedStoreId)
+      store: matchPpmStoreScope(new mongoose.Types.ObjectId(resolvedStoreId))
     });
     if (!task) return res.status(404).json({ message: 'PPM task not found in active store' });
     task.manager_review = {
@@ -2064,14 +2328,26 @@ router.patch('/bulk-work-order-ticket', protect, restrictViewer, async (req, res
     if (ids.length > 2000) {
       return res.status(400).json({ message: 'Too many tasks in one request (max 2000)' });
     }
+    const storeOid = new mongoose.Types.ObjectId(req.activeStore);
+    const storeScope = matchPpmStoreScope(storeOid);
     const result = await PpmTask.updateMany(
       {
         _id: { $in: ids },
-        store: new mongoose.Types.ObjectId(req.activeStore),
-        status: { $in: ['Scheduled', 'In Progress', 'Not Completed'] }
+        store: storeScope,
+        status: { $in: ['Scheduled', 'In Progress', 'Overdue', 'Not Completed'] }
       },
       { $set: { work_order_ticket: ticket } }
     );
+    const touched = await PpmTask.find({ _id: { $in: ids }, store: storeScope })
+      .select('asset')
+      .lean();
+    const assetIds = [...new Set(touched.map((t) => t.asset).filter(Boolean))];
+    if (assetIds.length > 0) {
+      await Asset.updateMany(
+        { _id: { $in: assetIds }, store: storeScope, disposed: { $ne: true } },
+        { $set: { ticket_number: ticket } }
+      );
+    }
     return res.json({ matched: result.matchedCount, modified: result.modifiedCount, work_order_ticket: ticket });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to bulk update work order ticket', error: error.message });
@@ -2115,35 +2391,36 @@ router.post('/assets/:assetId/session', protect, restrictViewer, async (req, res
       return res.status(403).json({ message: 'Asset is outside active store scope' });
     }
 
+    const existing = await PpmTask.findOne({
+      asset: asset._id,
+      store: asset.store,
+      status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
+    }).sort({ createdAt: -1 });
+
+    /** Tech: any open work, ppm flag, or any non-cancelled PPM history on this asset (e.g. closed as Not Completed). */
     if (req.user?.role === 'Technician') {
-      const openAssigned = await PpmTask.findOne({
-        asset: asset._id,
-        store: asset.store,
-        status: { $in: ['Scheduled', 'In Progress'] },
-        assigned_to: req.user._id
-      })
-        .select('_id')
-        .lean();
-      if (!asset.ppm_enabled && !openAssigned) {
+      if (existing && technicianBlockedByManagerReview(existing)) {
+        return res.status(403).json({
+          message:
+            'This PPM is waiting for manager approval (or was returned by the manager). You can open it after a manager approves it in PPM Manager.'
+        });
+      }
+      const inPpmProgram =
+        Boolean(asset.ppm_enabled) ||
+        Boolean(existing) ||
+        (await PpmTask.exists({
+          asset: asset._id,
+          store: asset.store,
+          status: { $ne: 'Cancelled' }
+        }));
+      if (!inPpmProgram) {
         return res.status(403).json({
           message: 'This asset is not marked for PPM. Ask an admin to include it under PPM Work Orders.'
         });
       }
     }
 
-    const existing = await PpmTask.findOne({
-      asset: asset._id,
-      store: asset.store,
-      status: { $in: ['Scheduled', 'In Progress'] }
-    }).sort({ createdAt: -1 });
-
     if (existing) {
-      if (req.user?.role === 'Technician' && technicianBlockedByManagerReview(existing)) {
-        return res.status(403).json({
-          message:
-            'This PPM is waiting for manager approval (or was returned by the manager). You can open it after a manager approves it in PPM Manager.'
-        });
-      }
       const merged = mergePpmChecklistShape(existing.checklist);
       const prevLen = Array.isArray(existing.checklist) ? existing.checklist.length : 0;
       const hadVms = (existing.checklist || []).some((x) => String(x?.key) === VMS_CHECKLIST_KEY);
@@ -2153,6 +2430,30 @@ router.post('/assets/:assetId/session', protect, restrictViewer, async (req, res
       }
       const out = await PpmTask.findById(existing._id)
         .populate('assigned_to', 'name email role')
+        .populate('asset', 'name model_number uniqueId abs_code ip_address status store product_name customFields')
+        .lean();
+      return res.json(out);
+    }
+
+    const latestClosed = await PpmTask.findOne({
+      asset: asset._id,
+      store: asset.store,
+      status: { $in: ['Completed', 'Not Completed'] }
+    })
+      .sort({ updatedAt: -1 });
+
+    if (latestClosed) {
+      const merged = mergePpmChecklistShape(latestClosed.checklist || []);
+      const prevLen = Array.isArray(latestClosed.checklist) ? latestClosed.checklist.length : 0;
+      const hadVms = (latestClosed.checklist || []).some((x) => String(x?.key) === VMS_CHECKLIST_KEY);
+      if (!hadVms || merged.length !== prevLen) {
+        latestClosed.checklist = merged;
+        await latestClosed.save();
+      }
+      const out = await PpmTask.findById(latestClosed._id)
+        .populate('assigned_to', 'name email role')
+        .populate('completed_by', 'name email')
+        .populate('incomplete_by', 'name email')
         .populate('asset', 'name model_number uniqueId abs_code ip_address status store product_name customFields')
         .lean();
       return res.json(out);
@@ -2623,6 +2924,10 @@ const ppmAlias = {
   location: 'location',
   ticket: 'ticket',
   ticket_number: 'ticket',
+  work_order_ticket: 'ticket',
+  wo_ticket: 'ticket',
+  wo: 'ticket',
+  ppm_ticket: 'ticket',
   manufacturer: 'manufacturer',
   status: 'status',
   maintenance_vendor: 'maintenance_vendor'
@@ -2822,18 +3127,41 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
       });
     }
 
+    const batchTicket = String(req.body?.work_order_ticket || req.body?.batch_ticket || '').trim();
+    if (!batchTicket) {
+      return res.status(400).json({
+        message: 'PPM work order ticket is required for PPM bulk import.',
+        hint:
+          'Enter the same ticket in the “PPM WO ticket” field as when creating tasks from selected assets so every imported row, manager workflow card, and asset Ticket column stay aligned.'
+      });
+    }
+
+    const dueRaw = req.body?.due_date || req.body?.due_at;
+    let dueAtMs = scheduleDate.getTime() + PPM_CYCLE_MS;
+    if (dueRaw) {
+      const parsedDue = new Date(dueRaw);
+      if (!Number.isNaN(parsedDue.getTime())) {
+        dueAtMs = parsedDue.getTime();
+      }
+    }
+    const dueAtForTasks = new Date(dueAtMs);
+
     const task = await PpmWorkflowTask.create({
       store: storeId,
       created_by: req.user?._id || null,
       schedule_date: scheduleDate,
-      status: 'Pending'
+      status: 'Pending',
+      batch_ticket: batchTicket
     });
-    const docs = combined.map((a) => ({
-      ppm_task_id: task._id,
-      store: storeId,
-      source: excelRows.includes(a) ? 'excel' : 'manual',
-      ...a
-    }));
+    const docs = combined.map((a) => {
+      const row = { ...a, ticket: batchTicket };
+      return {
+        ppm_task_id: task._id,
+        store: storeId,
+        source: excelRows.includes(a) ? 'excel' : 'manual',
+        ...row
+      };
+    });
     await PpmAssetTemp.insertMany(docs);
 
     // Also materialize import rows into real PPM work-order tasks so they appear in /ppm immediately.
@@ -2946,7 +3274,7 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
         rfid: String(row?.rf_id || '').trim(),
         mac_address: String(row?.mac_address || '').trim(),
         location: String(row?.location || '').trim(),
-        ticket_number: String(row?.ticket || '').trim(),
+        ticket_number: String(batchTicket || row?.ticket || '').trim(),
         manufacturer: String(row?.manufacturer || '').trim(),
         maintenance_vendor: String(row?.maintenance_vendor || '').trim(),
         abs_code: String(row?.abs_code || '').trim(),
@@ -2978,7 +3306,7 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
       ? await PpmTask.find({
         store: storeScope,
         asset: { $in: matchedAssetIds },
-        status: { $in: ['Scheduled', 'In Progress'] }
+        status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
       })
         .select('asset')
         .lean()
@@ -2993,13 +3321,13 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
       const asset = payload.asset || {};
       const rowTicket = String(row.ticket || '').trim();
       const assetTicket = String(asset.ticket_number || '').trim();
-      const workOrderTicket = rowTicket || assetTicket || importTicketFallback;
+      const workOrderTicket = batchTicket || rowTicket || assetTicket || importTicketFallback;
       createTaskDocs.push({
         asset: new mongoose.Types.ObjectId(assetId),
         store: storeId,
         status: 'Scheduled',
         scheduled_for: scheduleDate,
-        due_at: new Date(scheduleDate.getTime() + PPM_CYCLE_MS),
+        due_at: dueAtForTasks,
         checklist: normalizeChecklist(),
         manager_notes: 'Created from PPM bulk import',
         work_order_ticket: workOrderTicket,
@@ -3017,7 +3345,8 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
           reviewed_at: null,
           reviewed_by: null
         },
-        manager_notification_pending: true,
+        /** Manager reviews the workflow batch card; do not duplicate rows in /ppm/manager/pending. */
+        manager_notification_pending: false,
         manager_notification_sent_at: null
       });
     }
@@ -3030,6 +3359,27 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
     }
     if (createTaskDocs.length > 0) {
       await PpmTask.insertMany(createTaskDocs, { ordered: false });
+      for (const doc of createTaskDocs) {
+        const payload = matchedByAssetId.get(String(doc.asset));
+        const row = payload?.row || {};
+        const ast = payload?.asset || {};
+        const wo = String(String(doc.work_order_ticket || '').trim() || String(ast.ticket_number || '').trim()).trim();
+        if (!wo) continue;
+        const q = { ppm_task_id: task._id, store: storeId };
+        const uid = String(row.unique_id || '').trim();
+        const abs = String(row.abs_code || '').trim();
+        if (uid) Object.assign(q, { unique_id: uid });
+        else if (abs) Object.assign(q, { abs_code: abs });
+        else continue;
+        await PpmAssetTemp.updateMany(q, { $set: { ticket: wo } });
+      }
+      const importedAssetOids = createTaskDocs.map((d) => d.asset).filter(Boolean);
+      if (batchTicket && importedAssetOids.length > 0) {
+        await Asset.updateMany(
+          { _id: { $in: importedAssetOids }, store: storeScope, disposed: { $ne: true } },
+          { $set: { ticket_number: batchTicket } }
+        );
+      }
     }
     const skippedOpenTask = matchedByAssetId.size - createTaskDocs.length;
 
@@ -3043,56 +3393,15 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
       comments: String(req.body?.comments || ''),
       assets_included: docs.length
     });
-    // One manager email: Portal "Manager notification" list only; lists every imported row.
     const managerRecipients = await getPpmManagerRecipientEmails(task.store);
-    let managerEmailSent = false;
-    if (managerRecipients.length > 0) {
-      try {
-        const subjects = await getStoreNotificationSubjects(task.store);
-        const ppmPrefix = subjects.ppm || 'Expo City Dubai PPM Notification';
-        const createdByLine = `${String(req.user?.name || 'Admin')} (${String(req.user?.role || 'Admin')})`;
-        const assetRows = docs.map((d) => {
-          const uid = String(d.unique_id || '—');
-          const abs = String(d.abs_code || '—');
-          const title = String(d.name || d.model_number || '—');
-          const tix = String(d.ticket || '').trim() || '—';
-          return {
-            textLine: `UID:${uid} | ABS:${abs} | ${title} | Ticket:${tix}`,
-            uid,
-            abs,
-            title,
-            taskId: tix
-          };
-        });
-        const { subject, text, html } = buildPpmManagerCreatedEmail({
-          ppmPrefix,
-          introHtml: `<p>An Admin created a <strong>PPM workflow batch</strong> (import) that needs <strong>Manager review</strong>.</p><p><strong>Workflow / batch ID:</strong> ${escapeHtml(String(task._id))}</p>`,
-          introText: `An Admin created a PPM workflow batch (import) that needs Manager review. Workflow / batch ID: ${String(task._id)}`,
-          workOrderTicket: 'Per row (Ticket column)',
-          createdByLine,
-          managerNotes: req.body?.comments,
-          assetRows
-        });
-        await sendStoreEmail({
-          storeId: task.store,
-          to: managerRecipients.join(','),
-          subject,
-          text,
-          html,
-          context: 'ppm-created-notify-manager'
-        });
-        managerEmailSent = true;
-      } catch (emailErr) {
-        console.error('PPM upload: manager notify email failed (data already saved):', emailErr?.message || emailErr);
-      }
-    }
+    const managerEmailSent = false;
     try {
       await ActivityLog.create({
         user: req.user?.name || 'Unknown',
         email: activityLogUserEmail(req),
         role: activityLogUserRole(req),
-        action: 'PPM Task Submitted For Manager Review',
-        details: `Workflow task ${task._id} created; assets=${docs.length}; managerEmailSent=${managerEmailSent}; managerRecipients=${managerRecipients.length}`,
+        action: 'PPM import batch saved (notify manager manually)',
+        details: `Workflow task ${task._id} created; assets=${docs.length}; managerRecipientsConfigured=${managerRecipients.length} (email sent only after Admin uses Send notification)`,
         store: req.activeStore || task.store || null
       });
     } catch (logErr) {
@@ -3136,7 +3445,9 @@ router.post('/upload', protect, restrictViewer, upload.single('file'), async (re
 // @desc  Mark task sent to manager queue and email manager recipients
 router.post('/notify-manager', protect, restrictViewer, async (req, res) => {
   try {
-    if (!isAdminRole(req.user?.role)) return res.status(403).json({ message: 'Only Admin can notify manager' });
+    if (!canSubmitPpmToManagerQueue(req.user?.role)) {
+      return res.status(403).json({ message: 'Only Admin or Super Admin can notify manager' });
+    }
     const taskId = String(req.body?.ppm_task_id || '');
     if (!mongoose.Types.ObjectId.isValid(taskId)) return res.status(400).json({ message: 'Valid ppm_task_id required' });
     const task = await PpmWorkflowTask.findById(taskId);
@@ -3233,7 +3544,7 @@ router.patch('/manager-action', protect, restrictViewer, async (req, res) => {
       const openFilter = {
         store: storeScope,
         asset: { $in: linkedAssetIds },
-        status: { $in: ['Scheduled', 'In Progress'] }
+        status: { $in: ['Scheduled', 'In Progress', 'Overdue'] }
       };
       if (action === 'Rejected') {
         await PpmTask.updateMany(openFilter, {
@@ -3361,15 +3672,7 @@ router.patch('/manager-action', protect, restrictViewer, async (req, res) => {
 // @desc Same shape as dashboard-alerts, but up to `days` lookback (default 365) for header history panel
 router.get('/notification-history', protect, restrictViewer, async (req, res) => {
   try {
-    let storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
-      ? req.activeStore
-      : (req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)) ? String(req.user.assignedStore) : null);
-    if (!storeId) {
-      const hs = req.headers['x-active-store'] && String(req.headers['x-active-store']).trim();
-      if (hs && hs !== 'undefined' && hs !== 'all' && mongoose.Types.ObjectId.isValid(hs)) {
-        storeId = hs;
-      }
-    }
+    const storeId = resolvePpmManagerQueueStoreId(req);
     if (!storeId) return res.json([]);
     const storeOid = new mongoose.Types.ObjectId(storeId);
     const role = String(req.user?.role || '');
@@ -3448,15 +3751,7 @@ router.get('/notification-history', protect, restrictViewer, async (req, res) =>
 // @desc Role-targeted PPM workflow alerts to show on dashboard
 router.get('/dashboard-alerts', protect, restrictViewer, async (req, res) => {
   try {
-    let storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
-      ? req.activeStore
-      : (req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)) ? String(req.user.assignedStore) : null);
-    if (!storeId) {
-      const hs = req.headers['x-active-store'] && String(req.headers['x-active-store']).trim();
-      if (hs && hs !== 'undefined' && hs !== 'all' && mongoose.Types.ObjectId.isValid(hs)) {
-        storeId = hs;
-      }
-    }
+    const storeId = resolvePpmManagerQueueStoreId(req);
     if (!storeId) return res.json([]);
     const storeOid = new mongoose.Types.ObjectId(storeId);
     const role = String(req.user?.role || '');
@@ -3483,7 +3778,11 @@ router.get('/dashboard-alerts', protect, restrictViewer, async (req, res) => {
     };
 
     if (isManagerLikeRole(role)) {
-      const wfFilter = { store: matchPpmStoreScope(storeOid), status: { $in: ['Pending', 'Modified'] } };
+      const wfFilter = {
+        store: matchPpmStoreScope(storeOid),
+        status: { $in: ['Pending', 'Modified'] },
+        sent_to_manager_at: { $ne: null }
+      };
       const [tasks, covered] = await Promise.all([
         PpmWorkflowTask.find(wfFilter)
           .sort({ updatedAt: -1 })
@@ -3527,15 +3826,17 @@ router.get('/dashboard-alerts', protect, restrictViewer, async (req, res) => {
 // @desc  Manager isolated queue (separate section data)
 router.get('/manager/section', protect, restrictViewer, async (req, res) => {
   try {
-    if (!canUsePpmRole(req.user?.role)) return res.status(403).json({ message: 'Not allowed' });
-    const storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
-      ? req.activeStore
-      : (req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)) ? String(req.user.assignedStore) : null);
+    if (!isManagerLikeRole(req.user?.role) && req.user?.role !== 'Admin' && req.user?.role !== 'Super Admin') {
+      return res.status(403).json({ message: 'Only Manager/Admin can view manager PPM workflow queue' });
+    }
+    const storeId = resolvePpmManagerQueueStoreId(req);
     if (!storeId) return res.status(400).json({ message: 'Active store is required' });
     const tasks = await PpmWorkflowTask.find({
       store: matchPpmStoreScope(new mongoose.Types.ObjectId(storeId)),
-      status: { $in: ['Pending', 'Modified'] }
+      status: { $in: ['Pending', 'Modified'] },
+      sent_to_manager_at: { $ne: null }
     })
+      .populate('created_by', 'name email role')
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();
@@ -3547,7 +3848,14 @@ router.get('/manager/section', protect, restrictViewer, async (req, res) => {
       if (!byTask.has(k)) byTask.set(k, []);
       byTask.get(k).push(a);
     });
-    return res.json(tasks.map((t) => ({ ...t, assets: byTask.get(String(t._id)) || [] })));
+    const storeOid = new mongoose.Types.ObjectId(storeId);
+    const enriched = [];
+    for (const t of tasks) {
+      const arr = byTask.get(String(t._id)) || [];
+      const hydrated = await hydrateWorkflowManagerCardFields(t, storeOid, arr);
+      enriched.push({ ...hydrated, assets: arr });
+    }
+    return res.json(enriched);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to load manager section', error: error.message });
   }
@@ -3560,9 +3868,7 @@ router.get('/history-logs', protect, restrictViewer, async (req, res) => {
     if (!isAdminRole(req.user?.role) && !isManagerLikeRole(req.user?.role)) {
       return res.status(403).json({ message: 'Only Admin/Manager can view PPM history logs' });
     }
-    const storeId = (req.activeStore && mongoose.Types.ObjectId.isValid(req.activeStore))
-      ? req.activeStore
-      : (req.user?.assignedStore && mongoose.Types.ObjectId.isValid(String(req.user.assignedStore)) ? String(req.user.assignedStore) : null);
+    const storeId = resolvePpmManagerQueueStoreId(req);
     if (!storeId) return res.status(400).json({ message: 'Active store is required' });
     const rows = await PpmHistoryLog.find({ store: matchPpmStoreScope(new mongoose.Types.ObjectId(storeId)) })
       .sort({ createdAt: -1 })

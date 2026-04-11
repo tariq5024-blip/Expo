@@ -7,6 +7,8 @@ const ppmWorkflowTaskSchema = new mongoose.Schema(
     schedule_date: { type: Date, default: Date.now, index: true },
     status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Modified'], default: 'Pending', index: true },
     manager_comment: { type: String, default: '' },
+    /** Single PPM WO ticket the admin entered for the whole batch (manager view). */
+    batch_ticket: { type: String, default: '', trim: true },
     sent_to_manager_at: { type: Date, default: null },
     approved_broadcast_at: { type: Date, default: null }
   },

@@ -321,7 +321,8 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
         const hasRole = item.roles.includes(user?.role);
         const isSuperAdminAccessingAdmin = user?.role === 'Super Admin' && item.roles.includes('Admin');
         const isManagerAccessingAdmin = isManagerLike && item.roles.includes('Admin');
-        if (!hasRole && !isSuperAdminAccessingAdmin && !isManagerAccessingAdmin) return acc;
+        const isManagerAccessingManagerRoute = isManagerLike && item.roles.includes('Manager');
+        if (!hasRole && !isSuperAdminAccessingAdmin && !isManagerAccessingAdmin && !isManagerAccessingManagerRoute) return acc;
       }
 
       const newItem = { ...item };

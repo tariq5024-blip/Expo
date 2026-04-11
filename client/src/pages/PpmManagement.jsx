@@ -225,8 +225,18 @@ const PpmManagement = () => {
       clearCreateAssetSelection();
       await load();
       const n = data?.deletedTasks ?? 0;
+      const wf = data?.deletedWorkflows ?? 0;
+      const tmp = data?.deletedTempAssets ?? 0;
       const a = data?.assetsPpmCleared ?? 0;
-      alert(`PPM program reset for this store. Removed ${n} task(s) and cleared PPM flags on ${a} asset(s).`);
+      const hist = data?.deletedHistoryLogs ?? 0;
+      alert(
+        `PPM program reset for this store.\n\n` +
+          `Work-order tasks removed: ${n}\n` +
+          `Import workflow batches removed: ${wf}\n` +
+          `Import staging rows removed: ${tmp}\n` +
+          `PPM history logs removed: ${hist}\n` +
+          `Assets cleared from PPM program: ${a}`
+      );
     } catch (error) {
       alert(error.response?.data?.message || 'Could not reset PPM program');
     } finally {
@@ -752,7 +762,7 @@ const PpmManagement = () => {
                     setResetProgramOpen(true);
                   }}
                   className="btn-app-outline text-sm shrink-0"
-                  title="Deletes all PPM tasks for this store and removes all assets from the PPM program. Requires your password."
+                  title="Removes all PPM data for this store (tasks, import workflows, temp rows, history) and clears PPM flags. Admin or Super Admin only. Requires your password."
                 >
                   Reset PPM program
                 </button>
@@ -1143,9 +1153,11 @@ const PpmManagement = () => {
               Reset PPM program?
             </h2>
             <p className="text-sm text-slate-600">
-              This applies only to your <strong>active store</strong>. All PPM tasks for this store will be permanently
-              deleted, and every in-store asset will be removed from the PPM program (you can turn PPM back on per asset
-              later). Enter your <strong>account password</strong> to confirm.
+              This applies only to your <strong>active store</strong>. All PPM work orders, import workflow batches,
+              import staging rows, and PPM history logs for this store will be permanently deleted. Every in-store asset
+              will be removed from the PPM program and import-only flags cleared (you can turn PPM back on per asset
+              later). Only <strong>Admin</strong> or <strong>Super Admin</strong> can run this. Enter your{' '}
+              <strong>account password</strong> to confirm.
             </p>
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1" htmlFor="ppm-reset-password">

@@ -145,6 +145,20 @@ const sparePartSchema = new mongoose.Schema({
     trim: true,
     index: true
   },
+  /** Manufacturer / SKU model designation for this physical part line (optional). */
+  model_number: {
+    type: String,
+    default: '',
+    trim: true,
+    index: true
+  },
+  /** Serialized unit identifier when each row tracks a specific item (optional). */
+  serial_number: {
+    type: String,
+    default: '',
+    trim: true,
+    index: true
+  },
   type: {
     type: String,
     default: '',

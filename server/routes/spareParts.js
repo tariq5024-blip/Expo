@@ -123,6 +123,8 @@ const populateSparePartRefs = (q) =>
 const SP_IMPORT_HEADERS = [
   'Name',
   'Part number',
+  'Model number',
+  'Serial number',
   'Type',
   'Compatible models',
   'Bin / shelf',
@@ -446,6 +448,8 @@ router.get('/', protect, async (req, res) => {
       filter.$or = [
         { name: rx },
         { part_number: rx },
+        { model_number: rx },
+        { serial_number: rx },
         { type: rx },
         { compatible_models: rx },
         { location: rx },
@@ -490,6 +494,8 @@ router.get('/export', protect, adminOrViewer, async (req, res) => {
       filter.$or = [
         { name: rx },
         { part_number: rx },
+        { model_number: rx },
+        { serial_number: rx },
         { type: rx },
         { compatible_models: rx },
         { location: rx },
@@ -518,6 +524,8 @@ router.get('/export', protect, adminOrViewer, async (req, res) => {
       return [
         r.name,
         r.part_number,
+        r.model_number || '',
+        r.serial_number || '',
         r.type,
         r.compatible_models,
         r.location,
@@ -559,8 +567,10 @@ router.get('/import/template', protect, adminOrViewer, restrictViewer, async (re
     ws.addRow([
       'Example RAM kit',
       'RAM-DDR4-16',
+      'DDR4-3200-SODIMM',
+      'SN-WH-001234',
       'Memory',
-      'Model X',
+      'ThinkPad T14, Model X',
       'Bin A12',
       5,
       1,
@@ -576,9 +586,11 @@ router.get('/import/template', protect, adminOrViewer, restrictViewer, async (re
     readme.addRows([
       ['Spare parts bulk import'],
       ['Name and Quantity are required on each data row.'],
+      ['Model number / Serial number: optional metadata (included in export and search).'],
       ['Vendor name / PO number: optional; must match records in this store.'],
       ['Receipt location link: use Locations from the sidebar — "Parent › Child" or paste child location id.'],
-      ['When received: ISO date-time or leave blank for "now".']
+      ['When received: ISO date-time or leave blank for "now".'],
+      ['Older import files without Model/Serial columns still work: leave those cells blank or add the new headers.']
     ]);
     readme.getColumn(1).width = 88;
 
@@ -649,6 +661,8 @@ router.post('/import', protect, adminOrViewer, restrictViewer, upload.single('fi
       }
 
       const part_number = pick(vals, ['Part number', 'part number', 'Part #']);
+      const model_number = pick(vals, ['Model number', 'model number', 'Model #']);
+      const serial_number = pick(vals, ['Serial number', 'serial number', 'Serial #']);
       const type = pick(vals, ['Type', 'type']);
       const compatible_models = pick(vals, ['Compatible models', 'compatible models']);
       const location = pick(vals, ['Bin / shelf', 'bin / shelf', 'Bin']);
@@ -739,6 +753,8 @@ router.post('/import', protect, adminOrViewer, restrictViewer, upload.single('fi
         const item = await SparePart.create({
           name,
           part_number,
+          model_number,
+          serial_number,
           type,
           compatible_models,
           location,
@@ -791,6 +807,8 @@ router.post('/', protect, adminOrViewer, restrictViewer, async (req, res) => {
     const {
       name,
       part_number,
+      model_number,
+      serial_number,
       type,
       compatible_models,
       location,
@@ -832,6 +850,8 @@ router.post('/', protect, adminOrViewer, restrictViewer, async (req, res) => {
     const item = await SparePart.create({
       name: normalize(name),
       part_number: normalize(part_number),
+      model_number: normalize(model_number),
+      serial_number: normalize(serial_number),
       type: normalize(type),
       compatible_models: normalize(compatible_models),
       location: normalize(location),
@@ -1029,7 +1049,17 @@ router.put('/:id', protect, adminOrViewer, restrictViewer, async (req, res) => {
     if (!item) return res.status(404).json({ message: 'Spare part not found' });
     if (!canAccess(req, item)) return res.status(403).json({ message: 'Not authorized for this store item' });
 
-    const fields = ['name', 'part_number', 'type', 'compatible_models', 'location', 'comment', 'min_quantity'];
+    const fields = [
+      'name',
+      'part_number',
+      'model_number',
+      'serial_number',
+      'type',
+      'compatible_models',
+      'location',
+      'comment',
+      'min_quantity'
+    ];
     fields.forEach((key) => {
       if (req.body[key] !== undefined) {
         if (key === 'min_quantity') {

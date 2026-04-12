@@ -21,6 +21,8 @@ const toLocalDatetimeValue = (d) => {
 const formDefaults = {
   name: '',
   part_number: '',
+  model_number: '',
+  serial_number: '',
   type: '',
   compatible_models: '',
   location: '',
@@ -443,6 +445,8 @@ const SpareParts = () => {
     setForm({
       name: asText(row.name, ''),
       part_number: asText(row.part_number, ''),
+      model_number: asText(row.model_number, ''),
+      serial_number: asText(row.serial_number, ''),
       type: asText(row.type, ''),
       compatible_models: asText(row.compatible_models, ''),
       location: asText(row.location, ''),
@@ -863,7 +867,7 @@ const SpareParts = () => {
           <input
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="Search by name, part #, vendor, PO, bin, receipt location…"
+            placeholder="Search by name, part #, model #, serial #, vendor, PO, bin, receipt location…"
             className="flex-1 border border-slate-300 rounded-lg px-3 py-2"
           />
           <div className="flex flex-wrap gap-2 shrink-0">
@@ -914,8 +918,10 @@ const SpareParts = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <input name="name" value={form.name} onChange={onChange} required placeholder="Name *" className="border border-slate-300 rounded-lg px-3 py-2" />
             <input name="part_number" value={form.part_number} onChange={onChange} placeholder="Part number" className="border border-slate-300 rounded-lg px-3 py-2" />
+            <input name="model_number" value={form.model_number} onChange={onChange} placeholder="Model number" className="border border-slate-300 rounded-lg px-3 py-2" />
+            <input name="serial_number" value={form.serial_number} onChange={onChange} placeholder="Serial number" className="border border-slate-300 rounded-lg px-3 py-2" />
             <input name="type" value={form.type} onChange={onChange} placeholder="Type" className="border border-slate-300 rounded-lg px-3 py-2" />
-            <input name="compatible_models" value={form.compatible_models} onChange={onChange} placeholder="Compatible models" className="border border-slate-300 rounded-lg px-3 py-2" />
+            <input name="compatible_models" value={form.compatible_models} onChange={onChange} placeholder="Compatible models" className="border border-slate-300 rounded-lg px-3 py-2 md:col-span-2" />
             <input name="location" value={form.location} onChange={onChange} placeholder="Bin / shelf" className="border border-slate-300 rounded-lg px-3 py-2" />
             <input type="number" min="0" name="quantity" value={form.quantity} onChange={onChange} placeholder="Quantity" disabled={!!editing} title={editing ? 'Use Issue, Restock, or Harvest to change quantity' : ''} className="border border-slate-300 rounded-lg px-3 py-2 disabled:bg-slate-100" />
             <input type="number" min="0" name="min_quantity" value={form.min_quantity} onChange={onChange} placeholder="Min qty alert" className="border border-slate-300 rounded-lg px-3 py-2" />
@@ -1099,6 +1105,8 @@ const SpareParts = () => {
             <tr>
               <th className="px-3 py-2 text-left">Name</th>
               <th className="px-3 py-2 text-left">Part #</th>
+              <th className="px-3 py-2 text-left">Model #</th>
+              <th className="px-3 py-2 text-left">Serial #</th>
               <th className="px-3 py-2 text-left">Vendor</th>
               <th className="px-3 py-2 text-left">PO</th>
               <th className="px-3 py-2 text-left">Type</th>
@@ -1113,15 +1121,17 @@ const SpareParts = () => {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td className="px-3 py-4 text-slate-500" colSpan={12}>Loading…</td></tr>
+              <tr><td className="px-3 py-4 text-slate-500" colSpan={14}>Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td className="px-3 py-4 text-slate-500" colSpan={12}>No spare parts yet.</td></tr>
+              <tr><td className="px-3 py-4 text-slate-500" colSpan={14}>No spare parts yet.</td></tr>
             ) : rows.map((row) => {
               const qtyLow = isAtOrBelowMinQty(row);
               return (
                 <tr key={row._id} className="border-t">
                   <td className="px-3 py-2">{asText(row.name)}</td>
                   <td className="px-3 py-2">{asText(row.part_number)}</td>
+                  <td className="px-3 py-2 max-w-[120px] truncate" title={asText(row.model_number)}>{asText(row.model_number)}</td>
+                  <td className="px-3 py-2 max-w-[120px] truncate" title={asText(row.serial_number)}>{asText(row.serial_number)}</td>
                   <td className="px-3 py-2 max-w-[140px] truncate" title={vendorCell(row)}>{vendorCell(row)}</td>
                   <td className="px-3 py-2 max-w-[100px] truncate" title={poCell(row)}>{poCell(row)}</td>
                   <td className="px-3 py-2">{asText(row.type)}</td>

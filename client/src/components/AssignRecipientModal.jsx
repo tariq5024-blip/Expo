@@ -1,4 +1,11 @@
 import { useEffect, useState } from 'react';
+import api from '../api/axios';
+
+const CcEmailSub = ({ emails, emptyMessage }) => {
+  const list = Array.isArray(emails) ? emails.filter(Boolean) : [];
+  if (!list.length) return <p className="ml-6 mt-0.5 text-xs text-amber-800">{emptyMessage}</p>;
+  return <p className="ml-6 mt-0.5 break-words text-xs text-slate-600">{list.join(', ')}</p>;
+};
 
 const defaultAssignForm = (maxQty, defaultQty, defaultInstall) => ({
   technicianId: '',
@@ -13,7 +20,8 @@ const defaultAssignForm = (maxQty, defaultQty, defaultInstall) => ({
   gatePassDestination: '',
   gatePassJustification: '',
   notifyManager: false,
-  notifyViewer: false
+  notifyViewer: false,
+  notifyAdmin: false
 });
 
 const defaultOtherRecipient = () => ({ name: '', email: '', phone: '', note: '' });
@@ -33,7 +41,8 @@ export default function AssignRecipientModal({
   defaultQuantity = 1,
   defaultInstallationLocation = '',
   submitting = false,
-  onSubmit
+  onSubmit,
+  assignCcStoreId = ''
 }) {
   const [recipientType, setRecipientType] = useState('Technician');
   const [assignForm, setAssignForm] = useState(() => defaultAssignForm(1, 1, ''));
@@ -41,6 +50,8 @@ export default function AssignRecipientModal({
   const [techSearch, setTechSearch] = useState('');
   const [showTechSuggestions, setShowTechSuggestions] = useState(false);
   const [installError, setInstallError] = useState('');
+  const [ccPreview, setCcPreview] = useState(null);
+  const [ccPreviewLoading, setCcPreviewLoading] = useState(false);
 
   const maxQ = Math.max(1, Number(maxQuantity) || 1);
 
@@ -53,6 +64,29 @@ export default function AssignRecipientModal({
     setShowTechSuggestions(false);
     setInstallError('');
   }, [open, maxQ, defaultQuantity, defaultInstallationLocation]);
+
+  useEffect(() => {
+    if (!open || !assignCcStoreId) {
+      setCcPreview(null);
+      setCcPreviewLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setCcPreviewLoading(true);
+    (async () => {
+      try {
+        const { data } = await api.get(`/stores/${assignCcStoreId}/assign-cc-preview`);
+        if (!cancelled) setCcPreview(data);
+      } catch {
+        if (!cancelled) setCcPreview(null);
+      } finally {
+        if (!cancelled) setCcPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, assignCcStoreId]);
 
   if (!open) return null;
 
@@ -123,7 +157,8 @@ export default function AssignRecipientModal({
       gatePassJustification: assignForm.gatePassJustification,
       ticketNumber: assignForm.ticketNumber,
       notifyManager: Boolean(assignForm.notifyManager),
-      notifyViewer: Boolean(assignForm.notifyViewer)
+      notifyViewer: Boolean(assignForm.notifyViewer),
+      notifyAdmin: Boolean(assignForm.notifyAdmin)
     };
   };
 
@@ -354,28 +389,70 @@ export default function AssignRecipientModal({
                 </>
               )}
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-2">
-                <p className="text-xs font-medium text-gray-700">Optional: store distribution lists</p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-3">
+                <p className="text-xs font-medium text-gray-700">Optional: copy notification email</p>
                 <p className="text-xs text-gray-500">
-                  When checked, assignment emails also go to the Manager / Viewer lists set in Portal → Customize Email
-                  for this store.
+                  Tick a row to copy the assignment-style email to that list from Portal → Customize Email (Admin also
+                  includes store Admin / Super Admin accounts). Recipient email above is unchanged.
                 </p>
-                <label className="flex items-center gap-2 text-sm text-gray-800">
-                  <input
-                    type="checkbox"
-                    checked={assignForm.notifyManager === true}
-                    onChange={(e) => setAssignForm({ ...assignForm, notifyManager: e.target.checked })}
-                  />
-                  Notify manager list
-                </label>
-                <label className="flex items-center gap-2 text-sm text-gray-800">
-                  <input
-                    type="checkbox"
-                    checked={assignForm.notifyViewer === true}
-                    onChange={(e) => setAssignForm({ ...assignForm, notifyViewer: e.target.checked })}
-                  />
-                  Notify viewer list
-                </label>
+                {ccPreviewLoading ? <p className="text-xs text-slate-500">Loading lists…</p> : null}
+                <div>
+                  <label className="flex items-start gap-2 text-sm text-gray-800">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={assignForm.notifyManager === true}
+                      onChange={(e) => setAssignForm({ ...assignForm, notifyManager: e.target.checked })}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">Notify manager list</span>
+                      <CcEmailSub
+                        emails={ccPreview?.portalManager}
+                        emptyMessage="No manager emails in Portal for this store."
+                      />
+                    </span>
+                  </label>
+                </div>
+                <div>
+                  <label className="flex items-start gap-2 text-sm text-gray-800">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={assignForm.notifyViewer === true}
+                      onChange={(e) => setAssignForm({ ...assignForm, notifyViewer: e.target.checked })}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">Notify viewer list</span>
+                      <CcEmailSub
+                        emails={ccPreview?.portalViewer}
+                        emptyMessage="No viewer emails in Portal for this store."
+                      />
+                    </span>
+                  </label>
+                </div>
+                <div>
+                  <label className="flex items-start gap-2 text-sm text-gray-800">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={assignForm.notifyAdmin === true}
+                      onChange={(e) => setAssignForm({ ...assignForm, notifyAdmin: e.target.checked })}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">Notify admin list</span>
+                      <p className="ml-6 mt-1 text-xs text-slate-500">Portal — admin notification emails</p>
+                      <CcEmailSub
+                        emails={ccPreview?.portalAdmin}
+                        emptyMessage="None configured in Portal for this store."
+                      />
+                      <p className="ml-6 mt-2 text-xs text-slate-500">Admin / Super Admin accounts for this store</p>
+                      <CcEmailSub
+                        emails={ccPreview?.platformAdminAccounts}
+                        emptyMessage="No Admin or Super Admin accounts linked to this store."
+                      />
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <div>

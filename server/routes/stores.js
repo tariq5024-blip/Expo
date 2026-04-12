@@ -4,6 +4,7 @@ const Store = require('../models/Store');
 const Asset = require('../models/Asset');
 const mongoose = require('mongoose');
 const { protect, admin } = require('../middleware/authMiddleware');
+const { getStoreAssignCcLists } = require('../utils/storeEmail');
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizeName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
 
@@ -193,6 +194,28 @@ router.get('/', protect, async (req, res) => {
     }
 
     res.json(stores);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Lists configured for optional assign CC (Portal + store Admin accounts)
+// @route   GET /api/stores/:id/assign-cc-preview
+// @access  Private/Admin (same store scope as updating a store)
+router.get('/:id/assign-cc-preview', protect, admin, async (req, res) => {
+  try {
+    const store = await Store.findById(req.params.id);
+    if (!store) return res.status(404).json({ message: 'Store not found' });
+    if (req.user.role !== 'Super Admin') {
+      const isAssignedStore = req.user.assignedStore && store._id.toString() === req.user.assignedStore.toString();
+      const isChildOfAssignedStore =
+        req.user.assignedStore && store.parentStore?.toString() === req.user.assignedStore.toString();
+      if (!isAssignedStore && !isChildOfAssignedStore) {
+        return res.status(403).json({ message: 'Not authorized to view this store' });
+      }
+    }
+    const lists = await getStoreAssignCcLists(store._id);
+    res.json(lists);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -31,10 +31,56 @@ const getStoreEmailConfig = async (storeId) => {
   };
 };
 
+const normalizeLowerEmailList = (arr) =>
+  Array.from(
+    new Set(
+      (Array.isArray(arr) ? arr : [])
+        .map((v) => String(v || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+
+/**
+ * Portal comma-lists + platform Admin/Super Admin accounts for this store (for Assign UI preview).
+ */
+const getStoreAssignCcLists = async (storeId) => {
+  const id = resolveStoreId(storeId);
+  if (!id) {
+    return {
+      portalAdmin: [],
+      portalManager: [],
+      portalViewer: [],
+      platformAdminAccounts: []
+    };
+  }
+  const store = await Store.findById(id)
+    .select('emailConfig.adminRecipients emailConfig.managerRecipients emailConfig.viewerRecipients')
+    .lean();
+  const cfg = store?.emailConfig || {};
+  const portalAdmin = normalizeLowerEmailList(cfg.adminRecipients);
+  const portalManager = normalizeLowerEmailList(cfg.managerRecipients);
+  const portalViewer = normalizeLowerEmailList(cfg.viewerRecipients);
+  const adminUsers = await User.find({
+    role: { $in: ['Admin', 'Super Admin'] },
+    $or: [{ role: 'Super Admin' }, { assignedStore: id }]
+  })
+    .select('email')
+    .lean();
+  const platformAdminAccounts = normalizeLowerEmailList(adminUsers.map((u) => u.email));
+  return { portalAdmin, portalManager, portalViewer, platformAdminAccounts };
+};
+
 /**
  * @param {string|null|undefined} storeId
- * @param {{ includeManagers?: boolean, includeViewers?: boolean }|undefined} options
+ * @param {{
+ *   assignStrictLists?: boolean,
+ *   includeManagers?: boolean,
+ *   includeViewers?: boolean,
+ *   includeAdmins?: boolean
+ * }|undefined} options
  *        When omitted, all configured role lists are included (backward compatible).
+ *        When assignStrictLists is true, only manager/viewer/admin portal lists included per flags
+ *        (used by asset assign — no other store lists).
  */
 const getStoreNotificationRecipients = async (storeId, options) => {
   const id = resolveStoreId(storeId);
@@ -42,6 +88,21 @@ const getStoreNotificationRecipients = async (storeId, options) => {
   const store = await Store.findById(id).select(
     'emailConfig.notificationRecipients emailConfig.technicianRecipients emailConfig.adminRecipients emailConfig.viewerRecipients emailConfig.managerRecipients emailConfig.lineManagerRecipients'
   ).lean();
+
+  const assignStrictLists = options?.assignStrictLists === true;
+  if (assignStrictLists) {
+    const managers = options?.includeManagers === true
+      ? normalizeLowerEmailList(store?.emailConfig?.managerRecipients)
+      : [];
+    const viewers = options?.includeViewers === true
+      ? normalizeLowerEmailList(store?.emailConfig?.viewerRecipients)
+      : [];
+    const admins = options?.includeAdmins === true
+      ? normalizeLowerEmailList(store?.emailConfig?.adminRecipients)
+      : [];
+    return Array.from(new Set([...managers, ...viewers, ...admins]));
+  }
+
   const includeManagers =
     options && Object.prototype.hasOwnProperty.call(options, 'includeManagers')
       ? Boolean(options.includeManagers)
@@ -216,6 +277,7 @@ const sendStoreEmail = async ({
 module.exports = {
   getStoreEmailConfig,
   getStoreNotificationRecipients,
+  getStoreAssignCcLists,
   getStoreNotificationSubjects,
   sendStoreEmail,
   buildTransport

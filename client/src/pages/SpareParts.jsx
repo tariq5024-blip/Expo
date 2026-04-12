@@ -628,7 +628,8 @@ const SpareParts = () => {
         gatePassDestination: payload.gatePassDestination,
         gatePassJustification: payload.gatePassJustification,
         notifyManager: payload.notifyManager,
-        notifyViewer: payload.notifyViewer
+        notifyViewer: payload.notifyViewer,
+        notifyAdmin: payload.notifyAdmin
       });
       setAssignPartModal(null);
       await load();
@@ -1188,6 +1189,7 @@ const SpareParts = () => {
         defaultQuantity={1}
         defaultInstallationLocation=""
         submitting={assignSpareSubmitting}
+        assignCcStoreId={assignPartModal ? String(assignPartModal.store?._id || assignPartModal.store || '') : ''}
         onSubmit={submitSpareAssign}
       />
 

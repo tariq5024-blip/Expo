@@ -310,7 +310,8 @@ const Tools = () => {
         gatePassJustification: payload.gatePassJustification,
         ticketNumber: payload.ticketNumber,
         notifyManager: payload.notifyManager,
-        notifyViewer: payload.notifyViewer
+        notifyViewer: payload.notifyViewer,
+        notifyAdmin: payload.notifyAdmin
       });
       setAssignToolModal(null);
       await loadTools({ q: debouncedSearch, s: status });
@@ -671,6 +672,7 @@ const Tools = () => {
         defaultQuantity={1}
         defaultInstallationLocation={assignToolModal?.location || ''}
         submitting={assignSubmitting}
+        assignCcStoreId={assignToolModal ? String(assignToolModal.store?._id || assignToolModal.store || '') : ''}
         onSubmit={submitToolAssign}
       />
 

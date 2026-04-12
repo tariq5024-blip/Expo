@@ -517,18 +517,21 @@ async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [], st
   const storeId = asset?.store || null;
   const subjects = await getStoreNotificationSubjects(storeId);
   const assetPrefix = subjects.asset || 'Expo City Dubai Asset Notification';
-  const adminUsers = await User.find({
-    role: { $in: ['Admin', 'Super Admin'] },
-    $or: [
-      { role: 'Super Admin' },
-      { assignedStore: storeId }
-    ]
-  })
-    .select('email')
-    .lean();
-  const adminRecipients = adminUsers.map((u) => String(u.email || '').trim().toLowerCase()).filter(Boolean);
+  const assignStrictLists = storeRecipientOptions?.assignStrictLists === true;
+  const includePlatformStoreAdmins =
+    !assignStrictLists || storeRecipientOptions?.includeAdmins === true;
+  let adminRecipientsFromAccounts = [];
+  if (includePlatformStoreAdmins) {
+    const adminUsers = await User.find({
+      role: { $in: ['Admin', 'Super Admin'] },
+      $or: [{ role: 'Super Admin' }, { assignedStore: storeId }]
+    })
+      .select('email')
+      .lean();
+    adminRecipientsFromAccounts = adminUsers.map((u) => String(u.email || '').trim().toLowerCase()).filter(Boolean);
+  }
   const recipients = Array.from(
-    new Set([recipientEmail, ...configuredRecipients, ...adminRecipients]
+    new Set([recipientEmail, ...configuredRecipients, ...adminRecipientsFromAccounts]
       .map((v) => String(v || '').trim().toLowerCase())
       .filter(Boolean))
   );
@@ -4335,11 +4338,14 @@ router.post('/assign', protect, admin, async (req, res) => {
     gatePassJustification,
     sendGatePassEmail,
     notifyManager,
-    notifyViewer
+    notifyViewer,
+    notifyAdmin
   } = req.body;
   const storeRecipientOptions = {
+    assignStrictLists: true,
     includeManagers: notifyManager === true,
-    includeViewers: notifyViewer === true
+    includeViewers: notifyViewer === true,
+    includeAdmins: notifyAdmin === true
   };
   try {
     const normalizedIds = Array.from(

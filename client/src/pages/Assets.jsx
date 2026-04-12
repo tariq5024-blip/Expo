@@ -22,6 +22,19 @@ const flattenProducts = (list, level = 0, ancestors = []) => {
 const escapeRegExpForHighlight = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** One-line store hierarchy + physical location for finding assets quickly. */
+/** Shown under each optional assign CC checkbox — lists resolved from Portal + accounts. */
+function AssignCcEmailHint({ emails, emptyMessage }) {
+  const list = Array.isArray(emails) ? emails.filter(Boolean) : [];
+  if (list.length === 0) {
+    return <p className="ml-6 mt-0.5 text-xs text-amber-800">{emptyMessage}</p>;
+  }
+  return (
+    <p className="ml-6 mt-0.5 break-words text-xs text-slate-600" title={list.join(', ')}>
+      {list.join(', ')}
+    </p>
+  );
+}
+
 const formatAssetStoreLocation = (asset, fallbackStoreName = '') => {
   const parent = String(asset?.store?.parentStore?.name || '').trim();
   const storeName = String(asset?.store?.name || '').trim();
@@ -900,8 +913,11 @@ const Assets = () => {
     gatePassDestination: '',
     gatePassJustification: '',
     notifyManager: false,
-    notifyViewer: false
+    notifyViewer: false,
+    notifyAdmin: false
   });
+  const [assignCcPreview, setAssignCcPreview] = useState(null);
+  const [assignCcPreviewLoading, setAssignCcPreviewLoading] = useState(false);
   const [techSearch, setTechSearch] = useState('');
   const [showTechSuggestions, setShowTechSuggestions] = useState(false);
   const [recipientType, setRecipientType] = useState('Technician');
@@ -914,6 +930,35 @@ const Assets = () => {
     phone: '',
     note: ''
   });
+
+  useEffect(() => {
+    if (!assigningAsset) {
+      setAssignCcPreview(null);
+      setAssignCcPreviewLoading(false);
+      return undefined;
+    }
+    const rawStore = assigningAsset.store;
+    const sid = rawStore?._id || rawStore;
+    if (!sid) {
+      setAssignCcPreview(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setAssignCcPreviewLoading(true);
+    (async () => {
+      try {
+        const { data } = await api.get(`/stores/${sid}/assign-cc-preview`);
+        if (!cancelled) setAssignCcPreview(data);
+      } catch {
+        if (!cancelled) setAssignCcPreview(null);
+      } finally {
+        if (!cancelled) setAssignCcPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assigningAsset]);
 
   const showToast = useCallback((message, tone = 'info') => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1956,7 +2001,8 @@ const Assets = () => {
       gatePassDestination: '',
       gatePassJustification: '',
       notifyManager: false,
-      notifyViewer: false
+      notifyViewer: false,
+      notifyAdmin: false
     });
     setAssignInstallationLocationError('');
     setTechSearch('');
@@ -2038,7 +2084,8 @@ const Assets = () => {
         gatePassDestination: assignForm.gatePassDestination,
         gatePassJustification: assignForm.gatePassJustification,
         notifyManager: Boolean(assignForm.notifyManager),
-        notifyViewer: Boolean(assignForm.notifyViewer)
+        notifyViewer: Boolean(assignForm.notifyViewer),
+        notifyAdmin: Boolean(assignForm.notifyAdmin)
       };
       if (recipientType === 'Technician') {
         payload.technicianId = assignForm.technicianId;
@@ -3978,28 +4025,73 @@ const Assets = () => {
                     </>
                   )}
 
-                  <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-2">
-                    <p className="text-xs font-medium text-gray-700">Optional: store distribution lists</p>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-3">
+                    <p className="text-xs font-medium text-gray-700">Optional: copy assignment email</p>
                     <p className="text-xs text-gray-500">
-                      When checked, assignment emails also go to the Manager / Viewer comma lists configured under
-                      Portal → Customize Email for this asset&apos;s store.
+                      The recipient address above always receives the assignment message when SMTP is available.
+                      Tick any row below to also copy the Manager, Viewer, or Admin lists from Portal → Customize Email
+                      (and store Admin / Super Admin accounts for Admin).
                     </p>
-                    <label className="flex items-center gap-2 text-sm text-gray-800">
-                      <input
-                        type="checkbox"
-                        checked={assignForm.notifyManager === true}
-                        onChange={(e) => setAssignForm({ ...assignForm, notifyManager: e.target.checked })}
-                      />
-                      Notify manager list
-                    </label>
-                    <label className="flex items-center gap-2 text-sm text-gray-800">
-                      <input
-                        type="checkbox"
-                        checked={assignForm.notifyViewer === true}
-                        onChange={(e) => setAssignForm({ ...assignForm, notifyViewer: e.target.checked })}
-                      />
-                      Notify viewer list
-                    </label>
+                    {assignCcPreviewLoading ? (
+                      <p className="text-xs text-slate-500">Loading notification lists…</p>
+                    ) : null}
+                    <div>
+                      <label className="flex items-start gap-2 text-sm text-gray-800">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={assignForm.notifyManager === true}
+                          onChange={(e) => setAssignForm({ ...assignForm, notifyManager: e.target.checked })}
+                        />
+                        <span>
+                          <span className="font-medium">Notify manager list</span>
+                          <AssignCcEmailHint
+                            emails={assignCcPreview?.portalManager}
+                            emptyMessage="No manager emails in Portal for this store."
+                          />
+                        </span>
+                      </label>
+                    </div>
+                    <div>
+                      <label className="flex items-start gap-2 text-sm text-gray-800">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={assignForm.notifyViewer === true}
+                          onChange={(e) => setAssignForm({ ...assignForm, notifyViewer: e.target.checked })}
+                        />
+                        <span>
+                          <span className="font-medium">Notify viewer list</span>
+                          <AssignCcEmailHint
+                            emails={assignCcPreview?.portalViewer}
+                            emptyMessage="No viewer emails in Portal for this store."
+                          />
+                        </span>
+                      </label>
+                    </div>
+                    <div>
+                      <label className="flex items-start gap-2 text-sm text-gray-800">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={assignForm.notifyAdmin === true}
+                          onChange={(e) => setAssignForm({ ...assignForm, notifyAdmin: e.target.checked })}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">Notify admin list</span>
+                          <p className="ml-6 mt-1 text-xs text-slate-500">Portal — admin notification emails</p>
+                          <AssignCcEmailHint
+                            emails={assignCcPreview?.portalAdmin}
+                            emptyMessage="None configured in Portal for this store."
+                          />
+                          <p className="ml-6 mt-2 text-xs text-slate-500">Admin / Super Admin accounts for this store</p>
+                          <AssignCcEmailHint
+                            emails={assignCcPreview?.platformAdminAccounts}
+                            emptyMessage="No Admin or Super Admin accounts linked to this store."
+                          />
+                        </span>
+                      </label>
+                    </div>
                   </div>
 
                   <div>

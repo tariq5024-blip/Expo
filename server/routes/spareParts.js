@@ -10,6 +10,7 @@ const Store = require('../models/Store');
 const Vendor = require('../models/Vendor');
 const PurchaseOrder = require('../models/PurchaseOrder');
 const ActivityLog = require('../models/ActivityLog');
+const { getStoreTreeIds } = require('../utils/storeTree');
 const { protect, adminOrViewer, restrictViewer } = require('../middleware/authMiddleware');
 
 const upload = multer({
@@ -264,21 +265,14 @@ const canAccess = (req, item) => {
   return String(req.activeStore) === String(item.store);
 };
 
-/** Same tree as GET /api/assets: active main store + its location (child) sites. */
-const getStoreIdsForAssetAccess = async (storeId) => {
-  if (!storeId) return [];
-  const children = await Store.find({ parentStore: storeId }).select('_id').lean();
-  const all = [storeId, ...children.map((c) => c._id)];
-  return all.map((id) => new mongoose.Types.ObjectId(String(id)));
-};
-
+/** Same tree as GET /api/assets: active store + every nested location (any depth). */
 const canAccessAssetStore = async (req, asset) => {
   if (req.user?.role === 'Super Admin') return true;
   const assetStoreId = asset?.store?._id || asset?.store;
   const activeRaw = req?.activeStore;
   if (!assetStoreId || activeRaw == null || activeRaw === '') return false;
   if (!mongoose.Types.ObjectId.isValid(String(activeRaw))) return false;
-  const allowedIds = await getStoreIdsForAssetAccess(activeRaw);
+  const allowedIds = await getStoreTreeIds(activeRaw);
   return allowedIds.some((id) => String(id) === String(assetStoreId));
 };
 

@@ -1222,12 +1222,11 @@ async function readUploadedWorkbook(file) {
       }
     });
 
-// Helper to get store and its children IDs (always ObjectId for aggregations)
+const { getStoreTreeIds } = require('../utils/storeTree');
+
+// Helper: active store + all nested location sites (any depth) for ObjectId $in clauses
 async function getStoreIds(storeId) {
-  if (!storeId) return [];
-  const children = await Store.find({ parentStore: storeId }).select('_id');
-  const all = [storeId, ...children.map(c => c._id)];
-  return all.map((id) => new mongoose.Types.ObjectId(id));
+  return getStoreTreeIds(storeId);
 }
 
 /** Match PpmTask.store whether stored as ObjectId or same 24-hex string (aligned with ppm routes). */

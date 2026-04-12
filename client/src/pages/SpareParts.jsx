@@ -72,6 +72,20 @@ const asText = (value, fallback = '-') => {
   return s || fallback;
 };
 
+/** One-line label for harvest picker; list is loaded with GET /assets?q= (serial, ABS, MAC, name, …). */
+const faultyHarvestAssetLabel = (a) => {
+  const where = assetStoreLocationLine(a);
+  const sn = asText(a.serial_number, 'n/a');
+  const abs = String(a.abs_code ?? a.absCode ?? '').trim();
+  const mac = String(a.mac_address ?? '').trim();
+  const bits = [`${asText(a.name)} — SN ${sn}`];
+  if (abs) bits.push(`ABS ${abs}`);
+  if (mac) bits.push(`MAC ${mac}`);
+  let line = bits.join(' · ');
+  if (where) line = `${line} — ${where}`;
+  return line;
+};
+
 const unwrapValueLayers = (v, maxDepth = 12) => {
   let x = v;
   let d = 0;
@@ -154,6 +168,11 @@ const SpareParts = () => {
 
   const [faultyAssets, setFaultyAssets] = useState([]);
   const [harvestAssetId, setHarvestAssetId] = useState('');
+  const [harvestAssetInput, setHarvestAssetInput] = useState('');
+  const [harvestPickLabel, setHarvestPickLabel] = useState('');
+  const [harvestAssetMenuOpen, setHarvestAssetMenuOpen] = useState(false);
+  const [debouncedFaultyListQ, setDebouncedFaultyListQ] = useState('');
+  const [harvestFaultyListLoading, setHarvestFaultyListLoading] = useState(false);
   const [harvestTicket, setHarvestTicket] = useState('');
   const [harvestLines, setHarvestLines] = useState([emptyHarvestLine()]);
   const [harvesting, setHarvesting] = useState(false);
@@ -231,21 +250,30 @@ const SpareParts = () => {
     }
   }, [debouncedQ]);
 
-  const loadFaultyAssets = useCallback(async () => {
-    if (!canManage) return;
+  const loadFaultyAssets = useCallback(async (listQuery = '') => {
+    if (!canManage) {
+      setFaultyAssets([]);
+      setHarvestFaultyListLoading(false);
+      return;
+    }
     try {
-      const res = await api.get('/assets', {
-        params: {
-          condition: 'Faulty',
-          page: 1,
-          limit: 150
-        }
-      });
+      setHarvestFaultyListLoading(true);
+      const t = String(listQuery || '').trim();
+      const params = {
+        condition: 'Faulty',
+        disposed: 'false',
+        page: 1,
+        limit: 150
+      };
+      if (t) params.q = t;
+      const res = await api.get('/assets', { params });
       const items = res.data?.items || res.data || [];
       setFaultyAssets(Array.isArray(items) ? items : []);
     } catch (error) {
       console.error('Failed to load faulty assets:', error);
       setFaultyAssets([]);
+    } finally {
+      setHarvestFaultyListLoading(false);
     }
   }, [canManage]);
 
@@ -259,8 +287,16 @@ const SpareParts = () => {
   }, [debouncedQ, load]);
 
   useEffect(() => {
-    loadFaultyAssets();
-  }, [loadFaultyAssets]);
+    const t = setTimeout(() => setDebouncedFaultyListQ(harvestAssetInput), 300);
+    return () => clearTimeout(t);
+  }, [harvestAssetInput]);
+
+  useEffect(() => {
+    const pick = harvestPickLabel.trim();
+    const inp = debouncedFaultyListQ.trim();
+    const q = harvestAssetId && inp === pick ? '' : inp;
+    loadFaultyAssets(q);
+  }, [debouncedFaultyListQ, harvestAssetId, harvestPickLabel, loadFaultyAssets]);
 
   useEffect(() => {
     loadPurchaseRefs();
@@ -452,6 +488,31 @@ const SpareParts = () => {
     });
   };
 
+  const onHarvestAssetInputChange = (e) => {
+    const v = e.target.value;
+    setHarvestAssetInput(v);
+    setHarvestAssetMenuOpen(true);
+    if (harvestAssetId && v.trim() !== harvestPickLabel.trim()) {
+      setHarvestAssetId('');
+      setHarvestPickLabel('');
+    }
+  };
+
+  const pickHarvestFaultyAsset = (a) => {
+    const lab = faultyHarvestAssetLabel(a);
+    setHarvestAssetId(String(a._id));
+    setHarvestAssetInput(lab);
+    setHarvestPickLabel(lab);
+    setHarvestAssetMenuOpen(false);
+  };
+
+  const clearHarvestFaultyAssetPick = () => {
+    setHarvestAssetId('');
+    setHarvestAssetInput('');
+    setHarvestPickLabel('');
+    setHarvestAssetMenuOpen(false);
+  };
+
   const onHarvestSubmit = async (e) => {
     e.preventDefault();
     if (!canManage || !harvestAssetId) {
@@ -484,8 +545,11 @@ const SpareParts = () => {
       });
       setHarvestLines([emptyHarvestLine()]);
       setHarvestTicket('');
+      setHarvestAssetId('');
+      setHarvestAssetInput('');
+      setHarvestPickLabel('');
       await load();
-      await loadFaultyAssets();
+      await loadFaultyAssets('');
       alert('Harvest recorded. Inventory and asset history were updated.');
     } catch (error) {
       alert(error.response?.data?.message || 'Harvest failed');
@@ -676,28 +740,61 @@ const SpareParts = () => {
           <h2 className="font-semibold text-slate-900">Harvest from faulty asset</h2>
           <p className="text-xs text-slate-500">
             Only assets currently in <span className="font-medium">Faulty</span> condition (not disposed) can be sources.
+            Type serial number, ABS code, MAC address, or name to search (same rules as the Assets page).
           </p>
           <form onSubmit={onHarvestSubmit} className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Faulty asset</label>
-                <select
-                  value={harvestAssetId}
-                  onChange={(e) => setHarvestAssetId(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                  required
-                >
-                  <option value="">Select asset…</option>
-                  {faultyAssets.map((a) => {
-                    const where = assetStoreLocationLine(a);
-                    return (
-                      <option key={a._id} value={a._id}>
-                        {asText(a.name)} — SN {asText(a.serial_number, 'n/a')}
-                        {where ? ` — ${where}` : ''}
-                      </option>
-                    );
-                  })}
-                </select>
+                <div className="flex gap-2 items-start">
+                  <div className="relative flex-1 min-w-0">
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={harvestAssetInput}
+                      onChange={onHarvestAssetInputChange}
+                      onFocus={() => setHarvestAssetMenuOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setHarvestAssetMenuOpen(false), 180);
+                      }}
+                      placeholder="Search serial, ABS, MAC, name…"
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                    />
+                    {harvestAssetMenuOpen && (
+                      <ul className="absolute z-40 mt-1 max-h-56 w-full min-w-[12rem] overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg text-sm">
+                        {harvestFaultyListLoading ? (
+                          <li className="px-3 py-2 text-slate-500">Loading…</li>
+                        ) : faultyAssets.length === 0 ? (
+                          <li className="px-3 py-2 text-slate-500">
+                            {harvestAssetInput.trim() ? 'No matching faulty assets.' : 'No faulty assets in this store.'}
+                          </li>
+                        ) : (
+                          faultyAssets.map((a) => (
+                            <li key={a._id}>
+                              <button
+                                type="button"
+                                className="w-full px-3 py-1.5 text-left hover:bg-slate-50"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => pickHarvestFaultyAsset(a)}
+                              >
+                                {faultyHarvestAssetLabel(a)}
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  {(harvestAssetId || harvestAssetInput.trim()) && (
+                    <button
+                      type="button"
+                      onClick={clearHarvestFaultyAssetPick}
+                      className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Ticket / WO (optional)</label>

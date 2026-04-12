@@ -262,10 +262,22 @@ const canAccess = (req, item) => {
   return String(req.activeStore) === String(item.store);
 };
 
-const canAccessAssetStore = (req, asset) => {
-  if (req.user.role === 'Super Admin') return true;
-  if (!asset?.store || !req.activeStore) return false;
-  return String(req.activeStore) === String(asset.store);
+/** Same tree as GET /api/assets: active main store + its location (child) sites. */
+const getStoreIdsForAssetAccess = async (storeId) => {
+  if (!storeId) return [];
+  const children = await Store.find({ parentStore: storeId }).select('_id').lean();
+  const all = [storeId, ...children.map((c) => c._id)];
+  return all.map((id) => new mongoose.Types.ObjectId(String(id)));
+};
+
+const canAccessAssetStore = async (req, asset) => {
+  if (req.user?.role === 'Super Admin') return true;
+  const assetStoreId = asset?.store?._id || asset?.store;
+  const activeRaw = req?.activeStore;
+  if (!assetStoreId || activeRaw == null || activeRaw === '') return false;
+  if (!mongoose.Types.ObjectId.isValid(String(activeRaw))) return false;
+  const allowedIds = await getStoreIdsForAssetAccess(activeRaw);
+  return allowedIds.some((id) => String(id) === String(assetStoreId));
 };
 
 const sumLotsRemaining = (doc) => (doc.stockLots || []).reduce(
@@ -898,7 +910,7 @@ router.post('/harvest', protect, adminOrViewer, restrictViewer, async (req, res)
     if (String(asset.condition || '').trim() !== 'Faulty') {
       return res.status(400).json({ message: 'Harvest is only allowed for assets in Faulty condition' });
     }
-    if (!canAccessAssetStore(req, asset)) {
+    if (!(await canAccessAssetStore(req, asset))) {
       return res.status(403).json({ message: 'Not authorized for this asset store' });
     }
 
@@ -1135,7 +1147,7 @@ router.post('/:id/issue', protect, restrictViewer, async (req, res) => {
     if (mongoose.Types.ObjectId.isValid(String(rawTarget || ''))) {
       targetAsset = await Asset.findById(rawTarget).populate('store', 'name store_name');
       if (!targetAsset) return res.status(404).json({ message: 'Target asset not found' });
-      if (!canAccessAssetStore(req, targetAsset)) {
+      if (!(await canAccessAssetStore(req, targetAsset))) {
         return res.status(403).json({ message: 'Not authorized for the target asset store' });
       }
     }
@@ -1243,7 +1255,7 @@ router.post('/:id/issue', protect, restrictViewer, async (req, res) => {
     for (const [donorKey, { qty: donorQty }] of donorMap) {
       if (donorKey === '__pool__' || !mongoose.Types.ObjectId.isValid(donorKey)) continue;
       const donorAsset = await Asset.findById(donorKey).populate('store', 'name store_name');
-      if (!donorAsset || !canAccessAssetStore(req, donorAsset)) continue;
+      if (!donorAsset || !(await canAccessAssetStore(req, donorAsset))) continue;
       const donorDetails = [
         `${donorQty}× ${doc.name} (PN: ${partPn || '—'}) recovered from this unit was drawn from spare inventory and issued.`,
         targetLine,

@@ -509,8 +509,11 @@ function createFastUniqueIdGenerator() {
   };
 }
 
-async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [] }) {
-  const configuredRecipients = await getStoreNotificationRecipients(asset?.store || null);
+async function notifyAssetEvent({ asset, recipientEmail, subject, lines = [], storeRecipientOptions } = {}) {
+  const configuredRecipients = await getStoreNotificationRecipients(
+    asset?.store || null,
+    storeRecipientOptions && typeof storeRecipientOptions === 'object' ? storeRecipientOptions : undefined
+  );
   const storeId = asset?.store || null;
   const subjects = await getStoreNotificationSubjects(storeId);
   const assetPrefix = subjects.asset || 'Expo City Dubai Asset Notification';
@@ -4330,8 +4333,14 @@ router.post('/assign', protect, admin, async (req, res) => {
     gatePassOrigin,
     gatePassDestination,
     gatePassJustification,
-    sendGatePassEmail
+    sendGatePassEmail,
+    notifyManager,
+    notifyViewer
   } = req.body;
+  const storeRecipientOptions = {
+    includeManagers: notifyManager === true,
+    includeViewers: notifyViewer === true
+  };
   try {
     const normalizedIds = Array.from(
       new Set(
@@ -4538,6 +4547,7 @@ router.post('/assign', protect, admin, async (req, res) => {
         asset: primaryAsset,
         recipientEmail: targetEmail,
         subject: 'Asset Assigned to You',
+        storeRecipientOptions,
         lines: [
           `Asset assignment update for ${technician.name}.`,
           `Assigned Count: ${updatedAssets.length}`,
@@ -4630,6 +4640,7 @@ router.post('/assign', protect, admin, async (req, res) => {
         asset: primaryAsset,
         recipientEmail: externalEmail,
         subject: 'Asset Assigned to You',
+        storeRecipientOptions,
         lines: [
           `Asset assignment update for ${otherRecipient.name}.`,
           `Assigned Count: ${updatedAssets.length}`,

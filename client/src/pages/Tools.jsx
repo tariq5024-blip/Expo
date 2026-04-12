@@ -308,7 +308,9 @@ const Tools = () => {
         gatePassOrigin: payload.gatePassOrigin,
         gatePassDestination: payload.gatePassDestination,
         gatePassJustification: payload.gatePassJustification,
-        ticketNumber: payload.ticketNumber
+        ticketNumber: payload.ticketNumber,
+        notifyManager: payload.notifyManager,
+        notifyViewer: payload.notifyViewer
       });
       setAssignToolModal(null);
       await loadTools({ q: debouncedSearch, s: status });

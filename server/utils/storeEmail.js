@@ -31,12 +31,25 @@ const getStoreEmailConfig = async (storeId) => {
   };
 };
 
-const getStoreNotificationRecipients = async (storeId) => {
+/**
+ * @param {string|null|undefined} storeId
+ * @param {{ includeManagers?: boolean, includeViewers?: boolean }|undefined} options
+ *        When omitted, all configured role lists are included (backward compatible).
+ */
+const getStoreNotificationRecipients = async (storeId, options) => {
   const id = resolveStoreId(storeId);
   if (!id) return [];
   const store = await Store.findById(id).select(
     'emailConfig.notificationRecipients emailConfig.technicianRecipients emailConfig.adminRecipients emailConfig.viewerRecipients emailConfig.managerRecipients emailConfig.lineManagerRecipients'
   ).lean();
+  const includeManagers =
+    options && Object.prototype.hasOwnProperty.call(options, 'includeManagers')
+      ? Boolean(options.includeManagers)
+      : true;
+  const includeViewers =
+    options && Object.prototype.hasOwnProperty.call(options, 'includeViewers')
+      ? Boolean(options.includeViewers)
+      : true;
   const recipients = Array.isArray(store?.emailConfig?.notificationRecipients)
     ? store.emailConfig.notificationRecipients
     : [];
@@ -46,10 +59,10 @@ const getStoreNotificationRecipients = async (storeId) => {
   const admins = Array.isArray(store?.emailConfig?.adminRecipients)
     ? store.emailConfig.adminRecipients
     : [];
-  const viewers = Array.isArray(store?.emailConfig?.viewerRecipients)
+  const viewers = includeViewers && Array.isArray(store?.emailConfig?.viewerRecipients)
     ? store.emailConfig.viewerRecipients
     : [];
-  const managers = Array.isArray(store?.emailConfig?.managerRecipients)
+  const managers = includeManagers && Array.isArray(store?.emailConfig?.managerRecipients)
     ? store.emailConfig.managerRecipients
     : [];
   const lineManagers = Array.isArray(store?.emailConfig?.lineManagerRecipients)

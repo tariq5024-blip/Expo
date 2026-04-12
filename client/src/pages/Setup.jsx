@@ -78,14 +78,6 @@ const Setup = () => {
   const [emailSaving, setEmailSaving] = useState(false);
   const [testEmail, setTestEmail] = useState('');
   const [testingEmail, setTestingEmail] = useState(false);
-  const [notifLoading, setNotifLoading] = useState(false);
-  const [notifSaving, setNotifSaving] = useState(false);
-  const [notificationPreferences, setNotificationPreferences] = useState({
-    enabled: true,
-    notifyReceiver: true,
-    notifyIssuer: true,
-    notifyLineManager: false
-  });
   const isMainAdmin = user?.role === 'Super Admin';
   const canManageEmail = user?.role === 'Super Admin';
   const [themeSaving, setThemeSaving] = useState(false);
@@ -171,48 +163,8 @@ const Setup = () => {
 
   const canManageNotificationPreferences = user?.role === 'Admin' || user?.role === 'Super Admin';
 
-  useEffect(() => {
-    if (!canManageNotificationPreferences) return;
-
-    const loadPreferences = async () => {
-      try {
-        setNotifLoading(true);
-        const res = await api.get('/system/notification-preferences');
-        const prefs = res.data?.notificationPreferences || {};
-        setNotificationPreferences({
-          enabled: prefs.enabled !== false,
-          notifyReceiver: prefs.notifyReceiver !== false,
-          notifyIssuer: prefs.notifyIssuer !== false,
-          notifyLineManager: Boolean(prefs.notifyLineManager)
-        });
-      } catch (error) {
-        console.error(error);
-      } finally {
-        setNotifLoading(false);
-      }
-    };
-
-    loadPreferences();
-  }, [canManageNotificationPreferences]);
-
   const handleEmailField = (field, value) => {
     setEmailConfig((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const updateNotificationPreferenceField = (field, value) => {
-    setNotificationPreferences((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const saveNotificationPreferences = async () => {
-    try {
-      setNotifSaving(true);
-      await api.put('/system/notification-preferences', notificationPreferences);
-      alert('Notification preferences saved.');
-    } catch (error) {
-      alert('Failed to save notification preferences: ' + (error.response?.data?.message || error.message));
-    } finally {
-      setNotifSaving(false);
-    }
   };
 
   useEffect(() => {
@@ -838,82 +790,6 @@ const Setup = () => {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {canManageNotificationPreferences && (
-        <div className="mt-12 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center mb-6">
-            <Mail className="w-6 h-6 text-indigo-600 mr-2" />
-            <h2 className="text-xl font-bold text-gray-800">Notification Emails</h2>
-          </div>
-          <p className="text-sm text-gray-500 mb-4">
-            These toggles apply to <strong>your admin account</strong> (who receives notification copy), not to a store record.
-          </p>
-          {notifLoading ? (
-            <p className="text-sm text-gray-500">Loading notification settings...</p>
-          ) : (
-            <div className="space-y-4">
-              <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={notificationPreferences.enabled}
-                  onChange={(e) => updateNotificationPreferenceField('enabled', e.target.checked)}
-                />
-                <div>
-                  <p className="font-semibold text-gray-800">Enable Notification Emails</p>
-                  <p className="text-sm text-gray-500">Main switch for all account notification emails.</p>
-                </div>
-              </label>
-              <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={notificationPreferences.notifyReceiver}
-                  onChange={(e) => updateNotificationPreferenceField('notifyReceiver', e.target.checked)}
-                />
-                <div>
-                  <p className="font-semibold text-gray-800">Notify Receiver</p>
-                  <p className="text-sm text-gray-500">Send email to assigned/receiving user for asset movement.</p>
-                </div>
-              </label>
-              <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={notificationPreferences.notifyIssuer}
-                  onChange={(e) => updateNotificationPreferenceField('notifyIssuer', e.target.checked)}
-                />
-                <div>
-                  <p className="font-semibold text-gray-800">Notify Issuer</p>
-                  <p className="text-sm text-gray-500">Send confirmation email to the admin/issuer.</p>
-                </div>
-              </label>
-              <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={notificationPreferences.notifyLineManager}
-                  onChange={(e) => updateNotificationPreferenceField('notifyLineManager', e.target.checked)}
-                />
-                <div>
-                  <p className="font-semibold text-gray-800">Notify Line Manager</p>
-                  <p className="text-sm text-gray-500">Send email to line manager for critical events.</p>
-                </div>
-              </label>
-
-              <div className="pt-2 flex justify-end">
-                <button
-                  onClick={saveNotificationPreferences}
-                  disabled={notifSaving}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {notifSaving ? 'Saving...' : 'Save Notification Settings'}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 

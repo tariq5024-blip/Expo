@@ -626,7 +626,9 @@ const SpareParts = () => {
         sendGatePassEmail: payload.sendGatePassEmail,
         gatePassOrigin: payload.gatePassOrigin,
         gatePassDestination: payload.gatePassDestination,
-        gatePassJustification: payload.gatePassJustification
+        gatePassJustification: payload.gatePassJustification,
+        notifyManager: payload.notifyManager,
+        notifyViewer: payload.notifyViewer
       });
       setAssignPartModal(null);
       await load();

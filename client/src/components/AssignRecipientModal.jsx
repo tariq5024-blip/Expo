@@ -11,7 +11,9 @@ const defaultAssignForm = (maxQty, defaultQty, defaultInstall) => ({
   sendGatePassEmail: false,
   gatePassOrigin: defaultInstall || '',
   gatePassDestination: '',
-  gatePassJustification: ''
+  gatePassJustification: '',
+  notifyManager: false,
+  notifyViewer: false
 });
 
 const defaultOtherRecipient = () => ({ name: '', email: '', phone: '', note: '' });
@@ -119,7 +121,9 @@ export default function AssignRecipientModal({
       gatePassOrigin: assignForm.gatePassOrigin,
       gatePassDestination: assignForm.gatePassDestination,
       gatePassJustification: assignForm.gatePassJustification,
-      ticketNumber: assignForm.ticketNumber
+      ticketNumber: assignForm.ticketNumber,
+      notifyManager: Boolean(assignForm.notifyManager),
+      notifyViewer: Boolean(assignForm.notifyViewer)
     };
   };
 
@@ -349,6 +353,30 @@ export default function AssignRecipientModal({
                   </div>
                 </>
               )}
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-2">
+                <p className="text-xs font-medium text-gray-700">Optional: store distribution lists</p>
+                <p className="text-xs text-gray-500">
+                  When checked, assignment emails also go to the Manager / Viewer lists set in Portal → Customize Email
+                  for this store.
+                </p>
+                <label className="flex items-center gap-2 text-sm text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={assignForm.notifyManager === true}
+                    onChange={(e) => setAssignForm({ ...assignForm, notifyManager: e.target.checked })}
+                  />
+                  Notify manager list
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={assignForm.notifyViewer === true}
+                    onChange={(e) => setAssignForm({ ...assignForm, notifyViewer: e.target.checked })}
+                  />
+                  Notify viewer list
+                </label>
+              </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700">Need Gate Pass?</label>

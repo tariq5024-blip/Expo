@@ -5,6 +5,18 @@ const bcrypt = require('bcryptjs');
 
 const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** Built-in Expo demo accounts — always re-sync password hash when seeding touches them (even if resetPasswords is false). */
+const CANONICAL_PASSWORD_SYNC_EMAILS = new Set([
+  'superadmin@expo.com',
+  'scy@expo.com',
+  'it@expo.com',
+  'noc@expo.com'
+]);
+
+const shouldSyncCanonicalPassword = (email, resetPasswords) =>
+  Boolean(resetPasswords)
+  || CANONICAL_PASSWORD_SYNC_EMAILS.has(String(email || '').trim().toLowerCase());
+
 const findUsersByEmailLoose = async (email) => {
   const canonical = String(email || '').trim().toLowerCase();
   // Match same email with optional accidental spaces + any case
@@ -86,7 +98,7 @@ const seedStoresAndUsers = async (options = {}) => {
       superAdmin.email = superAdminEmail;
       superAdmin.role = 'Super Admin';
       superAdmin.assignedStore = null;
-      if (resetPasswords) {
+      if (shouldSyncCanonicalPassword(superAdminEmail, resetPasswords)) {
         superAdmin.password = superAdminHashedPassword;
       }
       await superAdmin.save();
@@ -129,7 +141,7 @@ const seedStoresAndUsers = async (options = {}) => {
           adminUser.email = String(adminData.email).toLowerCase();
           adminUser.role = 'Admin';
           adminUser.assignedStore = store._id;
-          if (resetPasswords) {
+          if (shouldSyncCanonicalPassword(adminData.email, resetPasswords)) {
             adminUser.password = hashedPassword;
           }
           await adminUser.save();

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -124,13 +124,12 @@ const Login = () => {
             </div>
 
             <div className="flex justify-end pt-1">
-              <button 
-                type="button" 
+              <Link
+                to="/forgot-password"
                 className="text-amber-600 hover:text-amber-700 text-sm font-medium transition-colors"
-                onClick={() => alert('Please contact your administrator to reset password.')}
               >
                 Forgot Password?
-              </button>
+              </Link>
             </div>
 
             <button

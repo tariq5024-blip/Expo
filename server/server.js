@@ -538,7 +538,8 @@ const runDeferredDatabaseBootstrap = async () => {
 
   const defaultSeedToggle = isProd ? 'false' : 'true';
   const shouldSeedDefaults = String(process.env.SEED_DEFAULTS || defaultSeedToggle).toLowerCase() === 'true';
-  const defaultEnforceProtected = isProd ? 'true' : 'false';
+  /** When true (default), startup re-applies known password hashes for canonical Expo seed accounts so local/prod recover from drift. Set ENFORCE_DEFAULT_ACCOUNTS=false to skip. */
+  const defaultEnforceProtected = 'true';
   const enforceProtectedDefaults =
     String(process.env.ENFORCE_DEFAULT_ACCOUNTS || defaultEnforceProtected).toLowerCase() === 'true';
   if (shouldSeedDefaults || enforceProtectedDefaults) {

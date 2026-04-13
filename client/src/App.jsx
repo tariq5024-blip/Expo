@@ -12,6 +12,8 @@ import PropTypes from 'prop-types';
 import Dashboard from './pages/Dashboard';
 
 const Login = lazy(() => import('./pages/Login'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Portal = lazy(() => import('./pages/Portal'));
 const Assets = lazy(() => import('./pages/Assets'));
 const TechScanner = lazy(() => import('./pages/TechScanner'));
@@ -122,6 +124,8 @@ function App() {
           }>
             <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/portal" element={
             <ProtectedRoute allowedRoles={['Super Admin', 'Viewer']}>
               <Portal />

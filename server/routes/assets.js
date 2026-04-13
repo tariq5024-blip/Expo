@@ -238,21 +238,34 @@ const getScopedStoreId = (req) => {
   }
   return resolveAssignedStoreId(req?.user) || '';
 };
+
+/** ObjectId string from a store ref (handles populated { _id, name } vs raw id). */
+const normalizeAssetStoreRef = (storeRef) => {
+  if (storeRef == null || storeRef === '') return '';
+  if (typeof storeRef === 'object' && storeRef._id != null) {
+    return String(storeRef._id);
+  }
+  return String(storeRef);
+};
+
 const hasAssetStoreAccess = (req, storeId) => {
   if (req.user?.role === 'Super Admin') return true;
   const scopedStoreId = getScopedStoreId(req);
   if (!scopedStoreId) return false;
-  return String(storeId || '') === scopedStoreId;
+  const assetStoreStr = normalizeAssetStoreRef(storeId);
+  return assetStoreStr === scopedStoreId;
 };
 
 const hasAssetStoreAccessDeep = async (req, storeId) => {
   if (req.user?.role === 'Super Admin') return true;
   const scopedStoreId = getScopedStoreId(req);
   if (!scopedStoreId) return false;
-  if (String(storeId || '') === String(scopedStoreId)) return true;
+  const assetStoreStr = normalizeAssetStoreRef(storeId);
+  if (!assetStoreStr) return false;
+  if (assetStoreStr === String(scopedStoreId)) return true;
   if (!mongoose.isValidObjectId(scopedStoreId)) return false;
   const allowedIds = await getStoreIds(scopedStoreId);
-  return allowedIds.some((id) => String(id) === String(storeId || ''));
+  return allowedIds.some((id) => String(id) === assetStoreStr);
 };
 
 const resolveScopedStoreName = async (req) => {
@@ -3625,7 +3638,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       vendor_name: reqVendorName
     } = req.body;
     
-    const stores = await Store.find();
+    const stores = await Store.find().select('_id name').lean();
     const storeMap = {};
     const storeMapLower = {};
     const locationNameSet = new Set();
@@ -3930,6 +3943,7 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
     const warnings = [];
     const updatedRows = [];
     const importUpdateEntries = [];
+    const bulkUpdateOps = [];
     for (const row of parsedAssets) {
       const serialKey = String(row.serialStr || '').trim().toLowerCase();
       const storeKey = String(row.storeId || '').trim();
@@ -3980,8 +3994,12 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
               nextValues[field] = patch[field];
             }
           });
-          // eslint-disable-next-line no-await-in-loop
-          await Asset.updateOne({ _id: existingDoc._id }, { $set: patch });
+          bulkUpdateOps.push({
+            updateOne: {
+              filter: { _id: existingDoc._id },
+              update: { $set: patch }
+            }
+          });
           updatedCount.v += 1;
           updatedRows.push({
             serial: row.serialStr,
@@ -4002,6 +4020,13 @@ router.post('/import', protect, restrictViewer, upload.single('file'), async (re
       }
 
       docsToInsert.push(row.assetData);
+    }
+
+    const BULK_WRITE_CHUNK = 500;
+    for (let i = 0; i < bulkUpdateOps.length; i += BULK_WRITE_CHUNK) {
+      const slice = bulkUpdateOps.slice(i, i + BULK_WRITE_CHUNK);
+      // eslint-disable-next-line no-await-in-loop
+      await Asset.bulkWrite(slice, { ordered: false });
     }
 
     if (docsToInsert.length > 0) {
@@ -4315,6 +4340,287 @@ router.get('/by-technician', protect, admin, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+const buildFaultyReplacementSearchAnd = ({ serialQ, macQ, absQ, quickQ }) => {
+  const clauses = [];
+  if (serialQ) clauses.push({ serial_number: toContainsRegex(serialQ) });
+  if (macQ) clauses.push({ mac_address: toContainsRegex(macQ) });
+  if (absQ) {
+    const rx = toContainsRegex(absQ);
+    clauses.push({
+      $or: [
+        { abs_code: rx },
+        { 'customFields.abs_code': rx },
+        { 'customFields.absCode': rx }
+      ]
+    });
+  }
+  if (quickQ) {
+    const rx = toContainsRegex(quickQ);
+    clauses.push({
+      $or: [
+        { serial_number: rx },
+        { mac_address: rx },
+        { abs_code: rx },
+        { uniqueId: rx },
+        { name: rx },
+        { model_number: rx },
+        { expo_tag: rx }
+      ]
+    });
+  }
+  return clauses;
+};
+
+// @desc    In-store assets with same model (for admin faulty → replacement flow); optional manual search / any-model mode
+// @route   GET /api/assets/faulty-replacement-candidates
+// @access  Private/Admin
+router.get('/faulty-replacement-candidates', protect, admin, async (req, res) => {
+  try {
+    const faultyId = String(req.query.faultyAssetId || '').trim();
+    if (!mongoose.Types.ObjectId.isValid(faultyId)) {
+      return res.status(400).json({ message: 'Invalid faultyAssetId' });
+    }
+    const faulty = await Asset.findById(faultyId).populate('store');
+    if (!faulty) {
+      return res.status(404).json({ message: 'Asset not found' });
+    }
+    if (!(await hasAssetStoreAccessDeep(req, faulty.store))) {
+      return res.status(403).json({ message: 'Asset is outside your store scope' });
+    }
+    if (faulty.disposed) {
+      return res.status(400).json({ message: 'Disposed assets cannot use this workflow' });
+    }
+
+    const manualPick = String(req.query.manual_pick || req.query.manualPick || '').toLowerCase() === 'true'
+      || String(req.query.manual_pick || '') === '1';
+    const serialQ = String(req.query.serial_number || '').trim();
+    const macQ = String(req.query.mac_address || '').trim();
+    const absQ = String(req.query.abs_code || '').trim();
+    const quickQ = String(req.query.q || '').trim();
+    const hasSearch = Boolean(serialQ || macQ || absQ || quickQ);
+
+    const modelRaw = String(faulty.model_number || '').trim();
+    if (!modelRaw && !manualPick) {
+      return res.json({
+        items: [],
+        model_number: '',
+        faulty_asset: {
+          _id: faulty._id,
+          name: faulty.name,
+          serial_number: faulty.serial_number,
+          uniqueId: faulty.uniqueId
+        },
+        message: 'This asset has no model number. Add a model number, or use “Search any in-store model” with serial/MAC/ABS search.',
+        manual_pick: false
+      });
+    }
+
+    if (manualPick && !hasSearch) {
+      return res.status(400).json({
+        message: 'For store-wide replacement search, enter at least one of: serial number, MAC address, ABS code, or quick search.'
+      });
+    }
+
+    const faultyStoreIdStr = normalizeAssetStoreRef(faulty.store);
+    if (!mongoose.Types.ObjectId.isValid(faultyStoreIdStr)) {
+      return res.status(400).json({ message: 'Asset has no valid store for this workflow' });
+    }
+
+    const base = {
+      store: new mongoose.Types.ObjectId(faultyStoreIdStr),
+      _id: { $ne: faulty._id },
+      disposed: { $ne: true },
+      reserved: { $ne: true },
+      status: 'In Store',
+      condition: { $nin: ['Faulty', 'Workshop', 'Under Repair/Workshop'] }
+    };
+
+    const searchAnd = buildFaultyReplacementSearchAnd({ serialQ, macQ, absQ, quickQ });
+    const filter = { ...base };
+    if (!manualPick && modelRaw) {
+      filter.model_number = new RegExp(`^${escapeRegex(modelRaw)}$`, 'i');
+    }
+    if (searchAnd.length > 0) {
+      filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), ...searchAnd];
+    }
+
+    const candidates = await Asset.find(filter)
+      .select('name model_number serial_number mac_address abs_code uniqueId status condition location manufacturer expo_tag')
+      .sort({ serial_number: 1 })
+      .limit(200)
+      .lean();
+
+    return res.json({
+      items: candidates,
+      model_number: modelRaw,
+      manual_pick: manualPick,
+      faulty_asset: {
+        _id: faulty._id,
+        name: faulty.name,
+        serial_number: faulty.serial_number,
+        uniqueId: faulty.uniqueId
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Mark asset faulty and promote an in-store same-model unit into its operational role
+// @route   POST /api/assets/mark-faulty-with-replacement
+// @access  Private/Admin
+router.post('/mark-faulty-with-replacement', protect, admin, async (req, res) => {
+  const faultyAssetId = String(req.body.faultyAssetId || '').trim();
+  const replacementAssetId = String(req.body.replacementAssetId || '').trim();
+  const note = String(req.body.note || '').trim();
+  const ticketNumber = String(req.body.ticketNumber || '').trim();
+  const manualPick = req.body.manualPick === true || String(req.body.manualPick || '').toLowerCase() === 'true';
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(faultyAssetId) || !mongoose.Types.ObjectId.isValid(replacementAssetId)) {
+      return res.status(400).json({ message: 'Invalid asset id(s)' });
+    }
+    if (faultyAssetId === replacementAssetId) {
+      return res.status(400).json({ message: 'Replacement must be a different asset' });
+    }
+
+    const faulty = await Asset.findById(faultyAssetId).populate('store');
+    const replacement = await Asset.findById(replacementAssetId).populate('store');
+    if (!faulty || !replacement) {
+      return res.status(404).json({ message: 'One or both assets were not found' });
+    }
+
+    const accessFaulty = await hasAssetStoreAccessDeep(req, faulty.store);
+    const accessReplacement = await hasAssetStoreAccessDeep(req, replacement.store);
+    if (!accessFaulty || !accessReplacement) {
+      return res.status(403).json({ message: 'One or more assets are outside your store scope' });
+    }
+
+    if (normalizeAssetStoreRef(faulty.store) !== normalizeAssetStoreRef(replacement.store)) {
+      return res.status(400).json({ message: 'Faulty asset and replacement must belong to the same store' });
+    }
+
+    const modelFaulty = String(faulty.model_number || '').trim();
+    const modelReplacement = String(replacement.model_number || '').trim();
+    const modelMatch = Boolean(modelFaulty && modelReplacement && modelFaulty.toLowerCase() === modelReplacement.toLowerCase());
+    if (!modelMatch && !manualPick) {
+      return res.status(400).json({
+        message:
+          'Replacement must have the same model number as the faulty unit, or enable manual pick after locating the unit via serial/MAC/ABS search.'
+      });
+    }
+
+    if (faulty.disposed || replacement.disposed) {
+      return res.status(400).json({ message: 'Cannot swap involving disposed assets' });
+    }
+    if (replacement.reserved) {
+      return res.status(400).json({ message: 'Replacement asset is reserved; unreserve it first' });
+    }
+    if (String(replacement.status || '').trim() !== 'In Store') {
+      return res.status(400).json({ message: 'Replacement must currently be In Store' });
+    }
+    const repCond = String(replacement.condition || '').trim().toLowerCase();
+    if (repCond === 'faulty' || repCond === 'workshop' || String(replacement.condition || '').includes('Under Repair')) {
+      return res.status(400).json({ message: 'Replacement unit is not in a serviceable condition' });
+    }
+
+    const snapAssignedTo = faulty.assigned_to || null;
+    const snapAssignedExternal = faulty.assigned_to_external
+      ? { ...faulty.assigned_to_external }
+      : null;
+    const snapStatus = String(faulty.status || '').trim() || 'In Store';
+    const snapLocation = String(faulty.location || '').trim();
+    const snapTicket = String(faulty.ticket_number || '').trim();
+
+    const faultyPrevStatus = faulty.status;
+    const faultyPrevCondition = faulty.condition;
+
+    faulty.previous_status = faultyPrevStatus;
+    faulty.condition = 'Faulty';
+    if (faulty.status !== 'Missing') {
+      faulty.status = 'In Store';
+    }
+    faulty.assigned_to = null;
+    faulty.assigned_to_external = null;
+    if (ticketNumber) {
+      faulty.ticket_number = ticketNumber;
+    }
+
+    const modelNote = manualPick && !modelMatch
+      ? `Manual pick — models differ (faulty model: ${modelFaulty || '—'}; replacement: ${modelReplacement || '—'})`
+      : null;
+    const faultyDetails = [
+      `Replacement unit: ${replacement.name || 'Asset'} (SN: ${replacement.serial_number || 'N/A'}, ID: ${replacement.uniqueId || 'N/A'})`,
+      modelNote,
+      note ? `Note: ${note}` : null
+    ].filter(Boolean).join(' — ');
+
+    appendAssetHistory(faulty, {
+      action: 'Marked Faulty (replacement swap)',
+      req,
+      ticketNumber: ticketNumber || faulty.ticket_number || 'N/A',
+      details: faultyDetails,
+      previousStatus: faultyPrevStatus,
+      previousCondition: faultyPrevCondition,
+      location: faulty.location
+    });
+
+    await faulty.save();
+
+    const repPrevStatus = replacement.status;
+    const repPrevCondition = replacement.condition;
+
+    replacement.previous_status = repPrevStatus;
+    replacement.assigned_to = snapAssignedTo || null;
+    replacement.assigned_to_external = snapAssignedExternal;
+    replacement.status = snapStatus;
+    replacement.location = snapLocation;
+    if (snapTicket) {
+      replacement.ticket_number = snapTicket;
+    }
+
+    const repDetails = [
+      `Replaces faulty: ${faulty.name || 'Asset'} (SN: ${faulty.serial_number || 'N/A'}, ID: ${faulty.uniqueId || 'N/A'})`,
+      modelNote,
+      note ? `Note: ${note}` : null
+    ].filter(Boolean).join(' — ');
+
+    appendAssetHistory(replacement, {
+      action: 'Issued as replacement for faulty unit',
+      req,
+      ticketNumber: snapTicket || ticketNumber || 'N/A',
+      details: repDetails,
+      previousStatus: repPrevStatus,
+      previousCondition: repPrevCondition,
+      location: snapLocation
+    });
+
+    await replacement.save();
+
+    await ActivityLog.create({
+      user: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      action: 'Faulty replacement',
+      details: `Faulty: ${faulty.name} (${faulty.serial_number || 'N/A'}) → Replacement: ${replacement.name} (${replacement.serial_number || 'N/A'})`,
+      store: faulty.store
+    });
+
+    const populated = await Asset.find({ _id: { $in: [faulty._id, replacement._id] } })
+      .populate('store')
+      .populate('assigned_to', 'name email phone');
+
+    const byId = new Map(populated.map((a) => [String(a._id), a]));
+    return res.json({
+      message: 'Faulty recorded and replacement unit updated.',
+      faulty: byId.get(String(faulty._id)),
+      replacement: byId.get(String(replacement._id))
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 });
 

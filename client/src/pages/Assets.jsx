@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock, MessageSquarePlus, GripVertical, Lock, LockOpen } from 'lucide-react';
+import { Edit, Trash2, UserCheck, UserX, Filter, SlidersHorizontal, Download, RotateCcw, Scissors, Clock, MessageSquarePlus, GripVertical, Lock, LockOpen, AlertTriangle } from 'lucide-react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import LoadingLogo from '../components/LoadingLogo';
@@ -498,6 +498,21 @@ const Assets = () => {
   const [bulkLocationId, setBulkLocationId] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [showBulkEditModal, setShowBulkEditModal] = useState(false);
+  const [showFaultyModal, setShowFaultyModal] = useState(false);
+  const [faultyModalFaultyId, setFaultyModalFaultyId] = useState('');
+  const [faultyModalLoading, setFaultyModalLoading] = useState(false);
+  const [faultyModalSubmitting, setFaultyModalSubmitting] = useState(false);
+  const [faultyModalCandidates, setFaultyModalCandidates] = useState([]);
+  const [faultyModalMeta, setFaultyModalMeta] = useState(null);
+  const [faultyModalHint, setFaultyModalHint] = useState('');
+  const [faultyModalSelectedId, setFaultyModalSelectedId] = useState('');
+  const [faultyModalNote, setFaultyModalNote] = useState('');
+  const [faultyModalTicket, setFaultyModalTicket] = useState('');
+  const [faultySearchSerial, setFaultySearchSerial] = useState('');
+  const [faultySearchMac, setFaultySearchMac] = useState('');
+  const [faultySearchAbs, setFaultySearchAbs] = useState('');
+  const [faultySearchQ, setFaultySearchQ] = useState('');
+  const [faultyManualPickAnyModel, setFaultyManualPickAnyModel] = useState(false);
   const [bulkForm, setBulkForm] = useState({
     status: '',
     condition: '',
@@ -1305,6 +1320,16 @@ const Assets = () => {
   const cannotIssueToTechnician = (asset) => Boolean(asset?.reserved === true) || isConditionFaulty(asset);
   const topAssignDisabled = selectedIds.length === 0;
 
+  const faultySelectionAsset = useMemo(() => {
+    if (selectedIds.length !== 1) return null;
+    return assets.find((a) => String(a._id) === String(selectedIds[0])) || null;
+  }, [assets, selectedIds]);
+
+  const topFaultyDisabled =
+    !faultySelectionAsset
+    || faultySelectionAsset.disposed === true
+    || isConditionFaulty(faultySelectionAsset);
+
   const handleTopEdit = () => {
     if (selectedIds.length === 0) return;
     if (selectedIds.length === 1) {
@@ -1380,6 +1405,113 @@ const Assets = () => {
       handleDelete(selectedIds[0]);
     } else {
       handleBulkDelete();
+    }
+  };
+
+  const closeFaultyModal = () => {
+    setShowFaultyModal(false);
+    setFaultyModalFaultyId('');
+    setFaultyModalCandidates([]);
+    setFaultyModalMeta(null);
+    setFaultyModalHint('');
+    setFaultyModalSelectedId('');
+    setFaultyModalNote('');
+    setFaultyModalTicket('');
+    setFaultySearchSerial('');
+    setFaultySearchMac('');
+    setFaultySearchAbs('');
+    setFaultySearchQ('');
+    setFaultyManualPickAnyModel(false);
+  };
+
+  const fetchFaultyReplacementCandidates = useCallback(async ({
+    faultyId,
+    manualPick,
+    serial_number = '',
+    mac_address = '',
+    abs_code = '',
+    q = ''
+  }) => {
+    if (!faultyId) return;
+    setFaultyModalLoading(true);
+    setFaultyModalHint('');
+    try {
+      const params = { faultyAssetId: faultyId };
+      if (manualPick) params.manual_pick = '1';
+      const s = String(serial_number || '').trim();
+      const m = String(mac_address || '').trim();
+      const a = String(abs_code || '').trim();
+      const qq = String(q || '').trim();
+      if (s) params.serial_number = s;
+      if (m) params.mac_address = m;
+      if (a) params.abs_code = a;
+      if (qq) params.q = qq;
+      const res = await api.get('/assets/faulty-replacement-candidates', { params });
+      setFaultyModalCandidates(res.data?.items || []);
+      setFaultyModalMeta(res.data || null);
+      if (res.data?.message) {
+        setFaultyModalHint(res.data.message);
+      } else if (!manualPick && (!res.data?.items || res.data.items.length === 0)) {
+        setFaultyModalHint(
+          'No same-model spares in stock. Use “Search any in-store model” and enter serial, MAC, ABS, or quick search, then click Search.'
+        );
+      }
+    } catch (err) {
+      setFaultyModalCandidates([]);
+      setFaultyModalHint(err.response?.data?.message || 'Failed to load replacement options');
+    } finally {
+      setFaultyModalLoading(false);
+    }
+  }, []);
+
+  const handleTopFaulty = async () => {
+    if (!faultySelectionAsset || topFaultyDisabled) return;
+    const id = String(faultySelectionAsset._id);
+    setFaultyModalFaultyId(id);
+    setFaultyModalSelectedId('');
+    setFaultyModalNote('');
+    setFaultyModalTicket(String(faultySelectionAsset.ticket_number || ''));
+    setFaultyModalHint('');
+    setFaultyModalMeta(null);
+    setFaultyModalCandidates([]);
+    setFaultySearchSerial('');
+    setFaultySearchMac('');
+    setFaultySearchAbs('');
+    setFaultySearchQ('');
+    setFaultyManualPickAnyModel(false);
+    setShowFaultyModal(true);
+    await fetchFaultyReplacementCandidates({
+      faultyId: id,
+      manualPick: false,
+      serial_number: '',
+      mac_address: '',
+      abs_code: '',
+      q: ''
+    });
+  };
+
+  const handleFaultyReplacementConfirm = async () => {
+    if (!faultyModalFaultyId || !faultyModalSelectedId) {
+      alert('Select a replacement asset from the list.');
+      return;
+    }
+    setFaultyModalSubmitting(true);
+    try {
+      await api.post('/assets/mark-faulty-with-replacement', {
+        faultyAssetId: faultyModalFaultyId,
+        replacementAssetId: faultyModalSelectedId,
+        note: faultyModalNote.trim() || undefined,
+        ticketNumber: faultyModalTicket.trim() || undefined,
+        manualPick: faultyManualPickAnyModel
+      });
+      closeFaultyModal();
+      setSelectedIds([]);
+      fetchAssets(undefined, { silent: true });
+      alert('Faulty recorded and replacement unit updated. History was logged on both assets.');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Could not complete faulty replacement');
+    } finally {
+      setFaultyModalSubmitting(false);
     }
   };
 
@@ -2917,7 +3049,7 @@ const Assets = () => {
                     <label className="block text-sm font-medium text-gray-700">Excel File</label>
                     <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" />
                     <p className="mt-1 text-xs text-gray-500">
-                      Large imports are supported (default up to about 100MB and 500k rows per file; your server can raise limits with env vars). The table preview may cap rows for speed; Confirm Import still processes the entire workbook.
+                      Large imports are supported (default up to about 100MB and 500k rows per file; your server can raise limits with env vars). The table preview may cap rows for speed; Confirm Import still processes the entire workbook. Row updates are applied in server-side batches so big workbooks finish much faster than one-row-at-a-time saves.
                     </p>
                   </div>
                 </div>
@@ -3431,6 +3563,22 @@ const Assets = () => {
                   >
                     <UserCheck size={16} />
                 {selectedIds.length > 1 ? 'Bulk Assign' : 'Assign'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTopFaulty}
+                    disabled={topFaultyDisabled}
+                    className={`inline-flex items-center gap-2 h-10 px-4 rounded-xl text-sm shadow-sm ${topFaultyDisabled ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100'} border`}
+                    title={
+                      selectedIds.length !== 1
+                        ? 'Select exactly one asset'
+                        : topFaultyDisabled && faultySelectionAsset && isConditionFaulty(faultySelectionAsset)
+                          ? 'This asset is already Faulty'
+                          : 'Mark selected unit faulty and pick an in-store replacement (same model)'
+                    }
+                  >
+                    <AlertTriangle size={16} />
+                    Faulty
                   </button>
                   <button
                     onClick={handleTopReserve}
@@ -4952,6 +5100,257 @@ const Assets = () => {
         </div>
       )}
 
+      {showFaultyModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-[200] p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-start gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Mark faulty & choose replacement</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  The selected unit is set to <strong>Faulty</strong> and returned to store inventory. By default, only{' '}
+                  <strong>In Store</strong> units with the <strong>same model number</strong> are listed. Use serial / MAC / ABS / quick search to narrow results, or search any in-store model when you need a manual pick.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeFaultyModal}
+                className="text-gray-500 hover:text-gray-800 text-2xl leading-none px-1"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1 space-y-4">
+              {faultyModalMeta?.faulty_asset && (
+                <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-amber-950">
+                  <div className="font-semibold">Faulty unit</div>
+                  <div className="mt-1 text-amber-900">
+                    {faultyModalMeta.faulty_asset.name} — SN {faultyModalMeta.faulty_asset.serial_number || 'N/A'} — Unique ID{' '}
+                    {faultyModalMeta.faulty_asset.uniqueId || 'N/A'}
+                  </div>
+                  {faultyModalMeta.model_number ? (
+                    <div className="mt-1 text-amber-800">Model: {faultyModalMeta.model_number}</div>
+                  ) : null}
+                </div>
+              )}
+              {faultyModalHint ? (
+                <div className="rounded-lg bg-slate-100 border border-slate-200 px-3 py-2 text-sm text-slate-800">{faultyModalHint}</div>
+              ) : null}
+              {faultyModalLoading ? (
+                <div className="py-12 flex justify-center text-gray-600">Loading replacements…</div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="faulty-ticket">
+                      Ticket number (optional; updates faulty asset if provided)
+                    </label>
+                    <input
+                      id="faulty-ticket"
+                      type="text"
+                      value={faultyModalTicket}
+                      onChange={(e) => setFaultyModalTicket(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                      placeholder="Ticket / work order"
+                    />
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-3 space-y-3">
+                    <div className="text-sm font-semibold text-gray-800">Find replacement</div>
+                    <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 rounded border-gray-300"
+                        checked={faultyManualPickAnyModel}
+                        onChange={(e) => setFaultyManualPickAnyModel(e.target.checked)}
+                      />
+                      <span>
+                        <strong>Search any in-store model</strong> (same store only). Requires at least one filter below or quick search — use when no same-model spare exists.
+                      </span>
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-0.5" htmlFor="faulty-srch-serial">
+                          Serial number
+                        </label>
+                        <input
+                          id="faulty-srch-serial"
+                          type="text"
+                          value={faultySearchSerial}
+                          onChange={(e) => setFaultySearchSerial(e.target.value)}
+                          className="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                          placeholder="Contains…"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-0.5" htmlFor="faulty-srch-mac">
+                          MAC address
+                        </label>
+                        <input
+                          id="faulty-srch-mac"
+                          type="text"
+                          value={faultySearchMac}
+                          onChange={(e) => setFaultySearchMac(e.target.value)}
+                          className="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                          placeholder="Contains…"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-0.5" htmlFor="faulty-srch-abs">
+                          ABS code
+                        </label>
+                        <input
+                          id="faulty-srch-abs"
+                          type="text"
+                          value={faultySearchAbs}
+                          onChange={(e) => setFaultySearchAbs(e.target.value)}
+                          className="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                          placeholder="Contains…"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-0.5" htmlFor="faulty-srch-q">
+                          Quick search
+                        </label>
+                        <input
+                          id="faulty-srch-q"
+                          type="text"
+                          value={faultySearchQ}
+                          onChange={(e) => setFaultySearchQ(e.target.value)}
+                          className="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                          placeholder="Serial, MAC, ABS, tag, model, name…"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={faultyModalSubmitting || !faultyModalFaultyId}
+                        onClick={() =>
+                          fetchFaultyReplacementCandidates({
+                            faultyId: faultyModalFaultyId,
+                            manualPick: faultyManualPickAnyModel,
+                            serial_number: faultySearchSerial,
+                            mac_address: faultySearchMac,
+                            abs_code: faultySearchAbs,
+                            q: faultySearchQ
+                          })
+                        }
+                        className="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300"
+                      >
+                        Search
+                      </button>
+                      <button
+                        type="button"
+                        disabled={faultyModalSubmitting || !faultyModalFaultyId}
+                        onClick={() => {
+                          setFaultySearchSerial('');
+                          setFaultySearchMac('');
+                          setFaultySearchAbs('');
+                          setFaultySearchQ('');
+                          setFaultyManualPickAnyModel(false);
+                          fetchFaultyReplacementCandidates({
+                            faultyId: faultyModalFaultyId,
+                            manualPick: false,
+                            serial_number: '',
+                            mac_address: '',
+                            abs_code: '',
+                            q: ''
+                          });
+                        }}
+                        className="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        Reset filters
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="block text-sm font-medium text-gray-700 mb-1">Replacement candidates</div>
+                    {faultyModalCandidates.length === 0 ? (
+                      <p className="text-sm text-gray-600">
+                        No rows match. Adjust search fields or enable <strong>Search any in-store model</strong> with serial / MAC / ABS / quick search, then click <strong>Search</strong>.
+                      </p>
+                    ) : (
+                      <div className="border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-gray-50 text-left sticky top-0">
+                            <tr>
+                              <th className="p-2 w-10" />
+                              <th className="p-2">Model</th>
+                              <th className="p-2">Serial</th>
+                              <th className="p-2">MAC</th>
+                              <th className="p-2">ABS</th>
+                              <th className="p-2">Unique ID</th>
+                              <th className="p-2">Location</th>
+                              <th className="p-2">Cond.</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {faultyModalCandidates.map((c) => (
+                              <tr key={String(c._id)} className="border-t border-gray-100 hover:bg-gray-50">
+                                <td className="p-2 align-middle">
+                                  <input
+                                    type="radio"
+                                    name="faultyReplacementPick"
+                                    checked={String(faultyModalSelectedId) === String(c._id)}
+                                    onChange={() => setFaultyModalSelectedId(String(c._id))}
+                                  />
+                                </td>
+                                <td className="p-2 align-middle max-w-[120px] truncate" title={c.model_number || ''}>
+                                  {c.model_number || '—'}
+                                </td>
+                                <td className="p-2 align-middle">{c.serial_number || '—'}</td>
+                                <td className="p-2 align-middle text-xs font-mono max-w-[100px] truncate" title={c.mac_address || ''}>
+                                  {c.mac_address || '—'}
+                                </td>
+                                <td className="p-2 align-middle">{c.abs_code || '—'}</td>
+                                <td className="p-2 align-middle font-mono text-xs">{c.uniqueId || '—'}</td>
+                                <td className="p-2 align-middle">{c.location || '—'}</td>
+                                <td className="p-2 align-middle">{c.condition || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="faulty-note">
+                      Note (optional; stored in history on both assets)
+                    </label>
+                    <textarea
+                      id="faulty-note"
+                      value={faultyModalNote}
+                      onChange={(e) => setFaultyModalNote(e.target.value)}
+                      rows={2}
+                      className="w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                      placeholder="Reason or reference…"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-200 flex justify-end gap-2 bg-gray-50">
+              <button
+                type="button"
+                onClick={closeFaultyModal}
+                disabled={faultyModalSubmitting}
+                className="px-4 py-2 rounded bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleFaultyReplacementConfirm}
+                disabled={
+                  faultyModalSubmitting || faultyModalLoading || !faultyModalSelectedId || faultyModalCandidates.length === 0
+                }
+                className={`px-4 py-2 rounded text-white ${faultyModalSubmitting || faultyModalLoading || !faultyModalSelectedId || faultyModalCandidates.length === 0 ? 'bg-rose-300 cursor-not-allowed' : 'bg-rose-700 hover:bg-rose-800'}`}
+              >
+                {faultyModalSubmitting ? 'Saving…' : 'Confirm faulty & replacement'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk Edit Modal */}
       {showBulkEditModal && (

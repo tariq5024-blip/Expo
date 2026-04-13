@@ -274,12 +274,57 @@ const sendStoreEmail = async ({
   }
 };
 
+/**
+ * SMTP for password reset: env (getFallbackConfig) → user's assigned store Portal email → any store with enabled email.
+ */
+async function resolvePasswordResetSmtpConfig(user) {
+  const fb = getFallbackConfig();
+  if (fb) return fb;
+  const assigned = user?.assignedStore;
+  if (assigned) {
+    const fromAssigned = await getStoreEmailConfig(assigned);
+    if (fromAssigned) return fromAssigned;
+  }
+  const candidates = await Store.find({ 'emailConfig.enabled': true })
+    .select('_id')
+    .limit(25)
+    .lean();
+  for (const row of candidates || []) {
+    if (!row?._id) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const c = await getStoreEmailConfig(row._id);
+    if (c) return c;
+  }
+  return null;
+}
+
+async function sendPasswordResetEmail({ user, to, subject, text, html }) {
+  const cfg = await resolvePasswordResetSmtpConfig(user);
+  if (!cfg) {
+    const err = new Error('NO_SMTP');
+    err.code = 'NO_SMTP';
+    throw err;
+  }
+  const transporter = buildTransport(cfg);
+  const from = `${cfg.fromName || 'Expo Stores'} <${cfg.fromEmail}>`;
+  await transporter.sendMail({
+    from,
+    to: String(to || '').trim(),
+    subject: String(subject || ''),
+    text: String(text || ''),
+    html: String(html || '')
+  });
+}
+
 module.exports = {
   getStoreEmailConfig,
   getStoreNotificationRecipients,
   getStoreAssignCcLists,
   getStoreNotificationSubjects,
   sendStoreEmail,
-  buildTransport
+  buildTransport,
+  getFallbackConfig,
+  resolvePasswordResetSmtpConfig,
+  sendPasswordResetEmail
 };
 

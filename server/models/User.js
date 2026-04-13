@@ -49,6 +49,17 @@ const userSchema = new mongoose.Schema({
   assetsTableColumnsConfig: {
     type: mongoose.Schema.Types.Mixed,
     default: null
+  },
+  /** SHA-256 hex of raw reset token (never store the raw token) */
+  passwordResetTokenHash: {
+    type: String,
+    default: null,
+    select: false
+  },
+  passwordResetExpires: {
+    type: Date,
+    default: null,
+    select: false
   }
 }, { timestamps: true });
 

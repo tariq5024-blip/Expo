@@ -622,6 +622,95 @@ const normalizeRecipientList = (input) => {
   return out;
 };
 
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ''));
+const asSafeString = (value, maxLen = 256) => String(value || '').trim().slice(0, maxLen);
+
+const validateBackupIdParam = (req, res, next) => {
+  const id = String(req.params?.id || '').trim();
+  if (!isValidObjectId(id)) {
+    return res.status(400).json({ message: 'Invalid backup id format' });
+  }
+  req.params.id = id;
+  return next();
+};
+
+const validateResetRequest = (req, res, next) => {
+  if (!isPlainObject(req.body)) {
+    return res.status(400).json({ message: 'Invalid request body' });
+  }
+  const password = String(req.body.password || '');
+  const storeId = String(req.body.storeId || '').trim();
+  const includeUsers = req.body.includeUsers;
+  if (!password || password.length > 256) {
+    return res.status(400).json({ message: 'Password is required' });
+  }
+  if (!storeId) {
+    return res.status(400).json({ message: 'storeId is required. Use "all" for full reset.' });
+  }
+  if (storeId !== 'all' && !isValidObjectId(storeId)) {
+    return res.status(400).json({ message: 'Invalid storeId format' });
+  }
+  if (includeUsers !== undefined && typeof includeUsers !== 'boolean') {
+    return res.status(400).json({ message: 'includeUsers must be a boolean' });
+  }
+  req.body.password = password;
+  req.body.storeId = storeId;
+  req.body.includeUsers = Boolean(includeUsers);
+  return next();
+};
+
+const validateCreateBackupRequest = (req, res, next) => {
+  if (!isPlainObject(req.body)) req.body = {};
+  const requestedType = asSafeString(req.body.backupType || 'Full', 32).toLowerCase();
+  const trigger = asSafeString(req.body.trigger || 'manual', 32).toLowerCase();
+  if (!['full', 'incremental', 'auto'].includes(requestedType)) {
+    return res.status(400).json({ message: 'backupType must be Full, Incremental, or Auto' });
+  }
+  if (!['manual', 'scheduled', 'rollback'].includes(trigger)) {
+    return res.status(400).json({ message: 'trigger must be manual, scheduled, or rollback' });
+  }
+  req.body.backupType = requestedType;
+  req.body.trigger = trigger;
+  return next();
+};
+
+const validateBackupApplyRequest = (req, res, next) => {
+  if (!isPlainObject(req.body)) {
+    return res.status(400).json({ message: 'Invalid request body' });
+  }
+  const scanIds = Array.isArray(req.body.scanIds) ? req.body.scanIds : [];
+  if (scanIds.length === 0 || scanIds.length > 100) {
+    return res.status(400).json({ message: 'scanIds must contain between 1 and 100 items' });
+  }
+  const actions = isPlainObject(req.body.actions) ? req.body.actions : {};
+  const validActionSet = new Set(['skip', 'replace', 'edit', 'merge', 'force_add']);
+  for (const [rowId, spec] of Object.entries(actions)) {
+    if (String(rowId || '').length > 256) {
+      return res.status(400).json({ message: 'Invalid action row id' });
+    }
+    if (!isPlainObject(spec)) {
+      return res.status(400).json({ message: 'Each action spec must be an object' });
+    }
+    const action = String(spec.action || '').toLowerCase();
+    if (action && !validActionSet.has(action)) {
+      return res.status(400).json({ message: `Unsupported action "${action}"` });
+    }
+    if (spec.mergeData !== undefined && !isPlainObject(spec.mergeData)) {
+      return res.status(400).json({ message: 'mergeData must be an object when provided' });
+    }
+  }
+  const defaultAction = String(req.body.defaultAction || 'skip').toLowerCase();
+  if (!validActionSet.has(defaultAction)) {
+    return res.status(400).json({ message: 'defaultAction is invalid' });
+  }
+  req.body.scanIds = scanIds.map((id) => asSafeString(id, 128)).filter(Boolean);
+  req.body.actions = actions;
+  req.body.defaultAction = defaultAction;
+  req.body.applyActionToAll = Boolean(req.body.applyActionToAll);
+  return next();
+};
+
 const pickDuplicateKeys = (assetLike = {}) => {
   const uniqueId = String(assetLike.uniqueId || assetLike.asset_id || '').trim();
   const serialNumber = String(assetLike.serial_number || assetLike.serialNumber || '').trim();
@@ -931,12 +1020,12 @@ router.get('/backup-file', protect, superAdmin, async (req, res) => {
 // @desc    Create backup artifact (zip) and store metadata
 // @route   POST /api/system/backups/create
 // @access  Private/SuperAdmin
-router.post('/backups/create', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
+router.post('/backups/create', protect, superAdmin, heavyOpsLimiter, validateCreateBackupRequest, async (req, res) => {
   try {
     if (!isBackupV3Enabled()) {
       return res.status(503).json({ message: 'Enterprise backup flow is disabled (BACKUP_V3_ENABLED=false).' });
     }
-    const requestedType = String(req.body?.backupType || 'Full').toLowerCase();
+    const requestedType = String(req.body?.backupType || 'full').toLowerCase();
     const backupType = requestedType === 'incremental' ? 'Incremental' : (requestedType === 'auto' ? 'Auto' : 'Full');
     const trigger = String(req.body?.trigger || 'manual');
     const artifact = await createBackupArtifact({
@@ -969,7 +1058,7 @@ router.get('/backups', protect, superAdmin, async (req, res) => {
 // @desc    Download backup artifact
 // @route   GET /api/system/backups/:id/download
 // @access  Private/SuperAdmin
-router.get('/backups/:id/download', protect, superAdmin, async (req, res) => {
+router.get('/backups/:id/download', protect, superAdmin, validateBackupIdParam, async (req, res) => {
   try {
     const backup = await BackupArtifact.findById(req.params.id).lean();
     if (!backup) return res.status(404).json({ message: 'Backup not found' });
@@ -985,7 +1074,7 @@ router.get('/backups/:id/download', protect, superAdmin, async (req, res) => {
 // @desc    Delete backup artifact
 // @route   DELETE /api/system/backups/:id
 // @access  Private/SuperAdmin
-router.delete('/backups/:id', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
+router.delete('/backups/:id', protect, superAdmin, heavyOpsLimiter, validateBackupIdParam, async (req, res) => {
   try {
     const backup = await BackupArtifact.findById(req.params.id);
     if (!backup) return res.status(404).json({ message: 'Backup not found' });
@@ -1009,7 +1098,7 @@ router.delete('/backups/:id', protect, superAdmin, heavyOpsLimiter, async (req, 
 // @desc    Restore from backup artifact
 // @route   POST /api/system/backups/:id/restore
 // @access  Private/SuperAdmin
-router.post('/backups/:id/restore', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
+router.post('/backups/:id/restore', protect, superAdmin, heavyOpsLimiter, validateBackupIdParam, async (req, res) => {
   try {
     if (!isBackupV3Enabled()) {
       return res.status(503).json({ message: 'Enterprise restore flow is disabled (BACKUP_V3_ENABLED=false).' });
@@ -1032,7 +1121,7 @@ router.post('/backups/:id/restore', protect, superAdmin, heavyOpsLimiter, async 
 // @desc    Dry-run validate restore from backup artifact
 // @route   POST /api/system/backups/:id/restore-dry-run
 // @access  Private/SuperAdmin
-router.post('/backups/:id/restore-dry-run', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
+router.post('/backups/:id/restore-dry-run', protect, superAdmin, heavyOpsLimiter, validateBackupIdParam, async (req, res) => {
   try {
     const backup = await BackupArtifact.findById(req.params.id).lean();
     if (!backup) return res.status(404).json({ message: 'Backup not found' });
@@ -1333,7 +1422,7 @@ router.post('/backup-upload/scan', protect, superAdmin, heavyOpsLimiter, handleU
 // @desc    Apply conflict resolution for scanned backups
 // @route   POST /api/system/backup-upload/apply
 // @access  Private/SuperAdmin
-router.post('/backup-upload/apply', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
+router.post('/backup-upload/apply', protect, superAdmin, heavyOpsLimiter, validateBackupApplyRequest, async (req, res) => {
   try {
     const {
       scanIds = [],
@@ -1776,7 +1865,7 @@ router.post('/request-reset', protect, admin, async (req, res) => {
 // @desc    Reset database (keep users)
 // @route   POST /api/system/reset
 // @access  Private/SuperAdmin
-router.post('/reset', protect, superAdmin, heavyOpsLimiter, async (req, res) => {
+router.post('/reset', protect, superAdmin, heavyOpsLimiter, validateResetRequest, async (req, res) => {
   const { password, storeId, includeUsers } = req.body;
   
   if (!password) {
@@ -1809,14 +1898,18 @@ router.post('/reset', protect, superAdmin, heavyOpsLimiter, async (req, res) => 
     let resetScope = "Full System";
 
     if (storeId !== 'all') {
+      const targetStore = await Store.findById(storeId).select('_id name').lean();
+      if (!targetStore) {
+        return res.status(404).json({ message: 'Selected store was not found' });
+      }
       filter = { store: storeId };
-      resetScope = `Store: ${storeId}`;
+      resetScope = `Store: ${targetStore.name}`;
     }
     // If storeId === 'all', filter remains {} (Delete All)
 
     // Handle User Deletion if requested
     if (includeUsers) {
-      const userFilter = { ...filter };
+      const userFilter = {};
       // NEVER delete Super Admin accounts
       userFilter.role = { $ne: 'Super Admin' };
       
@@ -1840,6 +1933,13 @@ router.post('/reset', protect, superAdmin, heavyOpsLimiter, async (req, res) => 
     deleted.vendors = await Vendor.deleteMany(filter);
     deleted.passes = await Pass.deleteMany(filter);
     deleted.permits = await Permit.deleteMany(filter);
+    deleted.emailLogs = await EmailLog.deleteMany(filter);
+
+    if (storeId === 'all') {
+      deleted.backupArtifacts = await BackupArtifact.deleteMany({});
+      deleted.backupLogs = await BackupLog.deleteMany({});
+      deleted.resilienceJobs = await ResilienceJob.deleteMany({});
+    }
 
     // Reset deletionRequested flag if a specific store was reset
     if (storeId && storeId !== 'all') {
@@ -1862,15 +1962,27 @@ router.post('/reset', protect, superAdmin, heavyOpsLimiter, async (req, res) => 
         const uploadsPath = path.join(__dirname, '../uploads');
         if (fs.existsSync(uploadsPath)) {
           const files = fs.readdirSync(uploadsPath);
-          files.forEach(file => {
-            if (file !== '.gitkeep') {
-              try {
-                fs.unlinkSync(path.join(uploadsPath, file));
-              } catch (e) {
-                // Ignore file deletion errors to avoid aborting reset
-              }
+          for (const file of files) {
+            if (file === '.gitkeep') continue;
+            const targetPath = path.join(uploadsPath, file);
+            try {
+              fs.rmSync(targetPath, { recursive: true, force: true });
+            } catch {
+              // Ignore file deletion errors to avoid aborting reset
             }
-          });
+          }
+        }
+
+        if (fs.existsSync(BACKUP_ROOT)) {
+          const backupFiles = fs.readdirSync(BACKUP_ROOT);
+          for (const file of backupFiles) {
+            const targetPath = path.join(BACKUP_ROOT, file);
+            try {
+              fs.rmSync(targetPath, { recursive: true, force: true });
+            } catch {
+              // Ignore backup cleanup errors to avoid aborting reset
+            }
+          }
         }
     }
 
@@ -1896,7 +2008,11 @@ router.post('/reset', protect, superAdmin, heavyOpsLimiter, async (req, res) => 
         purchaseOrdersDeleted: deleted.purchaseOrders?.deletedCount ?? 0,
         vendorsDeleted: deleted.vendors?.deletedCount ?? 0,
         passesDeleted: deleted.passes?.deletedCount ?? 0,
-        permitsDeleted: deleted.permits?.deletedCount ?? 0
+        permitsDeleted: deleted.permits?.deletedCount ?? 0,
+        emailLogsDeleted: deleted.emailLogs?.deletedCount ?? 0,
+        backupArtifactsDeleted: deleted.backupArtifacts?.deletedCount ?? 0,
+        backupLogsDeleted: deleted.backupLogs?.deletedCount ?? 0,
+        resilienceJobsDeleted: deleted.resilienceJobs?.deletedCount ?? 0
       }
     });
   } catch (error) {

@@ -686,9 +686,9 @@ const Portal = () => {
             )}
 
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (window.confirm('Are you sure you want to logout?')) {
-                  logout();
+                  await logout();
                   navigate('/login');
                 }
               }}

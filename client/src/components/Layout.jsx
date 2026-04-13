@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Outlet, Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Outlet, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Menu, ChevronDown, Settings, Bell, Copy } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useAuth } from '../context/AuthContext';
@@ -195,6 +195,7 @@ const Layout = () => {
   const [dbMode, setDbMode] = useState('unknown');
   const { user, logout, activeStore } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [dashboardVendorOptions, setDashboardVendorOptions] = useState(DEFAULT_DASHBOARD_VENDOR_OPTIONS);
 
@@ -711,7 +712,10 @@ const Layout = () => {
                       Open Portal
                     </Link>
                     <button
-                      onClick={logout}
+                      onClick={async () => {
+                        await logout();
+                        navigate('/login');
+                      }}
                       className="block w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50"
                     >
                       Logout

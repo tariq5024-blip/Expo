@@ -428,7 +428,14 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
     { name: 'Locations', icon: <Store size={16} strokeWidth={1.8} />, path: findFirstPathForItem(filteredItems, 'Locations') },
     { name: 'Tools', icon: <Wrench size={16} strokeWidth={1.8} />, path: findFirstPathForItem(filteredItems, 'Tools') },
     { name: 'Events', icon: <Calendar size={16} strokeWidth={1.8} />, path: findFirstPathForItem(filteredItems, 'Events') },
-    { name: 'Logout', icon: <LogOut size={16} strokeWidth={1.8} />, action: () => logout() }
+    {
+      name: 'Logout',
+      icon: <LogOut size={16} strokeWidth={1.8} />,
+      action: async () => {
+        await logout();
+        navigate('/login');
+      }
+    }
   ].filter((action) => Boolean(action.path || action.action));
 
   const isActive = (itemPath) => {
@@ -624,7 +631,10 @@ const Sidebar = ({ onClose, isCollapsed, toggleCollapse }) => {
         </button>
 
         <button
-          onClick={logout}
+          onClick={async () => {
+            await logout();
+            navigate('/login');
+          }}
           className={`flex w-full items-center rounded-xl px-3 py-2.5 text-sm ${selectedTheme === 'ocean' ? 'text-white font-bold hover:bg-white/16' : 'text-rose-600 hover:bg-rose-50'} ${isCollapsed ? 'justify-center' : 'gap-3'}`}
           title="Logout"
         >

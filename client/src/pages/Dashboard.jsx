@@ -137,7 +137,6 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [_HEALTH, setHealth] = useState({ backend: false, db: false });
   const [recentAssets, setRecentAssets] = useState([]);
   const [recentLoading, setRecentLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -334,10 +333,8 @@ const Dashboard = () => {
           if (!isStale()) setRecentLoading(true);
           const recentP = api.get('/assets', { params: recentParams, ...withSignal });
 
-          const [statsSettled, consumablesSettled, toolsSettled] = await Promise.allSettled([
-            api.get('/assets/stats', { params: statsParams, ...withSignal }),
-            api.get('/consumables/stats', withSignal),
-            api.get('/tools/stats', withSignal)
+          const [statsSettled] = await Promise.allSettled([
+            api.get('/assets/stats', { params: statsParams, ...withSignal })
           ]);
           if (isStale()) return;
 
@@ -348,31 +345,7 @@ const Dashboard = () => {
           setStats(normalizeStats(statsSettled.value.data));
           setLastUpdated(new Date());
 
-          if (consumablesSettled.status === 'fulfilled') {
-            setConsumablesStats(consumablesSettled.value.data || {});
-            setConsumablesError('');
-          } else {
-            const e = consumablesSettled.reason;
-            if (isAbortLike(e)) throw e;
-            console.warn('Failed to load consumables stats:', e);
-            setConsumablesStats({});
-            setConsumablesError(
-              e?.response?.data?.message || e?.message || 'Unknown error'
-            );
-          }
-
-          if (toolsSettled.status === 'fulfilled') {
-            setToolsStats(toolsSettled.value.data || {});
-            setToolsError('');
-          } else {
-            const e = toolsSettled.reason;
-            if (isAbortLike(e)) throw e;
-            console.warn('Failed to load tools stats:', e);
-            setToolsStats({});
-            setToolsError(e?.response?.data?.message || e?.message || 'Unknown error');
-          }
-
-          // One paint: KPI row + consumables/tools banners + charts (recent table may still stream).
+          // One paint: KPI row + charts (recent table may still stream).
           if (!isStale()) {
             setLoading(false);
             setRefreshing(false);
@@ -434,28 +407,50 @@ const Dashboard = () => {
   }, [dashboardVendor, isScyDashboard]);
 
   useEffect(() => {
-    let timer;
-    let consecutiveHealthFailures = 0;
-    const checkHealth = async () => {
-      try {
-        const res = await fetch('/api/healthz', { credentials: 'include' });
-        if (!res.ok) throw new Error('healthz failed');
-        const data = await res.json();
-        const backend = true;
-        const db = !!data.db_connected;
-        consecutiveHealthFailures = 0;
-        setHealth({ backend, db });
-      } catch {
-        consecutiveHealthFailures += 1;
-        if (consecutiveHealthFailures >= 2) {
-          setHealth({ backend: false, db: false });
-        }
+    let cancelled = false;
+    const ac = new AbortController();
+    const withSignal = { ...DASHBOARD_API, signal: ac.signal };
+
+    const fetchAuxStats = async () => {
+      const [consumablesSettled, toolsSettled] = await Promise.allSettled([
+        api.get('/consumables/stats', withSignal),
+        api.get('/tools/stats', withSignal)
+      ]);
+      if (cancelled) return;
+
+      if (consumablesSettled.status === 'fulfilled') {
+        setConsumablesStats(consumablesSettled.value.data || {});
+        setConsumablesError('');
+      } else {
+        const e = consumablesSettled.reason;
+        if (isAbortLike(e)) return;
+        console.warn('Failed to load consumables stats:', e);
+        setConsumablesStats({});
+        setConsumablesError(e?.response?.data?.message || e?.message || 'Unknown error');
+      }
+
+      if (toolsSettled.status === 'fulfilled') {
+        setToolsStats(toolsSettled.value.data || {});
+        setToolsError('');
+      } else {
+        const e = toolsSettled.reason;
+        if (isAbortLike(e)) return;
+        console.warn('Failed to load tools stats:', e);
+        setToolsStats({});
+        setToolsError(e?.response?.data?.message || e?.message || 'Unknown error');
       }
     };
-    checkHealth();
-    timer = setInterval(checkHealth, 15000);
-    return () => clearInterval(timer);
-  }, []);
+
+    fetchAuxStats().catch((error) => {
+      if (isAbortLike(error) || cancelled) return;
+      console.warn('Failed to load auxiliary dashboard stats:', error);
+    });
+
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [activeStore?._id]);
 
   useEffect(() => {
     const onDocClick = (event) => {
@@ -599,15 +594,6 @@ const Dashboard = () => {
                     </span>
                   )}
                 </button>
-              </div>
-              <div
-                className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold border ${
-                  _HEALTH.db ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20' : 'bg-rose-500/10 text-rose-700 border-rose-500/20'
-                }`}
-                title="Live database connection status"
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${_HEALTH.db ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                {_HEALTH.db ? 'Database Connected' : 'Database Not Connected'}
               </div>
             </div>
           </div>

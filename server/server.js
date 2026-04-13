@@ -57,6 +57,57 @@ const Request = require('./models/Request');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
+const requireProdEnv = (key) => {
+  const value = String(process.env[key] || '').trim();
+  if (!value) {
+    throw new Error(`${key} is required in production.`);
+  }
+  return value;
+};
+
+const asBool = (value, fallback = false) => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw);
+};
+
+const validateSecurityConfig = () => {
+  const prod = process.env.NODE_ENV === 'production';
+  if (!prod) return;
+
+  // Secrets and network boundaries
+  const cookieSecret = requireProdEnv('COOKIE_SECRET');
+  requireProdEnv('CORS_ORIGIN');
+  requireProdEnv('EMAIL_CONFIG_ENCRYPTION_KEY');
+
+  // Detect obvious weak placeholders in production.
+  const weakSecretHints = ['replace_with', 'changeme', 'default', 'dev-', 'test', 'example'];
+  const loweredCookieSecret = cookieSecret.toLowerCase();
+  if (cookieSecret.length < 32 || weakSecretHints.some((hint) => loweredCookieSecret.includes(hint))) {
+    throw new Error('COOKIE_SECRET looks weak for production. Use a strong random value (>=32 chars).');
+  }
+
+  // Safety toggles that must not be enabled in production.
+  if (asBool(process.env.ENABLE_DEBUG_ROUTES, false)) {
+    throw new Error('ENABLE_DEBUG_ROUTES must be false in production.');
+  }
+  if (asBool(process.env.ENABLE_EMERGENCY_RESET, false)) {
+    throw new Error('ENABLE_EMERGENCY_RESET must be false in production.');
+  }
+  if (asBool(process.env.ALLOW_INMEMORY_FALLBACK, false)) {
+    throw new Error('ALLOW_INMEMORY_FALLBACK must be false in production.');
+  }
+
+  // Cookie policy coherence.
+  const sameSite = String(process.env.COOKIE_SAMESITE || 'lax').trim().toLowerCase();
+  const cookieSecure = String(process.env.COOKIE_SECURE || 'auto').trim().toLowerCase();
+  if (sameSite === 'none' && cookieSecure === 'false') {
+    throw new Error('COOKIE_SAMESITE=none requires COOKIE_SECURE=true/auto in production.');
+  }
+};
+
+validateSecurityConfig();
+
 
 const app = express();
 
@@ -409,7 +460,6 @@ app.get('*', (req, res) => {
         <li><strong>Start Command:</strong> <code>npm start</code></li>
       </ul>
       
-      <p>Debug info available at <a href="/debug-fs">/debug-fs</a></p>
       <p>Current Path: ${req.url}</p>
     </div>
   `);
